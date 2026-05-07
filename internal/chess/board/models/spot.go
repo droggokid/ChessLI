@@ -1,4 +1,4 @@
-package model
+package models
 
 import (
 	"fmt"
@@ -10,8 +10,8 @@ type Spot struct {
 	Color    Color    `json:"color"`
 }
 
-func NewSpot(piece Piece, position Position, color Color) Spot {
-	return Spot{
+func NewSpot(piece Piece, position Position, color Color) *Spot {
+	return &Spot{
 		Piece:    piece,
 		Position: position,
 		Color:    color,

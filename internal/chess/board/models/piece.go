@@ -1,4 +1,4 @@
-package model
+package models
 
 import (
 	"fmt"
@@ -36,7 +36,7 @@ func (p *BasePiece) LegalMoves() []Position {
 	return nil
 }
 
-func describePiece(name string, base Piece) string {
+func DescribePiece(name string, base Piece) string {
 	if base == nil {
 		return name
 	}
