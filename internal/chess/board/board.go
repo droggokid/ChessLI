@@ -6,11 +6,15 @@ import (
 	"strings"
 )
 
+type BoardView interface {
+	SpotAt(pos models.Position) *models.Spot
+}
+
 type Board struct {
 	Spots [8][8]*models.Spot `json:"spots"`
 }
 
-func NewBoard() *Board {
+func NewBoard() BoardView {
 	board := &Board{Spots: [8][8]*models.Spot{}}
 
 	board.arrangeBoard()
@@ -18,6 +22,11 @@ func NewBoard() *Board {
 
 	return board
 }
+
+func (b *Board) SpotAt(pos models.Position) *models.Spot {
+	return b.Spots[pos.Rank.ToIndex()][pos.File.ToIndex()]
+}
+
 func (b *Board) String() string {
 	return b.stringByRankOrder(models.Rank8, models.Rank1, -1)
 }
@@ -75,17 +84,24 @@ func (b *Board) arrangePieces() {
 
 func (b *Board) createPawns() {
 	for file := models.FileA.ToIndex(); file <= models.FileH.ToIndex(); file++ {
-		b.Spots[models.Rank2][file].Piece = pieces.NewPawn(models.White)
+		whiteBoardSpot := b.Spots[models.Rank2][file]
+
+		whiteBoardSpot.Piece = pieces.NewPawn(models.White, whiteBoardSpot.Position)
 	}
 	for file := models.FileA.ToIndex(); file <= models.FileH.ToIndex(); file++ {
-		b.Spots[models.Rank7][file].Piece = pieces.NewPawn(models.Black)
+		blackBoardSpot := b.Spots[models.Rank7][file]
+
+		blackBoardSpot.Piece = pieces.NewPawn(models.White, blackBoardSpot.Position)
 	}
 }
 
-func (b *Board) placeBackRank(files []models.File, newPiece func(models.Color) models.Piece) {
+func (b *Board) placeBackRank(files []models.File, newPiece func(models.Color, models.Position) models.Piece) {
 	for _, f := range files {
 		i := f.ToIndex()
-		b.Spots[models.Rank1][i].Piece = newPiece(models.White)
-		b.Spots[models.Rank8][i].Piece = newPiece(models.Black)
+		whiteBoardSpot := b.Spots[models.Rank1][i]
+		blackBoardSpot := b.Spots[models.Rank8][i]
+
+		whiteBoardSpot.Piece = newPiece(models.White, whiteBoardSpot.Position)
+		blackBoardSpot.Piece = newPiece(models.Black, blackBoardSpot.Position)
 	}
 }

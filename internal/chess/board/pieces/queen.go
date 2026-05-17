@@ -5,26 +5,22 @@ import (
 )
 
 type Queen struct {
-	BasePiece models.Piece
+	models.BasePiece
 }
 
-func NewQueen(color models.Color) models.Piece {
+func NewQueen(color models.Color, position models.Position) models.Piece {
 	return &Queen{
-		BasePiece: models.NewPiece(color),
+		BasePiece: models.NewBasePiece(color, position),
 	}
 }
 
-func (queen *Queen) String() string {
-	if queen == nil {
+func (q *Queen) String() string {
+	if q == nil {
 		return "queen"
 	}
-	return models.DescribePiece("queen", queen.BasePiece)
+	return q.Describe("queen")
 }
 
-func (queen *Queen) LegalMoves() []models.Position {
+func (q *Queen) LegalMoves() []models.Position {
 	return nil
-}
-
-func (queen *Queen) Move() {
-	return
 }

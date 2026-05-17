@@ -5,26 +5,22 @@ import (
 )
 
 type Pawn struct {
-	BasePiece models.Piece
+	models.BasePiece
 }
 
-func NewPawn(color models.Color) models.Piece {
+func NewPawn(color models.Color, position models.Position) models.Piece {
 	return &Pawn{
-		BasePiece: models.NewPiece(color),
+		BasePiece: models.NewBasePiece(color, position),
 	}
 }
 
-func (pawn *Pawn) String() string {
-	if pawn == nil {
+func (p *Pawn) String() string {
+	if p == nil {
 		return "pawn"
 	}
-	return models.DescribePiece("pawn", pawn.BasePiece)
+	return p.Describe("pawn")
 }
 
-func (pawn *Pawn) LegalMoves() []models.Position {
+func (p *Pawn) LegalMoves() []models.Position {
 	return nil
-}
-
-func (pawn *Pawn) Move() {
-	return
 }

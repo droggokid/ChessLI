@@ -5,26 +5,22 @@ import (
 )
 
 type Bishop struct {
-	BasePiece models.Piece
+	models.BasePiece
 }
 
-func NewBishop(color models.Color) models.Piece {
+func NewBishop(color models.Color, position models.Position) models.Piece {
 	return &Bishop{
-		BasePiece: models.NewPiece(color),
+		BasePiece: models.NewBasePiece(color, position),
 	}
 }
 
-func (bishop *Bishop) String() string {
-	if bishop == nil {
+func (b *Bishop) String() string {
+	if b == nil {
 		return "bishop"
 	}
-	return models.DescribePiece("bishop", bishop.BasePiece)
+	return b.Describe("bishop")
 }
 
-func (bishop *Bishop) LegalMoves() []models.Position {
+func (b *Bishop) LegalMoves() []models.Position {
 	return nil
-}
-
-func (bishop *Bishop) Move() {
-	return
 }

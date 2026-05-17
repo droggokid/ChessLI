@@ -5,26 +5,22 @@ import (
 )
 
 type King struct {
-	BasePiece models.Piece
+	models.BasePiece
 }
 
-func NewKing(color models.Color) models.Piece {
+func NewKing(color models.Color, position models.Position) models.Piece {
 	return &King{
-		BasePiece: models.NewPiece(color),
+		BasePiece: models.NewBasePiece(color, position),
 	}
 }
 
-func (king *King) String() string {
-	if king == nil {
+func (k *King) String() string {
+	if k == nil {
 		return "king"
 	}
-	return models.DescribePiece("king", king.BasePiece)
+	return k.Describe("king")
 }
 
-func (king *King) LegalMoves() []models.Position {
+func (k *King) LegalMoves() []models.Position {
 	return nil
-}
-
-func (king *King) Move() {
-	return
 }

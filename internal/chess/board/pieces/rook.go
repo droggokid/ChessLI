@@ -5,26 +5,22 @@ import (
 )
 
 type Rook struct {
-	BasePiece models.Piece
+	models.BasePiece
 }
 
-func NewRook(color models.Color) models.Piece {
+func NewRook(color models.Color, position models.Position) models.Piece {
 	return &Rook{
-		BasePiece: models.NewPiece(color),
+		BasePiece: models.NewBasePiece(color, position),
 	}
 }
 
-func (rook *Rook) String() string {
-	if rook == nil {
+func (r *Rook) String() string {
+	if r == nil {
 		return "rook"
 	}
-	return models.DescribePiece("rook", rook.BasePiece)
+	return r.Describe("rook")
 }
 
-func (rook *Rook) LegalMoves() []models.Position {
+func (r *Rook) LegalMoves() []models.Position {
 	return nil
-}
-
-func (rook *Rook) Move() {
-	return
 }
