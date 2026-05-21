@@ -21,6 +21,6 @@ func (k *Knight) String() string {
 	return k.Describe("knight")
 }
 
-func (k *Knight) LegalMoves() []models.Position {
+func (k *Knight) LegalMoves(from models.Position, board models.BoardView) []models.Position {
 	return nil
 }

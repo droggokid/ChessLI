@@ -6,21 +6,36 @@ import (
 
 type Piece interface {
 	String() string
-	LegalMoves() []Position
+	Color() Color
+	Position() Position
+	MoveTo(position Position)
+	LegalMoves(from Position, board BoardView) []Position
 }
 
 type BasePiece struct {
-	Color    Color    `json:"color"`
-	Position Position `json:"position"`
+	PieceColor    Color    `json:"color"`
+	PiecePosition Position `json:"position"`
 }
 
 func NewBasePiece(color Color, position Position) BasePiece {
 	return BasePiece{
-		Color:    color,
-		Position: position,
+		PieceColor:    color,
+		PiecePosition: position,
 	}
 }
 
-func (p BasePiece) Describe(name string) string {
-	return fmt.Sprintf("%s %s", p.Color, name)
+func (p *BasePiece) Color() Color {
+	return p.PieceColor
+}
+
+func (p *BasePiece) Position() Position {
+	return p.PiecePosition
+}
+
+func (p *BasePiece) MoveTo(position Position) {
+	p.PiecePosition = position
+}
+
+func (p *BasePiece) Describe(name string) string {
+	return fmt.Sprintf("%s %s", p.PieceColor, name)
 }

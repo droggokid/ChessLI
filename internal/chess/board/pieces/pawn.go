@@ -21,6 +21,6 @@ func (p *Pawn) String() string {
 	return p.Describe("pawn")
 }
 
-func (p *Pawn) LegalMoves() []models.Position {
+func (p *Pawn) LegalMoves(from models.Position, board models.BoardView) []models.Position {
 	return nil
 }

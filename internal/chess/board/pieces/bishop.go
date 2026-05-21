@@ -21,6 +21,6 @@ func (b *Bishop) String() string {
 	return b.Describe("bishop")
 }
 
-func (b *Bishop) LegalMoves() []models.Position {
-	return nil
+func (b *Bishop) LegalMoves(from models.Position, board models.BoardView) []models.Position {
+	return walkDirections(from, board, bishopDirections)
 }

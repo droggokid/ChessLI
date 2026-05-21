@@ -19,6 +19,10 @@ func (r Rank) String() string {
 	return strconv.Itoa(int(r) + 1)
 }
 
+func (r Rank) IsValid() bool {
+	return r >= Rank1 && r <= Rank8
+}
+
 func (r Rank) ToIndex() int {
 	return int(r)
 }
@@ -40,6 +44,10 @@ func (f File) String() string {
 	return string(f)
 }
 
+func (f File) IsValid() bool {
+	return f >= FileA && f <= FileH
+}
+
 func (f File) ToIndex() int {
 	return int(f - 'a')
 }
@@ -55,6 +63,10 @@ type Position struct {
 
 func NewPosition(rank Rank, file File) Position {
 	return Position{Rank: rank, File: file}
+}
+
+func (p Position) IsValid() bool {
+	return p.Rank.IsValid() && p.File.IsValid()
 }
 
 func (p Position) String() string {
