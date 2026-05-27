@@ -61,6 +61,20 @@ func walkDirections(from models.Position, board models.BoardView, directions []m
 	return moves
 }
 
+func possibleMoves(from models.Position, directions []models.Direction) []models.Position {
+	moves := make([]models.Position, 0)
+	rank := from.Rank.ToIndex()
+	file := from.File.ToIndex()
+	for _, dir := range directions {
+		pos := models.NewPosition(models.Rank(rank+dir.RankDelta), models.ToFile(file+dir.FileDelta))
+		if pos.IsValid() {
+			moves = append(moves, pos)
+		}
+	}
+
+	return moves
+}
+
 var queenDirections = []models.Direction{
 	models.North,
 	models.South,
