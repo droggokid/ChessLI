@@ -1,4 +1,4 @@
-.PHONY: help run build test fmt vet tidy
+.PHONY: help run build test fmt vet tidy generate mockgen
 
 help:
 	@echo "Available targets:"
@@ -8,6 +8,8 @@ help:
 	@echo "  make fmt    - format Go code"
 	@echo "  make vet    - run go vet"
 	@echo "  make tidy   - tidy go.mod/go.sum"
+	@echo "  make generate - run go generate"
+	@echo "  make mockgen  - print mockgen version"
 
 run:
 	go run ./cmd
@@ -26,3 +28,9 @@ vet:
 
 tidy:
 	go mod tidy
+
+generate:
+	go generate ./...
+
+mockgen:
+	go run go.uber.org/mock/mockgen@v0.6.0 -version

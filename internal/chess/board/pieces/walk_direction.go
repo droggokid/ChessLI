@@ -110,8 +110,12 @@ var rookDirections = []models.Direction{
 
 var whitePawnDirections = []models.Direction{
 	models.North,
+	models.NorthEast,
+	models.NorthWest,
 }
 
 var blackPawnDirections = []models.Direction{
 	models.South,
+	models.SouthEast,
+	models.SouthWest,
 }
