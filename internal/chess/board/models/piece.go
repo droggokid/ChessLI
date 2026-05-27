@@ -4,6 +4,7 @@ import (
 	"fmt"
 )
 
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=piece.go -destination=mock_piece_test.go -package=models
 type Piece interface {
 	String() string
 	Color() Color
