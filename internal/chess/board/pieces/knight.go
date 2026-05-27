@@ -22,5 +22,15 @@ func (k *Knight) String() string {
 }
 
 func (k *Knight) LegalMoves(from models.Position, board models.BoardView) []models.Position {
-	return nil
+	allMoves := possibleMoves(from, knightDirections)
+	availableMoves := make([]models.Position, 0, len(allMoves))
+
+	for _, move := range allMoves {
+		spot := board.SpotAt(move)
+		if canOccupy(spot, k) {
+			availableMoves = append(availableMoves, move)
+		}
+	}
+
+	return availableMoves
 }

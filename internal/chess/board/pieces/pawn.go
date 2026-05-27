@@ -39,7 +39,6 @@ func (p *Pawn) LegalMoves(from models.Position, board models.BoardView) []models
 
 	shortMove := models.NewPosition(models.Rank(rank+delta), file)
 	longMove := models.NewPosition(models.Rank(rank+(delta*2)), file)
-	possibleMoves := possibleMoves(from, moveSet)
 
 	if emptySpot(board, shortMove) {
 		moves = append(moves, shortMove)
@@ -49,12 +48,12 @@ func (p *Pawn) LegalMoves(from models.Position, board models.BoardView) []models
 		}
 	}
 
-	if enemySpot(board, possibleMoves[1], p) {
-		moves = append(moves, possibleMoves[1])
-	}
+	captureMoves := possibleMoves(from, moveSet[1:])
 
-	if enemySpot(board, possibleMoves[2], p) {
-		moves = append(moves, possibleMoves[2])
+	for _, move := range captureMoves {
+		if p.enemySpot(board, move) {
+			moves = append(moves, move)
+		}
 	}
 
 	return moves
@@ -65,9 +64,9 @@ func emptySpot(board models.BoardView, pos models.Position) bool {
 	return spot != nil && spot.Piece == nil
 }
 
-func enemySpot(board models.BoardView, pos models.Position, movingPiece models.Piece) bool {
+func (p *Pawn) enemySpot(board models.BoardView, pos models.Position) bool {
 	spot := board.SpotAt(pos)
-	return spot != nil && spot.Piece != nil && spot.Piece.Color() != movingPiece.Color()
+	return spot != nil && spot.Piece != nil && spot.Piece.Color() != p.Color()
 }
 
 func (p *Pawn) isOnStartingRank(from models.Position) bool {
@@ -76,16 +75,4 @@ func (p *Pawn) isOnStartingRank(from models.Position) bool {
 	}
 
 	return from.Rank == models.Rank7
-}
-
-func possibleMoves(from models.Position, directions []models.Direction) []models.Position {
-	moves := make([]models.Position, 0)
-	rank := from.Rank.ToIndex()
-	file := from.File.ToIndex()
-	for _, dir := range directions {
-		pos := models.NewPosition(models.Rank(rank+dir.RankDelta), models.ToFile(file+dir.FileDelta))
-		moves = append(moves, pos)
-	}
-
-	return moves
 }
