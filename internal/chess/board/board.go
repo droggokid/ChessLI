@@ -1,3 +1,4 @@
+// Package board owns board construction, square lookup, and initial piece setup.
 package board
 
 import (
@@ -6,10 +7,15 @@ import (
 	"strings"
 )
 
+// Board represents an 8x8 chess board indexed by rank and file.
+//
+// The first array index is the rank index and the second is the file index.
 type Board struct {
+	// Spots stores every board square by rank index, then file index.
 	Spots [8][8]*models.Spot `json:"spots"`
 }
 
+// NewBoard creates a standard chess board with colored squares and starting pieces.
 func NewBoard() *Board {
 	board := &Board{Spots: [8][8]*models.Spot{}}
 	board.arrangeBoard()
@@ -17,6 +23,7 @@ func NewBoard() *Board {
 	return board
 }
 
+// SpotAt returns the board spot for pos, or nil when pos is outside the board.
 func (b *Board) SpotAt(pos models.Position) *models.Spot {
 	if !pos.IsValid() {
 		return nil
@@ -24,10 +31,12 @@ func (b *Board) SpotAt(pos models.Position) *models.Spot {
 	return b.Spots[pos.Rank.ToIndex()][pos.File.ToIndex()]
 }
 
+// String returns a white-side board view from rank 8 down to rank 1.
 func (b *Board) String() string {
 	return b.stringByRankOrder(models.Rank8, models.Rank1, -1)
 }
 
+// StringBlackView returns a black-side board view from rank 1 up to rank 8.
 func (b *Board) StringBlackView() string {
 	return b.stringByRankOrder(models.Rank1, models.Rank8, 1)
 }
@@ -103,6 +112,7 @@ func (b *Board) placeBackRank(files []models.File, newPiece func(models.Color, m
 	}
 }
 
+// WhiteStarterPieces returns the white pieces from their initial board squares.
 func (b *Board) WhiteStarterPieces() []models.Piece {
 	whitePieces := make([]models.Piece, 0, 16)
 
@@ -116,6 +126,7 @@ func (b *Board) WhiteStarterPieces() []models.Piece {
 	return whitePieces
 }
 
+// BlackStarterPieces returns the black pieces from their initial board squares.
 func (b *Board) BlackStarterPieces() []models.Piece {
 	blackPieces := make([]models.Piece, 0, 16)
 
