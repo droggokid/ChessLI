@@ -4,16 +4,19 @@ import (
 	"chessli/internal/chess/board/models"
 )
 
+// Pawn is a forward-moving piece with diagonal attacks.
 type Pawn struct {
 	models.BasePiece
 }
 
+// NewPawn creates a pawn with color and position.
 func NewPawn(color models.Color, position models.Position) models.Piece {
 	return &Pawn{
 		BasePiece: models.NewBasePiece(color, position),
 	}
 }
 
+// String returns a human-readable pawn description.
 func (p *Pawn) String() string {
 	if p == nil {
 		return "pawn"
@@ -21,7 +24,8 @@ func (p *Pawn) String() string {
 	return p.Describe("pawn")
 }
 
-func (p *Pawn) LegalMoves(from models.Position, board models.BoardView) []models.Position {
+// PossibleMoves returns pawn movement destinations before king-safety filtering.
+func (p *Pawn) PossibleMoves(board models.BoardView) []models.Position {
 	var (
 		moveSet []models.Direction
 		moves   []models.Position
@@ -33,6 +37,7 @@ func (p *Pawn) LegalMoves(from models.Position, board models.BoardView) []models
 		moveSet = blackPawnDirections
 	}
 
+	from := p.PiecePosition
 	rank := from.Rank.ToIndex()
 	file := from.File
 	delta := moveSet[0].RankDelta
@@ -57,6 +62,15 @@ func (p *Pawn) LegalMoves(from models.Position, board models.BoardView) []models
 	}
 
 	return moves
+}
+
+// AttackedSquares returns the diagonal squares controlled by the pawn.
+func (p *Pawn) AttackedSquares(board models.BoardView) []models.Position {
+	if p.PieceColor == models.White {
+		return possibleMoves(p.PiecePosition, whitePawnDirections[1:])
+	}
+
+	return possibleMoves(p.PiecePosition, blackPawnDirections[1:])
 }
 
 func emptySpot(board models.BoardView, pos models.Position) bool {

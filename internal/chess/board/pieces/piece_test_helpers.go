@@ -1,8 +1,9 @@
 package pieces
 
 import (
-	"chessli/internal/chess/board/models"
 	"testing"
+
+	"chessli/internal/chess/board/models"
 )
 
 type testBoard struct {
@@ -34,18 +35,30 @@ func (b *testBoard) place(piece models.Piece, pos models.Position) {
 func assertMoves(t *testing.T, got []models.Position, want ...models.Position) {
 	t.Helper()
 
-	if len(got) != len(want) {
-		t.Fatalf("got %d moves %v, want %d moves %v", len(got), got, len(want), want)
+	gotMoves := positionSet(got)
+	wantMoves := positionSet(want)
+
+	if len(gotMoves) != len(wantMoves) {
+		t.Fatalf("moves = %v, want %v", got, want)
 	}
 
-	gotMoves := make(map[models.Position]bool, len(got))
-	for _, move := range got {
-		gotMoves[move] = true
-	}
-
-	for _, move := range want {
+	for move := range wantMoves {
 		if !gotMoves[move] {
-			t.Fatalf("missing move %v; got %v", move, got)
+			t.Fatalf("moves = %v, missing %v", got, move)
 		}
 	}
+
+	for move := range gotMoves {
+		if !wantMoves[move] {
+			t.Fatalf("moves = %v, unexpected %v", got, move)
+		}
+	}
+}
+
+func positionSet(positions []models.Position) map[models.Position]bool {
+	set := make(map[models.Position]bool, len(positions))
+	for _, position := range positions {
+		set[position] = true
+	}
+	return set
 }

@@ -16,7 +16,9 @@ func canOccupy(spot *models.Spot, movingPiece models.Piece) bool {
 	return spot.Piece.Color() != movingPiece.Color()
 }
 
-func walkDirection(from models.Position, board models.BoardView, offset models.Direction) []models.Position {
+// walkDirection walks a sliding-piece ray until the board edge or first blocker.
+// The action callback decides whether each visited spot should be included.
+func walkDirection(from models.Position, board models.BoardView, offset models.Direction, action func(*models.Spot, models.Piece) bool) []models.Position {
 	var moves []models.Position
 
 	fromSpot := board.SpotAt(from)
@@ -37,7 +39,7 @@ func walkDirection(from models.Position, board models.BoardView, offset models.D
 			break
 		}
 
-		if canOccupy(spot, movingPiece) {
+		if action(spot, movingPiece) {
 			moves = append(moves, pos)
 		}
 
@@ -51,11 +53,23 @@ func walkDirection(from models.Position, board models.BoardView, offset models.D
 	return moves
 }
 
-func walkDirections(from models.Position, board models.BoardView, directions []models.Direction) []models.Position {
+func walkLegalDirections(from models.Position, board models.BoardView, directions []models.Direction) []models.Position {
 	var moves []models.Position
 
 	for _, direction := range directions {
-		moves = append(moves, walkDirection(from, board, direction)...)
+		moves = append(moves, walkDirection(from, board, direction, canOccupy)...)
+	}
+
+	return moves
+}
+
+// walkAttackDirections includes occupied friendly squares because attacked
+// squares model control/protection, not only legal movement destinations.
+func walkAttackDirections(from models.Position, board models.BoardView, directions []models.Direction) []models.Position {
+	var moves []models.Position
+
+	for _, direction := range directions {
+		moves = append(moves, walkDirection(from, board, direction, canAttack)...)
 	}
 
 	return moves
@@ -73,6 +87,12 @@ func possibleMoves(from models.Position, directions []models.Direction) []models
 	}
 
 	return moves
+}
+
+// canAttack names the attacked-square inclusion rule: any real board spot can
+// be controlled, even when occupied by a friendly piece.
+func canAttack(spot *models.Spot, movingPiece models.Piece) bool {
+	return spot != nil
 }
 
 var queenDirections = []models.Direction{
