@@ -6,25 +6,16 @@ import "strconv"
 type Rank int
 
 const (
-	// Rank1 is the first rank.
 	Rank1 Rank = iota
-	// Rank2 is the second rank.
 	Rank2
-	// Rank3 is the third rank.
 	Rank3
-	// Rank4 is the fourth rank.
 	Rank4
-	// Rank5 is the fifth rank.
 	Rank5
-	// Rank6 is the sixth rank.
 	Rank6
-	// Rank7 is the seventh rank.
 	Rank7
-	// Rank8 is the eighth rank.
 	Rank8
 )
 
-// String returns the algebraic rank text.
 func (r Rank) String() string {
 	return strconv.Itoa(int(r) + 1)
 }
@@ -43,25 +34,16 @@ func (r Rank) ToIndex() int {
 type File rune
 
 const (
-	// FileA is the a-file.
 	FileA File = 'a'
-	// FileB is the b-file.
 	FileB File = 'b'
-	// FileC is the c-file.
 	FileC File = 'c'
-	// FileD is the d-file.
 	FileD File = 'd'
-	// FileE is the e-file.
 	FileE File = 'e'
-	// FileF is the f-file.
 	FileF File = 'f'
-	// FileG is the g-file.
 	FileG File = 'g'
-	// FileH is the h-file.
 	FileH File = 'h'
 )
 
-// String returns the algebraic file text.
 func (f File) String() string {
 	return string(f)
 }
@@ -83,9 +65,7 @@ func ToFile(index int) File {
 
 // Position identifies a board square by rank and file.
 type Position struct {
-	// Rank is the position's board rank.
 	Rank Rank `json:"rank"`
-	// File is the position's board file.
 	File File `json:"file"`
 }
 
@@ -99,7 +79,6 @@ func (p Position) IsValid() bool {
 	return p.Rank.IsValid() && p.File.IsValid()
 }
 
-// String returns algebraic square text such as e4.
 func (p Position) String() string {
 	return p.File.String() + p.Rank.String()
 }

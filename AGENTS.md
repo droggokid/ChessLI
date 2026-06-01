@@ -25,7 +25,11 @@ Use standard Go formatting via `gofmt` or `make fmt`; tabs are handled by the fo
 
 ## Testing Guidelines
 
-Use Go’s built-in `testing` package. Place tests next to the code they cover with `_test.go` suffixes, for example `internal/chess/board/board_test.go` or `internal/chess/game/game_test.go`. Name tests by behavior, such as `TestNewBoardPlacesWhitePieces` or `TestMoveRejectsOwnPieceCapture`. Run `make test` before submitting changes. Add focused tests for board setup, position validation, captures, turn switching, and legal move generation as those features mature.
+Use Go’s built-in `testing` package and keep tests next to the code they cover with `_test.go` suffixes. Name tests by behavior, such as `TestMoveRejectsOwnPieceCapture`. Prefer table-driven tests with `t.Run` when checking variants of the same behavior. Keep one-off tests direct when a table would add noise.
+
+Test helpers must live in `_test.go` files, usually `test_helpers_test.go`, and must call `t.Helper()` when they receive `*testing.T`. Avoid panics in tests; fail through `t.Fatalf` or `t.Fatal`. Prefer comparing domain values directly and keep fixtures small enough that the expected behavior is visible in the test.
+
+For gomock, keep `//go:generate go run go.uber.org/mock/mockgen@...` directives near the interface they generate from. Generate mocks into `_test.go` files when they are only used by tests. Run `make generate` after interface changes, then `make test` and `make vet`.
 
 ## Commit & Pull Request Guidelines
 

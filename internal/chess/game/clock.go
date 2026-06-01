@@ -4,7 +4,6 @@ package game
 type Clock struct {
 }
 
-// NewClock creates an empty chess clock.
 func NewClock() *Clock {
 	return &Clock{}
 }

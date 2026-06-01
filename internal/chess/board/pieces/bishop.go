@@ -1,4 +1,3 @@
-// Package pieces contains concrete chess piece implementations and movement helpers.
 package pieces
 
 import (
@@ -17,7 +16,10 @@ func NewBishop(color models.Color, position models.Position) models.Piece {
 	}
 }
 
-// String returns a human-readable bishop description.
+func (b *Bishop) Type() models.PieceType {
+	return models.Bishop
+}
+
 func (b *Bishop) String() string {
 	if b == nil {
 		return "bishop"
@@ -25,12 +27,10 @@ func (b *Bishop) String() string {
 	return b.Describe("bishop")
 }
 
-// PossibleMoves returns bishop movement destinations before king-safety filtering.
 func (b *Bishop) PossibleMoves(board models.BoardView) []models.Position {
 	return walkLegalDirections(b.PiecePosition, board, bishopDirections)
 }
 
-// AttackedSquares returns all squares controlled by the bishop.
 func (b *Bishop) AttackedSquares(board models.BoardView) []models.Position {
 	return walkAttackDirections(b.PiecePosition, board, bishopDirections)
 }

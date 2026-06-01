@@ -16,7 +16,10 @@ func NewQueen(color models.Color, position models.Position) models.Piece {
 	}
 }
 
-// String returns a human-readable queen description.
+func (q *Queen) Type() models.PieceType {
+	return models.Queen
+}
+
 func (q *Queen) String() string {
 	if q == nil {
 		return "queen"
@@ -24,12 +27,10 @@ func (q *Queen) String() string {
 	return q.Describe("queen")
 }
 
-// PossibleMoves returns queen movement destinations before king-safety filtering.
 func (q *Queen) PossibleMoves(board models.BoardView) []models.Position {
 	return walkLegalDirections(q.PiecePosition, board, queenDirections)
 }
 
-// AttackedSquares returns all squares controlled by the queen.
 func (q *Queen) AttackedSquares(board models.BoardView) []models.Position {
 	return walkAttackDirections(q.PiecePosition, board, queenDirections)
 }

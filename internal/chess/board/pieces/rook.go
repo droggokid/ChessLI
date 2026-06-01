@@ -16,7 +16,10 @@ func NewRook(color models.Color, position models.Position) models.Piece {
 	}
 }
 
-// String returns a human-readable rook description.
+func (r *Rook) Type() models.PieceType {
+	return models.Rook
+}
+
 func (r *Rook) String() string {
 	if r == nil {
 		return "rook"
@@ -24,12 +27,10 @@ func (r *Rook) String() string {
 	return r.Describe("rook")
 }
 
-// PossibleMoves returns rook movement destinations before king-safety filtering.
 func (r *Rook) PossibleMoves(board models.BoardView) []models.Position {
 	return walkLegalDirections(r.PiecePosition, board, rookDirections)
 }
 
-// AttackedSquares returns all squares controlled by the rook.
 func (r *Rook) AttackedSquares(board models.BoardView) []models.Position {
 	return walkAttackDirections(r.PiecePosition, board, rookDirections)
 }

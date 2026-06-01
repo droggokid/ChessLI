@@ -89,3 +89,49 @@ func TestPawnPossibleMoves(t *testing.T) {
 		})
 	}
 }
+
+func TestPawnAttackedSquares(t *testing.T) {
+	tests := []struct {
+		name  string
+		color models.Color
+		from  models.Position
+		want  []models.Position
+	}{
+		{
+			name:  "white attacks diagonally north",
+			color: models.White,
+			from:  models.NewPosition(models.Rank4, models.FileE),
+			want: []models.Position{
+				models.NewPosition(models.Rank5, models.FileD),
+				models.NewPosition(models.Rank5, models.FileF),
+			},
+		},
+		{
+			name:  "black attacks diagonally south",
+			color: models.Black,
+			from:  models.NewPosition(models.Rank5, models.FileE),
+			want: []models.Position{
+				models.NewPosition(models.Rank4, models.FileD),
+				models.NewPosition(models.Rank4, models.FileF),
+			},
+		},
+		{
+			name:  "edge pawn only attacks in-bounds squares",
+			color: models.White,
+			from:  models.NewPosition(models.Rank7, models.FileA),
+			want: []models.Position{
+				models.NewPosition(models.Rank8, models.FileB),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			board := newTestBoard()
+			pawn := NewPawn(tt.color, tt.from)
+			board.place(pawn, tt.from)
+
+			assertMoves(t, pawn.AttackedSquares(board), tt.want...)
+		})
+	}
+}

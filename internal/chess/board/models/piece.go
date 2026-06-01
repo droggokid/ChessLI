@@ -5,21 +5,26 @@ import (
 	"fmt"
 )
 
-// Piece describes behavior shared by all concrete chess pieces.
-//
-// PossibleMoves returns piece-shaped moves before game-level king-safety filtering.
-// AttackedSquares returns controlled squares, which differs from possible movement
-// for pieces such as pawns and for own-piece protection.
-//
+// PieceType identifies a concrete chess piece kind.
+type PieceType string
+
+const (
+	Pawn   PieceType = "pawn"
+	Knight PieceType = "knight"
+	Bishop PieceType = "bishop"
+	Rook   PieceType = "rook"
+	Queen  PieceType = "queen"
+	King   PieceType = "king"
+)
+
 //go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=piece.go -destination=mock_piece_test.go -package=models
+
+// Piece describes behavior shared by all concrete chess pieces.
 type Piece interface {
-	// String returns a human-readable piece description.
 	String() string
-	// Color returns the piece color.
+	Type() PieceType
 	Color() Color
-	// Position returns the piece's current board position.
 	Position() Position
-	// MoveTo updates the piece's stored position.
 	MoveTo(position Position)
 	// PossibleMoves returns movement destinations before game-level king-safety filtering.
 	PossibleMoves(board BoardView) []Position
@@ -29,9 +34,7 @@ type Piece interface {
 
 // BasePiece stores common piece state embedded by concrete piece implementations.
 type BasePiece struct {
-	// PieceColor is the piece's side.
-	PieceColor Color `json:"color"`
-	// PiecePosition is the piece's current square.
+	PieceColor    Color    `json:"color"`
 	PiecePosition Position `json:"position"`
 }
 
@@ -43,17 +46,14 @@ func NewBasePiece(color Color, position Position) BasePiece {
 	}
 }
 
-// Color returns the piece color.
 func (p *BasePiece) Color() Color {
 	return p.PieceColor
 }
 
-// Position returns the piece's current board position.
 func (p *BasePiece) Position() Position {
 	return p.PiecePosition
 }
 
-// MoveTo updates the piece's stored position.
 func (p *BasePiece) MoveTo(position Position) {
 	p.PiecePosition = position
 }
