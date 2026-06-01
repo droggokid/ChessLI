@@ -5,8 +5,6 @@ import (
 	"fmt"
 )
 
-//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=piece.go -destination=mock_piece_test.go -package=models
-
 // PieceType identifies a concrete chess piece kind.
 type PieceType string
 
@@ -18,6 +16,8 @@ const (
 	Queen  PieceType = "queen"
 	King   PieceType = "king"
 )
+
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=piece.go -destination=mock_piece_test.go -package=models
 
 // Piece describes behavior shared by all concrete chess pieces.
 type Piece interface {
