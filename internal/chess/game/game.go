@@ -8,29 +8,35 @@ import (
 	"errors"
 )
 
+type resolvedMove struct {
+	Move          models.Move
+	FromSpot      *models.Spot
+	ToSpot        *models.Spot
+	MovingPiece   models.Piece
+	CapturedPiece models.Piece
+}
+
 // Game contains the mutable state for one chess game.
 type Game struct {
 	Board *board.Board
-	Turn models.Color
+	Turn  models.Color
 
 	WhitePlayer Player
 	BlackPlayer Player
 
-	// WhitePieces tracks uncaptured white pieces.
 	WhitePieces []models.Piece
 	BlackPieces []models.Piece
 
-	// CapturedByWhite tracks pieces captured by white.
 	CapturedByWhite []models.Piece
 	CapturedByBlack []models.Piece
 
-	// SquaresAttackedByWhite caches squares currently controlled by white.
 	SquaresAttackedByWhite map[models.Position]bool
 	SquaresAttackedByBlack map[models.Position]bool
 
-	// WhiteKingPosition tracks the white king without scanning the board.
 	WhiteKingPosition models.Position
 	BlackKingPosition models.Position
+
+	MoveHistory []models.MoveRecord
 
 	legalMoves map[models.Position][]models.Position
 }
@@ -49,12 +55,13 @@ func NewGame(player1 string, player2 string) Game {
 		CapturedByBlack:   make([]models.Piece, 0, 16),
 		WhiteKingPosition: models.NewPosition(models.Rank1, models.FileE),
 		BlackKingPosition: models.NewPosition(models.Rank8, models.FileE),
+		MoveHistory:       make([]models.MoveRecord, 0),
 		legalMoves:        make(map[models.Position][]models.Position),
 	}
 	game.SquaresAttackedByWhite = game.CalculateAttackedSquares(models.White)
 	game.SquaresAttackedByBlack = game.CalculateAttackedSquares(models.Black)
 
-	game.legalMoves = game.CalculateAllLegalMoves()
+	game.legalMoves, _ = game.CalculateAllLegalMoves()
 
 	return game
 }
@@ -87,111 +94,177 @@ func (g *Game) piecesFor(color models.Color) []models.Piece {
 	return g.BlackPieces
 }
 
-// CalculateAllLegalMoves returns legal moves for the current player.
-func (g *Game) CalculateAllLegalMoves() map[models.Position][]models.Position {
+// CalculateAllLegalMoves calculates legal moves for the current player.
+func (g *Game) CalculateAllLegalMoves() (map[models.Position][]models.Position, error) {
 	legalMoves := make(map[models.Position][]models.Position)
 
+	var err error
 	if g.Turn == models.White {
 		for _, piece := range g.WhitePieces {
-			legalMoves[piece.Position()] = g.LegalMovesFor(piece.Position())
+			legalMoves[piece.Position()], err = g.LegalMovesFor(piece.Position())
+			if err != nil {
+				return nil, err
+			}
 		}
 	} else {
 		for _, piece := range g.BlackPieces {
-			legalMoves[piece.Position()] = g.LegalMovesFor(piece.Position())
+			legalMoves[piece.Position()], err = g.LegalMovesFor(piece.Position())
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	return legalMoves
+	return legalMoves, nil
 }
 
 // LegalMovesFor returns legal moves for the current player's piece at position.
-func (g *Game) LegalMovesFor(position models.Position) []models.Position {
+func (g *Game) LegalMovesFor(position models.Position) ([]models.Position, error) {
 	if moves, ok := g.legalMoves[position]; ok {
-		return moves
+		return moves, nil
 	}
 
 	fromSpot := g.Board.SpotAt(position)
 	if fromSpot == nil {
-		return nil
+		return nil, errors.New("no legal moves found")
 	}
 
-	piece := fromSpot.Piece
-	if piece == nil || piece.Color() != g.Turn {
-		return nil
+	movingPiece := fromSpot.Piece
+	if movingPiece == nil || movingPiece.Color() != g.Turn {
+		return nil, errors.New("no legal moves found")
 	}
 
-	possibleMoves := piece.PossibleMoves(g.Board)
+	possibleMoves := movingPiece.PossibleMoves(g.Board)
 	legalMoves := make([]models.Position, 0, len(possibleMoves))
 
-	for _, move := range possibleMoves {
-		toSpot := g.Board.SpotAt(move)
+	for _, to := range possibleMoves {
+		toSpot := g.Board.SpotAt(to)
 		if toSpot == nil {
 			continue
 		}
 
-		if g.moveKeepsKingSafe(fromSpot, toSpot) {
-			legalMoves = append(legalMoves, move)
+		resolved, err := g.resolveMove(models.NewMove(position, to))
+		if err != nil {
+			continue
+		}
+
+		if resolved.CapturedPiece != nil &&
+			resolved.CapturedPiece.Color() == resolved.MovingPiece.Color() {
+			continue
+		}
+
+		if g.moveKeepsKingSafe(resolved) {
+			legalMoves = append(legalMoves, to)
 		}
 	}
 
 	g.legalMoves[position] = legalMoves
-	return legalMoves
+
+	return legalMoves, nil
 }
 
-func (g *Game) prepareNextTurn() {
+func (g *Game) prepareNextTurn() error {
 	g.legalMoves = make(map[models.Position][]models.Position)
 	g.Turn = g.Turn.Flip()
 	g.SquaresAttackedByWhite = g.CalculateAttackedSquares(models.White)
 	g.SquaresAttackedByBlack = g.CalculateAttackedSquares(models.Black)
-	g.legalMoves = g.CalculateAllLegalMoves()
+
+	var err error
+	g.legalMoves, err = g.CalculateAllLegalMoves()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-// Move moves the current player's piece from one square to another.
-//
-// The move must already be present in the legal move cache for the current turn.
-func (g *Game) Move(from models.Position, to models.Position) error {
-	fromSpot := g.Board.SpotAt(from)
-	toSpot := g.Board.SpotAt(to)
+// Move applies a legal move for the current player.
+func (g *Game) Move(move models.Move) error {
+	resolved, err := g.verifyMove(move)
+	if err != nil {
+		return err
+	}
+
+	if resolved.CapturedPiece != nil {
+		g.capturePiece(resolved.CapturedPiece, resolved.MovingPiece.Color())
+	}
+
+	g.applyMove(resolved)
+
+	g.recordMove(resolved)
+
+	err = g.prepareNextTurn()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (g *Game) verifyMove(move models.Move) (resolvedMove, error) {
+	resolved, err := g.resolveMove(move)
+	if err != nil {
+		return resolvedMove{}, err
+	}
+
+	if resolved.MovingPiece.Color() != g.Turn {
+		return resolvedMove{}, errors.New("cannot move opponent's piece")
+	}
+
+	if !g.isLegalMove(move) {
+		return resolvedMove{}, errors.New("illegal move")
+	}
+
+	return resolved, nil
+}
+
+func (g *Game) resolveMove(move models.Move) (resolvedMove, error) {
+	fromSpot := g.Board.SpotAt(move.From)
+	toSpot := g.Board.SpotAt(move.To)
 
 	if fromSpot == nil || toSpot == nil {
-		return errors.New("position outside board")
+		return resolvedMove{}, errors.New("position outside board")
 	}
 
 	movingPiece := fromSpot.Piece
 	if movingPiece == nil {
-		return errors.New("no piece at source position")
-	}
-
-	if movingPiece.Color() != g.Turn {
-		return errors.New("cannot move opponent's piece")
-	}
-
-	if !g.containsMove(from, to) {
-		return errors.New("illegal move")
+		return resolvedMove{}, errors.New("no piece at source position")
 	}
 
 	capturedPiece := toSpot.Piece
-	if capturedPiece != nil {
-		if capturedPiece.Color() == movingPiece.Color() {
-			return errors.New("cannot capture own piece")
-		}
 
-		g.capturePiece(capturedPiece, movingPiece.Color())
+	return resolvedMove{
+		Move:          move,
+		FromSpot:      fromSpot,
+		ToSpot:        toSpot,
+		MovingPiece:   movingPiece,
+		CapturedPiece: capturedPiece,
+	}, nil
+}
+
+func (g *Game) recordMove(resolvedMove resolvedMove) {
+	capturedPiece := models.PieceType("")
+	wasCaptured := resolvedMove.CapturedPiece != nil
+
+	if wasCaptured {
+		capturedPiece = resolvedMove.CapturedPiece.Type()
 	}
 
-	g.applyMove(fromSpot, toSpot, movingPiece)
+	record := models.MoveRecord{
+		Move:          resolvedMove.Move,
+		MovingColor:   resolvedMove.MovingPiece.Color(),
+		MovingPiece:   resolvedMove.MovingPiece.Type(),
+		CapturedPiece: capturedPiece,
+		WasCapture:    wasCaptured,
+	}
 
-	g.prepareNextTurn()
-
-	return nil
+	g.MoveHistory = append(g.MoveHistory, record)
 }
 
 // moveKeepsKingSafe simulates a candidate move and reports whether the moving
 // side's king is safe afterward. It always restores board and king-position
 // state before returning.
-func (g *Game) moveKeepsKingSafe(fromSpot, toSpot *models.Spot) bool {
-	movingPiece := fromSpot.Piece
-	capturedPiece := toSpot.Piece
+func (g *Game) moveKeepsKingSafe(resolvedMove resolvedMove) bool {
+	movingPiece := resolvedMove.FromSpot.Piece
 
 	var oldKingPosition models.Position
 	if movingPiece.Color() == models.White {
@@ -200,47 +273,41 @@ func (g *Game) moveKeepsKingSafe(fromSpot, toSpot *models.Spot) bool {
 		oldKingPosition = g.BlackKingPosition
 	}
 
-	g.applyMove(fromSpot, toSpot, movingPiece)
+	g.applyMove(resolvedMove)
 
 	simulatedKingPosition := g.kingPosition(movingPiece.Color())
 	simulatedAttackedSquares := g.CalculateAttackedSquares(movingPiece.Color().Flip())
 
 	_, kingIsAttacked := simulatedAttackedSquares[simulatedKingPosition]
 
-	g.revertMove(fromSpot, toSpot, movingPiece, capturedPiece, oldKingPosition)
+	g.revertMove(resolvedMove, oldKingPosition)
 
 	return !kingIsAttacked
 }
 
-// applyMove mutates board state and the moving piece's stored position.
-func (g *Game) applyMove(fromSpot, toSpot *models.Spot, movingPiece models.Piece) {
-	movingPiece.MoveTo(toSpot.Position)
+func (g *Game) applyMove(resolved resolvedMove) {
+	resolved.MovingPiece.MoveTo(resolved.ToSpot.Position)
 
-	toSpot.Piece = movingPiece
-	fromSpot.Piece = nil
+	resolved.ToSpot.Piece = resolved.MovingPiece
+	resolved.FromSpot.Piece = nil
 
-	if _, ok := movingPiece.(*pieces.King); ok {
-		if movingPiece.Color() == models.White {
-			g.WhiteKingPosition = toSpot.Position
+	if _, ok := resolved.MovingPiece.(*pieces.King); ok {
+		if resolved.MovingPiece.Color() == models.White {
+			g.WhiteKingPosition = resolved.ToSpot.Position
 		} else {
-			g.BlackKingPosition = toSpot.Position
+			g.BlackKingPosition = resolved.ToSpot.Position
 		}
 	}
 }
 
-// revertMove undoes applyMove for move simulation.
-func (g *Game) revertMove(
-	fromSpot, toSpot *models.Spot,
-	movingPiece, capturedPiece models.Piece,
-	oldKingPosition models.Position,
-) {
-	movingPiece.MoveTo(fromSpot.Position)
+func (g *Game) revertMove(resolvedMove resolvedMove, oldKingPosition models.Position) {
+	resolvedMove.MovingPiece.MoveTo(resolvedMove.FromSpot.Position)
 
-	toSpot.Piece = capturedPiece
-	fromSpot.Piece = movingPiece
+	resolvedMove.ToSpot.Piece = resolvedMove.CapturedPiece
+	resolvedMove.FromSpot.Piece = resolvedMove.MovingPiece
 
-	if _, ok := movingPiece.(*pieces.King); ok {
-		if movingPiece.Color() == models.White {
+	if _, ok := resolvedMove.MovingPiece.(*pieces.King); ok {
+		if resolvedMove.MovingPiece.Color() == models.White {
 			g.WhiteKingPosition = oldKingPosition
 		} else {
 			g.BlackKingPosition = oldKingPosition
@@ -268,10 +335,10 @@ func removePiece(allPieces []models.Piece, pieceToRemove models.Piece) []models.
 	return allPieces
 }
 
-func (g *Game) containsMove(from models.Position, to models.Position) bool {
-	moves := g.legalMoves[from]
-	for _, move := range moves {
-		if move == to {
+func (g *Game) isLegalMove(move models.Move) bool {
+	legalMoves := g.legalMoves[move.From]
+	for _, m := range legalMoves {
+		if m == move.To {
 			return true
 		}
 	}

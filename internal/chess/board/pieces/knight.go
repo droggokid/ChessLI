@@ -16,7 +16,10 @@ func NewKnight(color models.Color, position models.Position) models.Piece {
 	}
 }
 
-// String returns a human-readable knight description.
+func (k *Knight) Type() models.PieceType {
+	return models.Knight
+}
+
 func (k *Knight) String() string {
 	if k == nil {
 		return "knight"
@@ -24,7 +27,6 @@ func (k *Knight) String() string {
 	return k.Describe("knight")
 }
 
-// PossibleMoves returns knight movement destinations before king-safety filtering.
 func (k *Knight) PossibleMoves(board models.BoardView) []models.Position {
 	allMoves := possibleMoves(k.PiecePosition, knightDirections)
 	availableMoves := make([]models.Position, 0, len(allMoves))
@@ -39,7 +41,6 @@ func (k *Knight) PossibleMoves(board models.BoardView) []models.Position {
 	return availableMoves
 }
 
-// AttackedSquares returns all squares controlled by the knight.
 func (k *Knight) AttackedSquares(board models.BoardView) []models.Position {
 	return possibleMoves(k.PiecePosition, knightDirections)
 }

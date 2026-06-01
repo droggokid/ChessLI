@@ -67,11 +67,16 @@ func TestLegalMovesForKingSafety(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			game := newEmptyGame(models.White)
 			tt.setup(game)
-			refreshGameState(game)
+			refreshGameState(t, game)
 
-			gotLegal := hasMove(game.LegalMovesFor(tt.from), tt.candidate)
+			moves, err := game.LegalMovesFor(tt.from)
+			if err != nil {
+				t.Fatalf("LegalMovesFor() error = %v", err)
+			}
+
+			gotLegal := hasMove(moves, tt.candidate)
 			if gotLegal != tt.wantLegal {
-				t.Fatalf("hasMove(%v) = %v, want %v; moves = %v", tt.candidate, gotLegal, tt.wantLegal, game.LegalMovesFor(tt.from))
+				t.Fatalf("hasMove(%v) = %v, want %v; moves = %v", tt.candidate, gotLegal, tt.wantLegal, moves)
 			}
 		})
 	}
@@ -81,12 +86,13 @@ func TestMoveUpdatesKingPosition(t *testing.T) {
 	game := newEmptyGame(models.White)
 	from := models.NewPosition(models.Rank1, models.FileE)
 	to := models.NewPosition(models.Rank2, models.FileE)
+	move := models.NewMove(from, to)
 
 	placePiece(game, pieces.NewKing(models.White, from), from)
 	placePiece(game, pieces.NewKing(models.Black, models.NewPosition(models.Rank8, models.FileA)), models.NewPosition(models.Rank8, models.FileA))
-	refreshGameState(game)
+	refreshGameState(t, game)
 
-	if err := game.Move(from, to); err != nil {
+	if err := game.Move(move); err != nil {
 		t.Fatalf("Move() error = %v", err)
 	}
 
@@ -98,6 +104,44 @@ func TestMoveUpdatesKingPosition(t *testing.T) {
 	}
 	if game.Board.SpotAt(to).Piece == nil {
 		t.Fatal("to spot has no piece")
+	}
+}
+
+func TestMoveRecordsHistory(t *testing.T) {
+	game := newEmptyGame(models.White)
+	from := models.NewPosition(models.Rank1, models.FileA)
+	to := models.NewPosition(models.Rank8, models.FileA)
+	move := models.NewMove(from, to)
+
+	placePiece(game, pieces.NewKing(models.White, models.NewPosition(models.Rank1, models.FileE)), models.NewPosition(models.Rank1, models.FileE))
+	placePiece(game, pieces.NewRook(models.White, from), from)
+	placePiece(game, pieces.NewKing(models.Black, models.NewPosition(models.Rank8, models.FileH)), models.NewPosition(models.Rank8, models.FileH))
+	placePiece(game, pieces.NewKnight(models.Black, to), to)
+	refreshGameState(t, game)
+
+	if err := game.Move(move); err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+
+	if len(game.MoveHistory) != 1 {
+		t.Fatalf("len(MoveHistory) = %d, want 1", len(game.MoveHistory))
+	}
+
+	record := game.MoveHistory[0]
+	if record.Move != move {
+		t.Fatalf("MoveHistory[0].Move = %v, want %v", record.Move, move)
+	}
+	if record.MovingColor != models.White {
+		t.Fatalf("MovingColor = %v, want %v", record.MovingColor, models.White)
+	}
+	if record.MovingPiece != models.Rook {
+		t.Fatalf("MovingPiece = %v, want %v", record.MovingPiece, models.Rook)
+	}
+	if record.CapturedPiece != models.Knight {
+		t.Fatalf("CapturedPiece = %v, want %v", record.CapturedPiece, models.Knight)
+	}
+	if !record.WasCapture {
+		t.Fatal("WasCapture = false, want true")
 	}
 }
 
@@ -138,6 +182,7 @@ func newEmptyGame(turn models.Color) *Game {
 		CapturedByBlack:   make([]models.Piece, 0, 16),
 		WhiteKingPosition: models.NewPosition(models.Rank1, models.FileE),
 		BlackKingPosition: models.NewPosition(models.Rank8, models.FileE),
+		MoveHistory:       make([]models.MoveRecord, 0),
 		legalMoves:        make(map[models.Position][]models.Position),
 	}
 }
@@ -159,11 +204,17 @@ func placePiece(game *Game, piece models.Piece, pos models.Position) {
 	}
 }
 
-func refreshGameState(game *Game) {
+func refreshGameState(t *testing.T, game *Game) {
+	t.Helper()
+
 	game.legalMoves = make(map[models.Position][]models.Position)
 	game.SquaresAttackedByWhite = game.CalculateAttackedSquares(models.White)
 	game.SquaresAttackedByBlack = game.CalculateAttackedSquares(models.Black)
-	game.legalMoves = game.CalculateAllLegalMoves()
+	var err error
+	game.legalMoves, err = game.CalculateAllLegalMoves()
+	if err != nil {
+		t.Fatalf("CalculateAllLegalMoves() error = %v", err)
+	}
 }
 
 func hasMove(moves []models.Position, want models.Position) bool {

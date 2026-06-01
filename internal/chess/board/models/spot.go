@@ -6,12 +6,9 @@ import (
 
 // Spot represents one square on the board.
 type Spot struct {
-	// Piece is the piece occupying the square, or nil when empty.
-	Piece Piece `json:"piece,omitempty"`
-	// Position is the square coordinate.
+	Piece    Piece    `json:"piece,omitempty"`
 	Position Position `json:"position"`
-	// Color is the visual board-square color.
-	Color Color `json:"color"`
+	Color    Color    `json:"color"`
 }
 
 // NewSpot creates a board square with an optional piece.
@@ -23,7 +20,6 @@ func NewSpot(piece Piece, position Position, color Color) *Spot {
 	}
 }
 
-// String returns a human-readable spot description.
 func (s *Spot) String() string {
 	if s == nil {
 		return "<nil spot>"

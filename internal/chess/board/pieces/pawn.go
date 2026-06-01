@@ -16,7 +16,10 @@ func NewPawn(color models.Color, position models.Position) models.Piece {
 	}
 }
 
-// String returns a human-readable pawn description.
+func (p *Pawn) Type() models.PieceType {
+	return models.Pawn
+}
+
 func (p *Pawn) String() string {
 	if p == nil {
 		return "pawn"
@@ -24,7 +27,7 @@ func (p *Pawn) String() string {
 	return p.Describe("pawn")
 }
 
-// PossibleMoves returns pawn movement destinations before king-safety filtering.
+// PossibleMoves returns forward moves and diagonal captures.
 func (p *Pawn) PossibleMoves(board models.BoardView) []models.Position {
 	var (
 		moveSet []models.Direction
@@ -64,7 +67,6 @@ func (p *Pawn) PossibleMoves(board models.BoardView) []models.Position {
 	return moves
 }
 
-// AttackedSquares returns the diagonal squares controlled by the pawn.
 func (p *Pawn) AttackedSquares(board models.BoardView) []models.Position {
 	if p.PieceColor == models.White {
 		return possibleMoves(p.PiecePosition, whitePawnDirections[1:])

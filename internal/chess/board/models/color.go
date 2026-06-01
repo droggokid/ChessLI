@@ -4,13 +4,10 @@ package models
 type Color string
 
 const (
-	// White is the white side.
 	White Color = "white"
-	// Black is the black side.
 	Black Color = "black"
 )
 
-// String returns the color text.
 func (c Color) String() string {
 	return string(c)
 }

@@ -16,7 +16,10 @@ func NewKing(color models.Color, position models.Position) models.Piece {
 	}
 }
 
-// String returns a human-readable king description.
+func (k *King) Type() models.PieceType {
+	return models.King
+}
+
 func (k *King) String() string {
 	if k == nil {
 		return "king"
@@ -24,7 +27,7 @@ func (k *King) String() string {
 	return k.Describe("king")
 }
 
-// PossibleMoves returns adjacent king destinations before attacked-square filtering.
+// PossibleMoves returns adjacent destinations before attacked-square filtering.
 func (k *King) PossibleMoves(board models.BoardView) []models.Position {
 	moves := make([]models.Position, 0)
 	for _, pos := range possibleMoves(k.PiecePosition, kingDirections) {
@@ -37,7 +40,6 @@ func (k *King) PossibleMoves(board models.BoardView) []models.Position {
 	return moves
 }
 
-// AttackedSquares returns all adjacent squares controlled by the king.
 func (k *King) AttackedSquares(board models.BoardView) []models.Position {
 	return possibleMoves(k.PiecePosition, kingDirections)
 }

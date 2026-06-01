@@ -85,3 +85,16 @@ func TestKnightPossibleMoves(t *testing.T) {
 		})
 	}
 }
+
+func TestKnightAttackedSquares(t *testing.T) {
+	board := newTestBoard()
+	from := models.NewPosition(models.Rank1, models.FileA)
+	knight := NewKnight(models.White, from)
+	board.place(knight, from)
+	board.place(NewPawn(models.White, models.NewPosition(models.Rank3, models.FileB)), models.NewPosition(models.Rank3, models.FileB))
+
+	assertMoves(t, knight.AttackedSquares(board),
+		models.NewPosition(models.Rank3, models.FileB),
+		models.NewPosition(models.Rank2, models.FileC),
+	)
+}

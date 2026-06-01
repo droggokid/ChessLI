@@ -7,9 +7,7 @@ import (
 
 // Player represents a named player assigned to a color.
 type Player struct {
-	// Name is the player's display name.
-	Name string
-	// Color is the side assigned to the player.
+	Name  string
 	Color models.Color
 }
 
@@ -18,7 +16,6 @@ func NewPlayer(name string, color models.Color) Player {
 	return Player{Name: name, Color: color}
 }
 
-// String returns a human-readable player description.
 func (p *Player) String() string {
 	return fmt.Sprintf("%s player %s", p.Color, p.Name)
 }

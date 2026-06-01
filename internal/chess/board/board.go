@@ -7,11 +7,8 @@ import (
 	"strings"
 )
 
-// Board represents an 8x8 chess board indexed by rank and file.
-//
-// The first array index is the rank index and the second is the file index.
+// Board represents an 8x8 chess board.
 type Board struct {
-	// Spots stores every board square by rank index, then file index.
 	Spots [8][8]*models.Spot `json:"spots"`
 }
 
@@ -31,7 +28,6 @@ func (b *Board) SpotAt(pos models.Position) *models.Spot {
 	return b.Spots[pos.Rank.ToIndex()][pos.File.ToIndex()]
 }
 
-// String returns a white-side board view from rank 8 down to rank 1.
 func (b *Board) String() string {
 	return b.stringByRankOrder(models.Rank8, models.Rank1, -1)
 }

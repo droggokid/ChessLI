@@ -14,7 +14,7 @@ func newTestBoard() *testBoard {
 	board := &testBoard{}
 	for rank := models.Rank1; rank <= models.Rank8; rank++ {
 		for file := models.FileA.ToIndex(); file <= models.FileH.ToIndex(); file++ {
-			position := models.NewPosition(rank, models.ToFile(file))
+			position := pos(rank, models.ToFile(file))
 			board.spots[rank.ToIndex()][file] = models.NewSpot(nil, position, models.White)
 		}
 	}
@@ -30,6 +30,15 @@ func (b *testBoard) SpotAt(pos models.Position) *models.Spot {
 
 func (b *testBoard) place(piece models.Piece, pos models.Position) {
 	b.SpotAt(pos).Piece = piece
+}
+
+func (b *testBoard) placePawn(color models.Color, rank models.Rank, file models.File) {
+	position := pos(rank, file)
+	b.place(NewPawn(color, position), position)
+}
+
+func pos(rank models.Rank, file models.File) models.Position {
+	return models.NewPosition(rank, file)
 }
 
 func assertMoves(t *testing.T, got []models.Position, want ...models.Position) {
