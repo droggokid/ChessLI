@@ -6,6 +6,7 @@ import (
 	"chessli/internal/chess/board"
 	"chessli/internal/chess/board/models"
 	"chessli/internal/chess/board/pieces"
+	"chessli/internal/chess/moves"
 )
 
 func TestLegalMovesForKingSafety(t *testing.T) {
@@ -94,9 +95,82 @@ func TestCalculateAttackedSquaresSkipsCapturedPieceLeftInSlice(t *testing.T) {
 
 	game.Board.SpotAt(blackRookPos).Piece = whiteRook
 
-	attacked := game.CalculateAttackedSquares(models.Black)
+	attacked := game.rules.CalculateAttackedSquares(models.Black)
 	if attacked[models.NewPosition(models.Rank1, models.FileE)] {
 		t.Fatalf("captured rook still contributed attacks: %v", attacked)
+	}
+}
+
+func TestMoveUpdatesKingPosition(t *testing.T) {
+	game := newEmptyGame(models.White)
+	from := models.NewPosition(models.Rank1, models.FileE)
+	to := models.NewPosition(models.Rank2, models.FileE)
+	placePiece(game, pieces.NewKing(models.White, from), from)
+	placePiece(game, pieces.NewKing(models.Black, models.NewPosition(models.Rank8, models.FileA)), models.NewPosition(models.Rank8, models.FileA))
+	refreshGameState(t, game)
+
+	if err := game.Move(models.NewMove(from, to)); err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+
+	if game.WhiteKingPosition != to {
+		t.Fatalf("WhiteKingPosition = %v, want %v", game.WhiteKingPosition, to)
+	}
+	if game.Board.SpotAt(from).Piece != nil {
+		t.Fatalf("from spot still has piece: %v", game.Board.SpotAt(from).Piece)
+	}
+	if game.Board.SpotAt(to).Piece == nil {
+		t.Fatal("to spot has no piece")
+	}
+}
+
+func TestMoveCapturesPieceAndRecordsHistory(t *testing.T) {
+	game := newEmptyGame(models.White)
+	from := models.NewPosition(models.Rank1, models.FileA)
+	to := models.NewPosition(models.Rank8, models.FileA)
+	whiteKingPos := models.NewPosition(models.Rank1, models.FileE)
+	blackKingPos := models.NewPosition(models.Rank8, models.FileH)
+	rook := pieces.NewRook(models.White, from)
+	capturedKnight := pieces.NewKnight(models.Black, to)
+	placePiece(game, pieces.NewKing(models.White, whiteKingPos), whiteKingPos)
+	placePiece(game, rook, from)
+	placePiece(game, pieces.NewKing(models.Black, blackKingPos), blackKingPos)
+	placePiece(game, capturedKnight, to)
+	refreshGameState(t, game)
+
+	move := models.NewMove(from, to)
+	if err := game.Move(move); err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+
+	if len(game.CapturedByWhite) != 1 {
+		t.Fatalf("len(CapturedByWhite) = %d, want 1", len(game.CapturedByWhite))
+	}
+	if game.CapturedByWhite[0] != capturedKnight {
+		t.Fatalf("CapturedByWhite[0] = %v, want %v", game.CapturedByWhite[0], capturedKnight)
+	}
+	if containsPiece(game.BlackPieces, capturedKnight) {
+		t.Fatal("captured piece still exists in BlackPieces")
+	}
+	if len(game.MoveHistory) != 1 {
+		t.Fatalf("len(MoveHistory) = %d, want 1", len(game.MoveHistory))
+	}
+
+	record := game.MoveHistory[0]
+	if record.Move != move {
+		t.Fatalf("MoveHistory[0].Move = %v, want %v", record.Move, move)
+	}
+	if record.MovingColor != models.White {
+		t.Fatalf("MovingColor = %v, want %v", record.MovingColor, models.White)
+	}
+	if record.MovingPiece != models.Rook {
+		t.Fatalf("MovingPiece = %v, want %v", record.MovingPiece, models.Rook)
+	}
+	if record.CapturedPiece != models.Knight {
+		t.Fatalf("CapturedPiece = %v, want %v", record.CapturedPiece, models.Knight)
+	}
+	if !record.WasCapture {
+		t.Fatal("WasCapture = false, want true")
 	}
 }
 
@@ -109,6 +183,7 @@ func newEmptyGame(turn models.Color) *Game {
 	}
 
 	return &Game{
+		moveService:       moves.NewMoveService(gameBoard),
 		Board:             gameBoard,
 		Turn:              turn,
 		WhitePlayer:       NewPlayer("white", models.White),
@@ -120,7 +195,6 @@ func newEmptyGame(turn models.Color) *Game {
 		WhiteKingPosition: models.NewPosition(models.Rank1, models.FileE),
 		BlackKingPosition: models.NewPosition(models.Rank8, models.FileE),
 		MoveHistory:       make([]MoveRecord, 0),
-		legalMoves:        make(map[models.Position][]models.Position),
 	}
 }
 
@@ -144,19 +218,28 @@ func placePiece(game *Game, piece models.Piece, pos models.Position) {
 func refreshGameState(t *testing.T, game *Game) {
 	t.Helper()
 
-	game.legalMoves = make(map[models.Position][]models.Position)
-	game.SquaresAttackedByWhite = game.CalculateAttackedSquares(models.White)
-	game.SquaresAttackedByBlack = game.CalculateAttackedSquares(models.Black)
 	var err error
-	game.legalMoves, err = game.CalculateAllLegalMoves()
+	game.rules, err = game.prepareRules()
 	if err != nil {
-		t.Fatalf("CalculateAllLegalMoves() error = %v", err)
+		t.Fatalf("prepareRules() error = %v", err)
 	}
+
+	game.SquaresAttackedByWhite = game.rules.CalculateAttackedSquares(models.White)
+	game.SquaresAttackedByBlack = game.rules.CalculateAttackedSquares(models.Black)
 }
 
 func hasMove(moves []models.Position, want models.Position) bool {
 	for _, move := range moves {
 		if move == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPiece(pieces []models.Piece, want models.Piece) bool {
+	for _, piece := range pieces {
+		if piece == want {
 			return true
 		}
 	}
