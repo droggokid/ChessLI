@@ -17,7 +17,7 @@ const (
 	King   PieceType = "king"
 )
 
-//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=piece.go -destination=mock_piece_test.go -package=models
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=piece.go -destination=piece_mock.go -package=models
 
 // Piece describes behavior shared by all concrete chess pieces.
 type Piece interface {

@@ -27,9 +27,9 @@ Use standard Go formatting via `gofmt` or `make fmt`; tabs are handled by the fo
 
 Use Go’s built-in `testing` package and keep tests next to the code they cover with `_test.go` suffixes. Name tests by behavior, such as `TestMoveRejectsOwnPieceCapture`. Prefer table-driven tests with `t.Run` when checking variants of the same behavior. Keep one-off tests direct when a table would add noise.
 
-Test helpers must live in `_test.go` files, usually `test_helpers_test.go`, and must call `t.Helper()` when they receive `*testing.T`. Avoid panics in tests; fail through `t.Fatalf` or `t.Fatal`. Prefer comparing domain values directly and keep fixtures small enough that the expected behavior is visible in the test.
+Test helpers must live in `_test.go` files, usually `test_helpers_test.go`, and must call `t.Helper()` when they receive `*testing.T`. Use explicit test helpers for shared fixture setup instead of hiding important setup in broad abstractions. Prefer table-driven tests with `t.Run` for repeated cases, especially error checks where only the input and expected error differ. Avoid panics in tests; fail through `t.Fatalf` or `t.Fatal`. Prefer comparing domain values directly and keep fixtures small enough that the expected behavior is visible in the test.
 
-For gomock, keep `//go:generate go run go.uber.org/mock/mockgen@...` directives near the interface they generate from. Generate mocks into `_test.go` files when they are only used by tests. Run `make generate` after interface changes, then `make test` and `make vet`.
+For gomock, keep `//go:generate go run go.uber.org/mock/mockgen@...` directives near the interface they generate from. Generate mocks as normal package files named after the interface source, such as `piece_mock.go`, `board_view_mock.go`, or `move_service_mock.go`. Run `make generate` after interface changes, then `make test` and `make vet`.
 
 ## Commit & Pull Request Guidelines
 
