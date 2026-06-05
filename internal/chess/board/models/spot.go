@@ -30,5 +30,5 @@ func (s *Spot) String() string {
 		piece = s.Piece.String()
 	}
 
-	return fmt.Sprintf("%s [%s] %s", s.Position, s.Color, piece)
+	return fmt.Sprintf("%s %s", s.Position, piece)
 }

@@ -17,7 +17,9 @@ type Rules struct {
 
 	whiteKingPosition models.Position
 	blackKingPosition models.Position
-	legalMoves        map[models.Position][]models.Position
+
+	legalMoves      map[models.Position][]models.Position
+	attackedSquares map[models.Position]bool
 }
 
 func NewRules(
@@ -38,6 +40,7 @@ func NewRules(
 		whiteKingPosition: whiteKingPosition,
 		blackKingPosition: blackKingPosition,
 		legalMoves:        make(map[models.Position][]models.Position),
+		attackedSquares:   make(map[models.Position]bool),
 	}
 
 	var err error
@@ -45,6 +48,8 @@ func NewRules(
 	if err != nil {
 		return Rules{}, err
 	}
+
+	newRules.attackedSquares = newRules.CalculateAttackedSquares(turn.Flip())
 
 	return newRules, nil
 }
@@ -143,6 +148,59 @@ func (r *Rules) LegalMovesFor(position models.Position) ([]models.Position, erro
 	return legalMoves, nil
 }
 
+func (r *Rules) IsDraw() bool {
+	return r.InsufficientMaterial() || r.IsStalemate()
+}
+
+func (r *Rules) InsufficientMaterial() bool {
+	whitePieces := nonKingPieces(r.whitePieces)
+	blackPieces := nonKingPieces(r.blackPieces)
+
+	if insufficientAgainstAnyMaterial(whitePieces) && insufficientAgainstAnyMaterial(blackPieces) {
+		return true
+	}
+
+	if twoKnightsAgainstLoneKing(whitePieces, blackPieces) {
+		return true
+	}
+
+	return false
+}
+
+func (r *Rules) IsStalemate() bool {
+	if r.CurrentPlayerIsInCheck() {
+		return false
+	}
+
+	for _, m := range r.legalMoves {
+		if len(m) > 0 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (r *Rules) IsCheckmate() bool {
+	if !r.CurrentPlayerIsInCheck() {
+		return false
+	}
+
+	for _, m := range r.legalMoves {
+		if len(m) > 0 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (r *Rules) CurrentPlayerIsInCheck() bool {
+	kingPosition := r.kingPosition(r.turn)
+	_, found := r.attackedSquares[kingPosition]
+	return found
+}
+
 func (r *Rules) IsLegalMove(move models.Move) bool {
 	legalMoves := r.legalMoves[move.From]
 	for _, m := range legalMoves {
@@ -151,6 +209,41 @@ func (r *Rules) IsLegalMove(move models.Move) bool {
 		}
 	}
 	return false
+}
+
+func nonKingPieces(pieces []models.Piece) []models.Piece {
+	nonKings := make([]models.Piece, 0, len(pieces))
+	for _, piece := range pieces {
+		if piece.Type() != models.King {
+			nonKings = append(nonKings, piece)
+		}
+	}
+	return nonKings
+}
+
+func insufficientAgainstAnyMaterial(pieces []models.Piece) bool {
+	if len(pieces) == 0 {
+		return true
+	}
+
+	return len(pieces) == 1 && isSingleMinorPiece(pieces[0])
+}
+
+func isSingleMinorPiece(piece models.Piece) bool {
+	return piece.Type() == models.Bishop || piece.Type() == models.Knight
+}
+
+func twoKnightsAgainstLoneKing(whitePieces []models.Piece, blackPieces []models.Piece) bool {
+	return hasOnlyTwoKnights(whitePieces) && len(blackPieces) == 0 ||
+		hasOnlyTwoKnights(blackPieces) && len(whitePieces) == 0
+}
+
+func hasOnlyTwoKnights(pieces []models.Piece) bool {
+	if len(pieces) != 2 {
+		return false
+	}
+
+	return pieces[0].Type() == models.Knight && pieces[1].Type() == models.Knight
 }
 
 // moveKeepsKingSafe simulates a candidate move and reports whether the moving

@@ -13,8 +13,12 @@ import (
 type Game struct {
 	// State
 	moveService moves.MoveService
-	Board       *board.Board
-	Turn        models.Color
+
+	State  GameState
+	Result *GameResult
+
+	Board *board.Board
+	Turn  models.Color
 
 	WhitePlayer Player
 	BlackPlayer Player
@@ -24,9 +28,6 @@ type Game struct {
 
 	CapturedByWhite []models.Piece
 	CapturedByBlack []models.Piece
-
-	SquaresAttackedByWhite map[models.Position]bool
-	SquaresAttackedByBlack map[models.Position]bool
 
 	WhiteKingPosition models.Position
 	BlackKingPosition models.Position
@@ -73,14 +74,13 @@ func NewGame(player1 string, player2 string) (Game, error) {
 
 	game.rules = gameRules
 
-	game.SquaresAttackedByWhite = gameRules.CalculateAttackedSquares(models.White)
-	game.SquaresAttackedByBlack = gameRules.CalculateAttackedSquares(models.Black)
+	game.updateState()
 
 	return game, nil
 }
 
 func (g *Game) Move(move models.Move) error {
-	resolved, err := g.VerifyMove(move, g.Turn)
+	resolved, err := g.VerifyMove(move)
 	if err != nil {
 		return err
 	}
@@ -102,13 +102,13 @@ func (g *Game) Move(move models.Move) error {
 	return nil
 }
 
-func (g *Game) VerifyMove(move models.Move, turn models.Color) (models.ResolvedMove, error) {
+func (g *Game) VerifyMove(move models.Move) (models.ResolvedMove, error) {
 	resolved, err := g.moveService.ResolveMove(move)
 	if err != nil {
 		return models.ResolvedMove{}, err
 	}
 
-	if resolved.MovingPiece.Color() != turn {
+	if resolved.MovingPiece.Color() != g.Turn {
 		return models.ResolvedMove{}, errors.New("cannot move opponent's piece")
 	}
 
@@ -141,6 +141,22 @@ func (g *Game) LegalMovesFor(pos models.Position) ([]models.Position, error) {
 	return g.rules.LegalMovesFor(pos)
 }
 
+func (g *Game) IsDraw() bool {
+	return g.rules.IsDraw()
+}
+
+func (g *Game) IsStalemate() bool {
+	return g.rules.IsStalemate()
+}
+
+func (g *Game) IsCheckmate() bool {
+	return g.rules.IsCheckmate()
+}
+
+func (g *Game) CurrentPlayerIsInCheck() bool {
+	return g.rules.CurrentPlayerIsInCheck()
+}
+
 func (g *Game) prepareNextTurn() error {
 	g.Turn = g.Turn.Flip()
 
@@ -150,8 +166,7 @@ func (g *Game) prepareNextTurn() error {
 		return err
 	}
 
-	g.SquaresAttackedByWhite = g.rules.CalculateAttackedSquares(models.White)
-	g.SquaresAttackedByBlack = g.rules.CalculateAttackedSquares(models.Black)
+	g.updateState()
 
 	return nil
 }
@@ -205,4 +220,34 @@ func (g *Game) updateKingPosition(resolved models.ResolvedMove) {
 	} else {
 		g.BlackKingPosition = resolved.ToSpot.Position
 	}
+}
+
+func (g *Game) updateState() {
+	g.Result = NewGameResult()
+
+	switch {
+	case g.IsCheckmate():
+		g.State = GameStateCheckmate
+		g.handleWin()
+	case g.IsDraw():
+		g.State = GameStateDraw
+		g.handleDraw()
+	case g.CurrentPlayerIsInCheck():
+		g.State = GameStateCheck
+	default:
+		g.State = GameStateActive
+	}
+}
+
+func (g *Game) handleWin() {
+	winnerColor := g.Turn.Flip()
+	if winnerColor == models.White {
+		g.Result.Winner = &g.WhitePlayer
+	} else if winnerColor == models.Black {
+		g.Result.Winner = &g.BlackPlayer
+	}
+}
+
+func (g *Game) handleDraw() {
+	g.Result.Draw = true
 }
