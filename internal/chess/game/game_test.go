@@ -174,6 +174,69 @@ func TestMoveCapturesPieceAndRecordsHistory(t *testing.T) {
 	}
 }
 
+func TestMoveCanCreateDiscoveredCheck(t *testing.T) {
+	game := newEmptyGame(models.White)
+	whiteKingPos := models.NewPosition(models.Rank1, models.FileA)
+	blackKingPos := models.NewPosition(models.Rank8, models.FileE)
+	whiteRookPos := models.NewPosition(models.Rank1, models.FileE)
+	whiteBishopFrom := models.NewPosition(models.Rank2, models.FileE)
+	whiteBishopTo := models.NewPosition(models.Rank3, models.FileD)
+
+	placePiece(game, pieces.NewKing(models.White, whiteKingPos), whiteKingPos)
+	placePiece(game, pieces.NewRook(models.White, whiteRookPos), whiteRookPos)
+	placePiece(game, pieces.NewBishop(models.White, whiteBishopFrom), whiteBishopFrom)
+	placePiece(game, pieces.NewKing(models.Black, blackKingPos), blackKingPos)
+	refreshGameState(t, game)
+
+	if game.State != GameStateActive {
+		t.Fatalf("State = %v, want %v before discovered check move", game.State, GameStateActive)
+	}
+
+	if err := game.Move(models.NewMove(whiteBishopFrom, whiteBishopTo)); err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+
+	if !game.CurrentPlayerIsInCheck() {
+		t.Fatal("current player is not in check after discovered check move")
+	}
+	if game.State != GameStateCheck {
+		t.Fatalf("State = %v, want %v after discovered check move", game.State, GameStateCheck)
+	}
+}
+
+func TestMoveCanEscapeCheckAndGiveCheck(t *testing.T) {
+	game := newEmptyGame(models.White)
+	whiteKingPos := models.NewPosition(models.Rank1, models.FileE)
+	whiteRookFrom := models.NewPosition(models.Rank2, models.FileA)
+	whiteRookTo := models.NewPosition(models.Rank2, models.FileE)
+	blackKingPos := models.NewPosition(models.Rank2, models.FileH)
+	blackRookPos := models.NewPosition(models.Rank8, models.FileE)
+
+	placePiece(game, pieces.NewKing(models.White, whiteKingPos), whiteKingPos)
+	placePiece(game, pieces.NewRook(models.White, whiteRookFrom), whiteRookFrom)
+	placePiece(game, pieces.NewKing(models.Black, blackKingPos), blackKingPos)
+	placePiece(game, pieces.NewRook(models.Black, blackRookPos), blackRookPos)
+	refreshGameState(t, game)
+
+	if !game.CurrentPlayerIsInCheck() {
+		t.Fatal("current player is not in check before move")
+	}
+	if game.State != GameStateCheck {
+		t.Fatalf("State = %v, want %v before move", game.State, GameStateCheck)
+	}
+
+	if err := game.Move(models.NewMove(whiteRookFrom, whiteRookTo)); err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+
+	if !game.CurrentPlayerIsInCheck() {
+		t.Fatal("current player is not in check after white escapes check")
+	}
+	if game.State != GameStateCheck {
+		t.Fatalf("State = %v, want %v after white escapes check", game.State, GameStateCheck)
+	}
+}
+
 func newEmptyGame(turn models.Color) *Game {
 	gameBoard := board.NewBoard()
 	for rank := models.Rank1; rank <= models.Rank8; rank++ {
@@ -223,9 +286,7 @@ func refreshGameState(t *testing.T, game *Game) {
 	if err != nil {
 		t.Fatalf("prepareRules() error = %v", err)
 	}
-
-	game.SquaresAttackedByWhite = game.rules.CalculateAttackedSquares(models.White)
-	game.SquaresAttackedByBlack = game.rules.CalculateAttackedSquares(models.Black)
+	game.updateState()
 }
 
 func hasMove(moves []models.Position, want models.Position) bool {
