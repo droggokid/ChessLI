@@ -4,6 +4,7 @@ package game
 import (
 	"chessli/internal/chess/board"
 	"chessli/internal/chess/board/models"
+	"chessli/internal/chess/board/pieces"
 	"chessli/internal/chess/moves"
 	"chessli/internal/chess/rules"
 	"errors"
@@ -46,6 +47,8 @@ type MoveRecord struct {
 	// CapturedPiece is empty when no piece was captured.
 	CapturedPiece models.PieceType
 	WasCapture    bool
+	PromotedTo    models.PieceType
+	WasPromotion  bool
 }
 
 // NewGame creates a standard chess game with two named players.
@@ -89,7 +92,19 @@ func (g *Game) Move(move models.Move) error {
 		g.capturePiece(resolved.CapturedPiece, resolved.MovingPiece.Color())
 	}
 
-	g.moveService.ApplyMove(resolved)
+	if isPromotionMove(resolved) {
+		promotedPiece, err := newPromotionPiece(g.Turn, resolved.Move.To, *resolved.Move.Promotion)
+		if err != nil {
+			return err
+		}
+
+		g.moveService.ApplyMove(resolved)
+		g.replacePromotedPawn(resolved.MovingPiece, promotedPiece)
+		resolved.ToSpot.Piece = promotedPiece
+	} else {
+		g.moveService.ApplyMove(resolved)
+	}
+
 	g.updateKingPosition(resolved)
 
 	g.recordMove(resolved)
@@ -116,6 +131,18 @@ func (g *Game) VerifyMove(move models.Move) (models.ResolvedMove, error) {
 		return models.ResolvedMove{}, errors.New("illegal move")
 	}
 
+	if isPromotionMove(resolved) && resolved.Move.Promotion == nil {
+		return models.ResolvedMove{}, errors.New("cannot promote move")
+	}
+
+	if isPromotionMove(resolved) && !isPromotionType(*resolved.Move.Promotion) {
+		return models.ResolvedMove{}, errors.New("invalid promotion type")
+	}
+
+	if !isPromotionMove(resolved) && resolved.Move.Promotion != nil {
+		return models.ResolvedMove{}, errors.New("cannot promote move")
+	}
+
 	return resolved, nil
 }
 
@@ -135,6 +162,35 @@ func (g *Game) prepareRules() (rules.Rules, error) {
 	}
 
 	return newRules, nil
+}
+
+func newPromotionPiece(color models.Color, position models.Position, pieceType models.PieceType) (models.Piece, error) {
+	var promotedPiece models.Piece
+
+	switch pieceType {
+	case models.Knight:
+		promotedPiece = pieces.NewKnight(color, position)
+	case models.Bishop:
+		promotedPiece = pieces.NewBishop(color, position)
+	case models.Rook:
+		promotedPiece = pieces.NewRook(color, position)
+	case models.Queen:
+		promotedPiece = pieces.NewQueen(color, position)
+	default:
+		return nil, errors.New("invalid piece type")
+	}
+
+	return promotedPiece, nil
+}
+
+func (g *Game) replacePromotedPawn(pawn, promotedPiece models.Piece) {
+	if pawn.Color() == models.White {
+		g.WhitePieces = removePiece(g.WhitePieces, pawn)
+		g.WhitePieces = append(g.WhitePieces, promotedPiece)
+	} else {
+		g.BlackPieces = removePiece(g.BlackPieces, pawn)
+		g.BlackPieces = append(g.BlackPieces, promotedPiece)
+	}
 }
 
 func (g *Game) LegalMovesFor(pos models.Position) ([]models.Position, error) {
@@ -185,6 +241,12 @@ func (g *Game) recordMove(resolvedMove models.ResolvedMove) {
 		MovingPiece:   resolvedMove.MovingPiece.Type(),
 		CapturedPiece: capturedPiece,
 		WasCapture:    wasCaptured,
+		PromotedTo:    models.PieceType(""),
+		WasPromotion:  isPromotionMove(resolvedMove),
+	}
+
+	if record.WasPromotion {
+		record.PromotedTo = *resolvedMove.Move.Promotion
 	}
 
 	g.MoveHistory = append(g.MoveHistory, record)
@@ -208,6 +270,18 @@ func removePiece(allPieces []models.Piece, pieceToRemove models.Piece) []models.
 		}
 	}
 	return allPieces
+}
+
+func isPromotionMove(resolved models.ResolvedMove) bool {
+	return resolved.MovingPiece.Type() == models.Pawn &&
+		(resolved.ToSpot.Position.Rank == models.Rank1 || resolved.ToSpot.Position.Rank == models.Rank8)
+}
+
+func isPromotionType(promotion models.PieceType) bool {
+	return promotion == models.Queen ||
+		promotion == models.Rook ||
+		promotion == models.Bishop ||
+		promotion == models.Knight
 }
 
 func (g *Game) updateKingPosition(resolved models.ResolvedMove) {

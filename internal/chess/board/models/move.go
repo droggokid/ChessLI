@@ -4,8 +4,9 @@ import "fmt"
 
 // Move represents a requested board transition.
 type Move struct {
-	From Position
-	To   Position
+	From      Position
+	To        Position
+	Promotion *PieceType
 }
 
 type ResolvedMove struct {

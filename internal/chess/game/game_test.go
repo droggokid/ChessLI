@@ -174,6 +174,206 @@ func TestMoveCapturesPieceAndRecordsHistory(t *testing.T) {
 	}
 }
 
+func TestMovePromotesPawn(t *testing.T) {
+	tests := []struct {
+		name      string
+		promotion models.PieceType
+	}{
+		{name: "queen", promotion: models.Queen},
+		{name: "rook", promotion: models.Rook},
+		{name: "bishop", promotion: models.Bishop},
+		{name: "knight", promotion: models.Knight},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			game := newEmptyGame(models.White)
+			from := models.NewPosition(models.Rank7, models.FileA)
+			to := models.NewPosition(models.Rank8, models.FileA)
+			pawn := pieces.NewPawn(models.White, from)
+
+			placePiece(game, pieces.NewKing(models.White, models.NewPosition(models.Rank1, models.FileE)), models.NewPosition(models.Rank1, models.FileE))
+			placePiece(game, pieces.NewKing(models.Black, models.NewPosition(models.Rank8, models.FileH)), models.NewPosition(models.Rank8, models.FileH))
+			placePiece(game, pawn, from)
+			refreshGameState(t, game)
+
+			if err := game.Move(newPromotionMove(from, to, tt.promotion)); err != nil {
+				t.Fatalf("Move() error = %v", err)
+			}
+
+			promotedPiece := game.Board.SpotAt(to).Piece
+			if promotedPiece == nil {
+				t.Fatal("promotion target has no piece")
+			}
+			if promotedPiece.Type() != tt.promotion {
+				t.Fatalf("promoted piece type = %v, want %v", promotedPiece.Type(), tt.promotion)
+			}
+			if promotedPiece.Color() != models.White {
+				t.Fatalf("promoted piece color = %v, want %v", promotedPiece.Color(), models.White)
+			}
+			if promotedPiece.Position() != to {
+				t.Fatalf("promoted piece position = %v, want %v", promotedPiece.Position(), to)
+			}
+			if containsPiece(game.WhitePieces, pawn) {
+				t.Fatal("promoted pawn still exists in WhitePieces")
+			}
+			if !containsPiece(game.WhitePieces, promotedPiece) {
+				t.Fatal("promoted piece missing from WhitePieces")
+			}
+			if game.Board.SpotAt(from).Piece != nil {
+				t.Fatal("promotion source still has a piece")
+			}
+			if len(game.MoveHistory) != 1 {
+				t.Fatalf("len(MoveHistory) = %d, want 1", len(game.MoveHistory))
+			}
+
+			record := game.MoveHistory[0]
+			if record.MovingPiece != models.Pawn {
+				t.Fatalf("MovingPiece = %v, want %v", record.MovingPiece, models.Pawn)
+			}
+			if !record.WasPromotion {
+				t.Fatal("WasPromotion = false, want true")
+			}
+			if record.PromotedTo != tt.promotion {
+				t.Fatalf("PromotedTo = %v, want %v", record.PromotedTo, tt.promotion)
+			}
+		})
+	}
+}
+
+func TestMoveRejectsInvalidPromotion(t *testing.T) {
+	tests := []struct {
+		name string
+		move func(from, to models.Position) models.Move
+	}{
+		{
+			name: "promotion move without promotion choice",
+			move: func(from, to models.Position) models.Move {
+				return models.NewMove(from, to)
+			},
+		},
+		{
+			name: "promotion move to king",
+			move: func(from, to models.Position) models.Move {
+				return newPromotionMove(from, to, models.King)
+			},
+		},
+		{
+			name: "promotion move to pawn",
+			move: func(from, to models.Position) models.Move {
+				return newPromotionMove(from, to, models.Pawn)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			game := newEmptyGame(models.White)
+			from := models.NewPosition(models.Rank7, models.FileA)
+			to := models.NewPosition(models.Rank8, models.FileA)
+			pawn := pieces.NewPawn(models.White, from)
+
+			placePiece(game, pieces.NewKing(models.White, models.NewPosition(models.Rank1, models.FileE)), models.NewPosition(models.Rank1, models.FileE))
+			placePiece(game, pieces.NewKing(models.Black, models.NewPosition(models.Rank8, models.FileH)), models.NewPosition(models.Rank8, models.FileH))
+			placePiece(game, pawn, from)
+			refreshGameState(t, game)
+
+			if err := game.Move(tt.move(from, to)); err == nil {
+				t.Fatal("Move() error = nil, want error")
+			}
+			if game.Board.SpotAt(from).Piece != pawn {
+				t.Fatal("invalid promotion moved pawn from source")
+			}
+			if game.Board.SpotAt(to).Piece != nil {
+				t.Fatal("invalid promotion changed target square")
+			}
+			if !containsPiece(game.WhitePieces, pawn) {
+				t.Fatal("invalid promotion removed pawn from WhitePieces")
+			}
+		})
+	}
+}
+
+func TestMoveRejectsPromotionOnNonPromotionMove(t *testing.T) {
+	game := newEmptyGame(models.White)
+	from := models.NewPosition(models.Rank2, models.FileA)
+	to := models.NewPosition(models.Rank3, models.FileA)
+	pawn := pieces.NewPawn(models.White, from)
+
+	placePiece(game, pieces.NewKing(models.White, models.NewPosition(models.Rank1, models.FileE)), models.NewPosition(models.Rank1, models.FileE))
+	placePiece(game, pieces.NewKing(models.Black, models.NewPosition(models.Rank8, models.FileH)), models.NewPosition(models.Rank8, models.FileH))
+	placePiece(game, pawn, from)
+	refreshGameState(t, game)
+
+	if err := game.Move(newPromotionMove(from, to, models.Queen)); err == nil {
+		t.Fatal("Move() error = nil, want error")
+	}
+	if game.Board.SpotAt(from).Piece != pawn {
+		t.Fatal("non-promotion move with promotion changed source square")
+	}
+	if game.Board.SpotAt(to).Piece != nil {
+		t.Fatal("non-promotion move with promotion changed target square")
+	}
+}
+
+func TestMovePromotionCapture(t *testing.T) {
+	game := newEmptyGame(models.White)
+	from := models.NewPosition(models.Rank7, models.FileB)
+	to := models.NewPosition(models.Rank8, models.FileA)
+	pawn := pieces.NewPawn(models.White, from)
+	capturedKnight := pieces.NewKnight(models.Black, to)
+
+	placePiece(game, pieces.NewKing(models.White, models.NewPosition(models.Rank1, models.FileE)), models.NewPosition(models.Rank1, models.FileE))
+	placePiece(game, pieces.NewKing(models.Black, models.NewPosition(models.Rank8, models.FileH)), models.NewPosition(models.Rank8, models.FileH))
+	placePiece(game, pawn, from)
+	placePiece(game, capturedKnight, to)
+	refreshGameState(t, game)
+
+	if err := game.Move(newPromotionMove(from, to, models.Queen)); err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+
+	promotedPiece := game.Board.SpotAt(to).Piece
+	if promotedPiece == nil || promotedPiece.Type() != models.Queen {
+		t.Fatalf("promotion target piece = %v, want white queen", promotedPiece)
+	}
+	if containsPiece(game.WhitePieces, pawn) {
+		t.Fatal("promoted pawn still exists in WhitePieces")
+	}
+	if !containsPiece(game.WhitePieces, promotedPiece) {
+		t.Fatal("promoted piece missing from WhitePieces")
+	}
+	if containsPiece(game.BlackPieces, capturedKnight) {
+		t.Fatal("captured piece still exists in BlackPieces")
+	}
+	if len(game.CapturedByWhite) != 1 {
+		t.Fatalf("len(CapturedByWhite) = %d, want 1", len(game.CapturedByWhite))
+	}
+	if game.CapturedByWhite[0] != capturedKnight {
+		t.Fatalf("CapturedByWhite[0] = %v, want %v", game.CapturedByWhite[0], capturedKnight)
+	}
+	if len(game.MoveHistory) != 1 {
+		t.Fatalf("len(MoveHistory) = %d, want 1", len(game.MoveHistory))
+	}
+
+	record := game.MoveHistory[0]
+	if record.MovingPiece != models.Pawn {
+		t.Fatalf("MovingPiece = %v, want %v", record.MovingPiece, models.Pawn)
+	}
+	if !record.WasPromotion {
+		t.Fatal("WasPromotion = false, want true")
+	}
+	if record.PromotedTo != models.Queen {
+		t.Fatalf("PromotedTo = %v, want %v", record.PromotedTo, models.Queen)
+	}
+	if !record.WasCapture {
+		t.Fatal("WasCapture = false, want true")
+	}
+	if record.CapturedPiece != models.Knight {
+		t.Fatalf("CapturedPiece = %v, want %v", record.CapturedPiece, models.Knight)
+	}
+}
+
 func TestMoveCanCreateDiscoveredCheck(t *testing.T) {
 	game := newEmptyGame(models.White)
 	whiteKingPos := models.NewPosition(models.Rank1, models.FileA)
@@ -305,4 +505,12 @@ func containsPiece(pieces []models.Piece, want models.Piece) bool {
 		}
 	}
 	return false
+}
+
+func newPromotionMove(from, to models.Position, promotion models.PieceType) models.Move {
+	return models.Move{
+		From:      from,
+		To:        to,
+		Promotion: &promotion,
+	}
 }
