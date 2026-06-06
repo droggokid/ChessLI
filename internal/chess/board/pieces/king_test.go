@@ -14,7 +14,7 @@ func TestKingPossibleMoves(t *testing.T) {
 	board.place(NewPawn(models.White, models.NewPosition(models.Rank5, models.FileE)), models.NewPosition(models.Rank5, models.FileE))
 	board.place(NewPawn(models.Black, models.NewPosition(models.Rank3, models.FileC)), models.NewPosition(models.Rank3, models.FileC))
 
-	assertMoves(t, king.PossibleMoves(board),
+	assertMoves(t, king.PossibleMoves(board, nil),
 		models.NewPosition(models.Rank5, models.FileD),
 		models.NewPosition(models.Rank3, models.FileD),
 		models.NewPosition(models.Rank4, models.FileE),

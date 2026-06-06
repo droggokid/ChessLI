@@ -374,6 +374,61 @@ func TestMovePromotionCapture(t *testing.T) {
 	}
 }
 
+func TestMoveEnPassantUpdatesGameState(t *testing.T) {
+	game := newEmptyGame(models.White)
+	from := models.NewPosition(models.Rank5, models.FileE)
+	to := models.NewPosition(models.Rank6, models.FileD)
+	capturedPosition := models.NewPosition(models.Rank5, models.FileD)
+	lastMove := models.NewMove(
+		models.NewPosition(models.Rank7, models.FileD),
+		capturedPosition,
+	)
+	whitePawn := pieces.NewPawn(models.White, from)
+	blackPawn := pieces.NewPawn(models.Black, capturedPosition)
+
+	placePiece(game, pieces.NewKing(models.White, models.NewPosition(models.Rank1, models.FileE)), models.NewPosition(models.Rank1, models.FileE))
+	placePiece(game, pieces.NewKing(models.Black, models.NewPosition(models.Rank8, models.FileE)), models.NewPosition(models.Rank8, models.FileE))
+	placePiece(game, whitePawn, from)
+	placePiece(game, blackPawn, capturedPosition)
+	game.MoveHistory = append(game.MoveHistory, MoveRecord{
+		Move:        lastMove,
+		MovingColor: models.Black,
+		MovingPiece: models.Pawn,
+	})
+	refreshGameStateWithLastMove(t, game, &lastMove)
+
+	if err := game.Move(models.NewMove(from, to)); err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+
+	if game.Board.SpotAt(from).Piece != nil {
+		t.Fatal("en passant source still has a piece")
+	}
+	if game.Board.SpotAt(to).Piece != whitePawn {
+		t.Fatal("en passant target does not contain the moving pawn")
+	}
+	if game.Board.SpotAt(capturedPosition).Piece != nil {
+		t.Fatal("captured pawn remains on the board")
+	}
+	if containsPiece(game.BlackPieces, blackPawn) {
+		t.Fatal("captured pawn remains in BlackPieces")
+	}
+	if len(game.CapturedByWhite) != 1 || game.CapturedByWhite[0] != blackPawn {
+		t.Fatalf("CapturedByWhite = %v, want captured black pawn", game.CapturedByWhite)
+	}
+
+	record := game.MoveHistory[len(game.MoveHistory)-1]
+	if !record.WasEnPassant {
+		t.Fatal("WasEnPassant = false, want true")
+	}
+	if !record.WasCapture {
+		t.Fatal("WasCapture = false, want true")
+	}
+	if record.CapturedPiece != models.Pawn {
+		t.Fatalf("CapturedPiece = %v, want %v", record.CapturedPiece, models.Pawn)
+	}
+}
+
 func TestMoveCanCreateDiscoveredCheck(t *testing.T) {
 	game := newEmptyGame(models.White)
 	whiteKingPos := models.NewPosition(models.Rank1, models.FileA)
@@ -480,9 +535,14 @@ func placePiece(game *Game, piece models.Piece, pos models.Position) {
 
 func refreshGameState(t *testing.T, game *Game) {
 	t.Helper()
+	refreshGameStateWithLastMove(t, game, nil)
+}
+
+func refreshGameStateWithLastMove(t *testing.T, game *Game, lastMove *models.Move) {
+	t.Helper()
 
 	var err error
-	game.rules, err = game.prepareRules()
+	game.rules, err = game.prepareRules(lastMove)
 	if err != nil {
 		t.Fatalf("prepareRules() error = %v", err)
 	}

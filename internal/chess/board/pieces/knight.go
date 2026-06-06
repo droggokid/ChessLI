@@ -27,7 +27,7 @@ func (k *Knight) String() string {
 	return k.Describe("knight")
 }
 
-func (k *Knight) PossibleMoves(board models.BoardView) []models.Position {
+func (k *Knight) PossibleMoves(board models.BoardView, _ *models.Move) []models.Position {
 	allMoves := possibleMoves(k.PiecePosition, knightDirections)
 	availableMoves := make([]models.Position, 0, len(allMoves))
 

@@ -27,7 +27,7 @@ func (q *Queen) String() string {
 	return q.Describe("queen")
 }
 
-func (q *Queen) PossibleMoves(board models.BoardView) []models.Position {
+func (q *Queen) PossibleMoves(board models.BoardView, _ *models.Move) []models.Position {
 	return walkLegalDirections(q.PiecePosition, board, queenDirections)
 }
 

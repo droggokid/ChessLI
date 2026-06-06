@@ -49,6 +49,7 @@ type MoveRecord struct {
 	WasCapture    bool
 	PromotedTo    models.PieceType
 	WasPromotion  bool
+	WasEnPassant  bool
 }
 
 // NewGame creates a standard chess game with two named players.
@@ -70,7 +71,7 @@ func NewGame(player1 string, player2 string) (Game, error) {
 		BlackKingPosition: models.NewPosition(models.Rank8, models.FileE),
 		MoveHistory:       make([]MoveRecord, 0),
 	}
-	gameRules, err := game.prepareRules()
+	gameRules, err := game.prepareRules(nil)
 	if err != nil {
 		return Game{}, err
 	}
@@ -146,7 +147,7 @@ func (g *Game) VerifyMove(move models.Move) (models.ResolvedMove, error) {
 	return resolved, nil
 }
 
-func (g *Game) prepareRules() (rules.Rules, error) {
+func (g *Game) prepareRules(lastMove *models.Move) (rules.Rules, error) {
 	newRules, err := rules.NewRules(
 		g.moveService,
 		g.Board,
@@ -155,6 +156,7 @@ func (g *Game) prepareRules() (rules.Rules, error) {
 		g.BlackPieces,
 		g.WhiteKingPosition,
 		g.BlackKingPosition,
+		lastMove,
 	)
 
 	if err != nil {
@@ -216,8 +218,18 @@ func (g *Game) CurrentPlayerIsInCheck() bool {
 func (g *Game) prepareNextTurn() error {
 	g.Turn = g.Turn.Flip()
 
-	var err error
-	g.rules, err = g.prepareRules()
+	var (
+		err      error
+		lastMove *models.Move
+	)
+
+	if len(g.MoveHistory) != 0 {
+		lastMove = &g.MoveHistory[len(g.MoveHistory)-1].Move
+	} else {
+		lastMove = nil
+	}
+
+	g.rules, err = g.prepareRules(lastMove)
 	if err != nil {
 		return err
 	}
@@ -243,6 +255,7 @@ func (g *Game) recordMove(resolvedMove models.ResolvedMove) {
 		WasCapture:    wasCaptured,
 		PromotedTo:    models.PieceType(""),
 		WasPromotion:  isPromotionMove(resolvedMove),
+		WasEnPassant:  resolvedMove.WasEnPassant,
 	}
 
 	if record.WasPromotion {

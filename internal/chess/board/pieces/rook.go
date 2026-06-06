@@ -27,7 +27,7 @@ func (r *Rook) String() string {
 	return r.Describe("rook")
 }
 
-func (r *Rook) PossibleMoves(board models.BoardView) []models.Position {
+func (r *Rook) PossibleMoves(board models.BoardView, _ *models.Move) []models.Position {
 	return walkLegalDirections(r.PiecePosition, board, rookDirections)
 }
 

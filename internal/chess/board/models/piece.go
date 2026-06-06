@@ -27,7 +27,7 @@ type Piece interface {
 	Position() Position
 	MoveTo(position Position)
 	// PossibleMoves returns movement destinations before game-level king-safety filtering.
-	PossibleMoves(board BoardView) []Position
+	PossibleMoves(board BoardView, lastMove *Move) []Position
 	// AttackedSquares returns squares controlled by the piece.
 	AttackedSquares(board BoardView) []Position
 }

@@ -18,6 +18,7 @@ type Rules struct {
 	whiteKingPosition models.Position
 	blackKingPosition models.Position
 
+	lastMove        *models.Move
 	legalMoves      map[models.Position][]models.Position
 	attackedSquares map[models.Position]bool
 }
@@ -30,6 +31,7 @@ func NewRules(
 	blackPieces []models.Piece,
 	whiteKingPosition models.Position,
 	blackKingPosition models.Position,
+	lastMove *models.Move,
 ) (Rules, error) {
 	newRules := Rules{
 		moveService:       moveService,
@@ -39,6 +41,7 @@ func NewRules(
 		blackPieces:       blackPieces,
 		whiteKingPosition: whiteKingPosition,
 		blackKingPosition: blackKingPosition,
+		lastMove:          lastMove,
 		legalMoves:        make(map[models.Position][]models.Position),
 		attackedSquares:   make(map[models.Position]bool),
 	}
@@ -119,7 +122,7 @@ func (r *Rules) LegalMovesFor(position models.Position) ([]models.Position, erro
 		return nil, errors.New("no legal moves found")
 	}
 
-	possibleMoves := movingPiece.PossibleMoves(r.board)
+	possibleMoves := movingPiece.PossibleMoves(r.board, r.lastMove)
 	legalMoves := make([]models.Position, 0, len(possibleMoves))
 
 	for _, to := range possibleMoves {

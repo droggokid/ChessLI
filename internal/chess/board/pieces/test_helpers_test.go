@@ -41,6 +41,10 @@ func pos(rank models.Rank, file models.File) models.Position {
 	return models.NewPosition(rank, file)
 }
 
+func positionPointer(position models.Position) *models.Position {
+	return &position
+}
+
 func assertMoves(t *testing.T, got []models.Position, want ...models.Position) {
 	t.Helper()
 

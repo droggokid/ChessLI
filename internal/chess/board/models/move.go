@@ -15,6 +15,8 @@ type ResolvedMove struct {
 	ToSpot        *Spot
 	MovingPiece   Piece
 	CapturedPiece Piece
+	CapturedSpot  *Spot
+	WasEnPassant  bool
 }
 
 // NewMove creates a move from one position to another.

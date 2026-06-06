@@ -28,7 +28,7 @@ func (p *Pawn) String() string {
 }
 
 // PossibleMoves returns forward moves and diagonal captures.
-func (p *Pawn) PossibleMoves(board models.BoardView) []models.Position {
+func (p *Pawn) PossibleMoves(board models.BoardView, lastMove *models.Move) []models.Position {
 	var (
 		moveSet []models.Direction
 		moves   []models.Position
@@ -64,6 +64,10 @@ func (p *Pawn) PossibleMoves(board models.BoardView) []models.Position {
 		}
 	}
 
+	if move, ok := p.enPassantMove(board, lastMove); ok {
+		moves = append(moves, move)
+	}
+
 	return moves
 }
 
@@ -78,6 +82,64 @@ func (p *Pawn) AttackedSquares(board models.BoardView) []models.Position {
 func emptySpot(board models.BoardView, pos models.Position) bool {
 	spot := board.SpotAt(pos)
 	return spot != nil && spot.Piece == nil
+}
+
+func (p *Pawn) enPassantMove(board models.BoardView, lastMove *models.Move) (models.Position, bool) {
+	lastMovedPawn := movedPawn(board, lastMove)
+	if lastMovedPawn == nil || lastMovedPawn.Color() == p.Color() {
+		return models.Position{}, false
+	}
+
+	if !movedTwoRanks(*lastMove) || !p.isBeside(lastMove.To) {
+		return models.Position{}, false
+	}
+
+	target := passedSquare(*lastMove)
+	return target, emptySpot(board, target)
+}
+
+func movedPawn(board models.BoardView, move *models.Move) models.Piece {
+	if move == nil {
+		return nil
+	}
+
+	spot := board.SpotAt(move.To)
+	if spot == nil || spot.Piece == nil || spot.Piece.Type() != models.Pawn {
+		return nil
+	}
+
+	return spot.Piece
+}
+
+func movedTwoRanks(move models.Move) bool {
+	if move.From.File != move.To.File {
+		return false
+	}
+
+	rankDistance := move.To.Rank.ToIndex() - move.From.Rank.ToIndex()
+	if rankDistance < 0 {
+		rankDistance = -rankDistance
+	}
+
+	return rankDistance == 2
+}
+
+func (p *Pawn) isBeside(pos models.Position) bool {
+	current := p.Position()
+	if current.Rank != pos.Rank {
+		return false
+	}
+
+	fileDistance := current.File.ToIndex() - pos.File.ToIndex()
+	return fileDistance == 1 || fileDistance == -1
+}
+
+func passedSquare(move models.Move) models.Position {
+	rank := models.Rank(
+		(move.From.Rank.ToIndex() + move.To.Rank.ToIndex()) / 2,
+	)
+
+	return models.NewPosition(rank, move.To.File)
 }
 
 func (p *Pawn) enemySpot(board models.BoardView, pos models.Position) bool {
