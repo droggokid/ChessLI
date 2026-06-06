@@ -4,8 +4,9 @@ import "fmt"
 
 // Move represents a requested board transition.
 type Move struct {
-	From Position
-	To   Position
+	From      Position
+	To        Position
+	Promotion *PieceType
 }
 
 type ResolvedMove struct {
@@ -14,6 +15,8 @@ type ResolvedMove struct {
 	ToSpot        *Spot
 	MovingPiece   Piece
 	CapturedPiece Piece
+	CapturedSpot  *Spot
+	WasEnPassant  bool
 }
 
 // NewMove creates a move from one position to another.

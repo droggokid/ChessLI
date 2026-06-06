@@ -106,6 +106,58 @@ func TestApplyAndRevertMoveRestoresBoard(t *testing.T) {
 	}
 }
 
+func TestApplyAndRevertEnPassantMoveRestoresBoard(t *testing.T) {
+	gameBoard := newEmptyBoard(t)
+	from := models.NewPosition(models.Rank5, models.FileE)
+	to := models.NewPosition(models.Rank6, models.FileD)
+	capturedPosition := models.NewPosition(models.Rank5, models.FileD)
+	whitePawn := pieces.NewPawn(models.White, from)
+	blackPawn := pieces.NewPawn(models.Black, capturedPosition)
+	placePiece(t, gameBoard, whitePawn, from)
+	placePiece(t, gameBoard, blackPawn, capturedPosition)
+
+	service := NewMoveService(gameBoard)
+	resolved, err := service.ResolveMove(models.NewMove(from, to))
+	if err != nil {
+		t.Fatalf("ResolveMove() error = %v", err)
+	}
+
+	if !resolved.WasEnPassant {
+		t.Fatal("WasEnPassant = false, want true")
+	}
+	if resolved.CapturedPiece != blackPawn {
+		t.Fatalf("CapturedPiece = %v, want %v", resolved.CapturedPiece, blackPawn)
+	}
+	if resolved.CapturedSpot != gameBoard.SpotAt(capturedPosition) {
+		t.Fatal("CapturedSpot does not reference the adjacent pawn spot")
+	}
+
+	service.ApplyMove(resolved)
+	if gameBoard.SpotAt(from).Piece != nil {
+		t.Fatal("ApplyMove() left the source spot occupied")
+	}
+	if gameBoard.SpotAt(to).Piece != whitePawn {
+		t.Fatal("ApplyMove() did not move the pawn to the target spot")
+	}
+	if gameBoard.SpotAt(capturedPosition).Piece != nil {
+		t.Fatal("ApplyMove() did not remove the en passant pawn")
+	}
+
+	service.RevertMove(resolved)
+	if gameBoard.SpotAt(from).Piece != whitePawn {
+		t.Fatal("RevertMove() did not restore the moving pawn")
+	}
+	if gameBoard.SpotAt(to).Piece != nil {
+		t.Fatal("RevertMove() left the en passant target occupied")
+	}
+	if gameBoard.SpotAt(capturedPosition).Piece != blackPawn {
+		t.Fatal("RevertMove() did not restore the captured pawn")
+	}
+	if whitePawn.Position() != from {
+		t.Fatalf("whitePawn.Position() = %v, want %v", whitePawn.Position(), from)
+	}
+}
+
 func newEmptyBoard(t *testing.T) *board.Board {
 	t.Helper()
 

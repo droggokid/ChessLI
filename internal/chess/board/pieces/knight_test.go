@@ -81,7 +81,7 @@ func TestKnightPossibleMoves(t *testing.T) {
 				tt.place(board)
 			}
 
-			assertMoves(t, knight.PossibleMoves(board), tt.want...)
+			assertMoves(t, knight.PossibleMoves(board, nil), tt.want...)
 		})
 	}
 }

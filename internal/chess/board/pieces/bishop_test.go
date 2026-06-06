@@ -14,7 +14,7 @@ func TestBishopPossibleMoves(t *testing.T) {
 	board.place(NewPawn(models.White, models.NewPosition(models.Rank6, models.FileF)), models.NewPosition(models.Rank6, models.FileF))
 	board.place(NewPawn(models.Black, models.NewPosition(models.Rank6, models.FileB)), models.NewPosition(models.Rank6, models.FileB))
 
-	assertMoves(t, bishop.PossibleMoves(board),
+	assertMoves(t, bishop.PossibleMoves(board, nil),
 		models.NewPosition(models.Rank5, models.FileE),
 		models.NewPosition(models.Rank5, models.FileC),
 		models.NewPosition(models.Rank6, models.FileB),

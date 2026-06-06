@@ -28,7 +28,7 @@ func (k *King) String() string {
 }
 
 // PossibleMoves returns adjacent destinations before attacked-square filtering.
-func (k *King) PossibleMoves(board models.BoardView) []models.Position {
+func (k *King) PossibleMoves(board models.BoardView, _ *models.Move) []models.Position {
 	moves := make([]models.Position, 0)
 	for _, pos := range possibleMoves(k.PiecePosition, kingDirections) {
 		spot := board.SpotAt(pos)

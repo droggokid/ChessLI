@@ -33,6 +33,7 @@ func TestLegalMovesForFiltersPinnedPieceMove(t *testing.T) {
 		[]models.Piece{blackKing, checkingRook},
 		whiteKingPos,
 		blackKingPos,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("NewRules() error = %v", err)
@@ -46,6 +47,53 @@ func TestLegalMovesForFiltersPinnedPieceMove(t *testing.T) {
 	illegalMove := models.NewPosition(models.Rank2, models.FileD)
 	if hasMove(legalMoves, illegalMove) {
 		t.Fatalf("LegalMovesFor() included pinned move %v: %v", illegalMove, legalMoves)
+	}
+}
+
+func TestLegalMovesForRejectsEnPassantThatExposesKing(t *testing.T) {
+	gameBoard := newEmptyBoard(t)
+	whiteKingPos := models.NewPosition(models.Rank5, models.FileH)
+	blackKingPos := models.NewPosition(models.Rank8, models.FileH)
+	whitePawnPos := models.NewPosition(models.Rank5, models.FileG)
+	blackPawnPos := models.NewPosition(models.Rank5, models.FileF)
+	blackRookPos := models.NewPosition(models.Rank5, models.FileA)
+	enPassantTarget := models.NewPosition(models.Rank6, models.FileF)
+	lastMove := models.NewMove(
+		models.NewPosition(models.Rank7, models.FileF),
+		blackPawnPos,
+	)
+
+	whiteKing := pieces.NewKing(models.White, whiteKingPos)
+	blackKing := pieces.NewKing(models.Black, blackKingPos)
+	whitePawn := pieces.NewPawn(models.White, whitePawnPos)
+	blackPawn := pieces.NewPawn(models.Black, blackPawnPos)
+	blackRook := pieces.NewRook(models.Black, blackRookPos)
+	placePiece(t, gameBoard, whiteKing, whiteKingPos)
+	placePiece(t, gameBoard, blackKing, blackKingPos)
+	placePiece(t, gameBoard, whitePawn, whitePawnPos)
+	placePiece(t, gameBoard, blackPawn, blackPawnPos)
+	placePiece(t, gameBoard, blackRook, blackRookPos)
+
+	rules, err := NewRules(
+		moves.NewMoveService(gameBoard),
+		gameBoard,
+		models.White,
+		[]models.Piece{whiteKing, whitePawn},
+		[]models.Piece{blackKing, blackPawn, blackRook},
+		whiteKingPos,
+		blackKingPos,
+		&lastMove,
+	)
+	if err != nil {
+		t.Fatalf("NewRules() error = %v", err)
+	}
+
+	legalMoves, err := rules.LegalMovesFor(whitePawnPos)
+	if err != nil {
+		t.Fatalf("LegalMovesFor() error = %v", err)
+	}
+	if hasMove(legalMoves, enPassantTarget) {
+		t.Fatalf("LegalMovesFor() included en passant move that exposes king: %v", legalMoves)
 	}
 }
 
@@ -473,6 +521,7 @@ func newRules(
 		blackPieces,
 		whiteKingPos,
 		blackKingPos,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("NewRules() error = %v", err)

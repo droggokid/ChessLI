@@ -33,7 +33,27 @@ func (s *MoveServiceImpl) ResolveMove(move models.Move) (models.ResolvedMove, er
 		return models.ResolvedMove{}, errors.New("no piece at source position")
 	}
 
+	capturedSpot := toSpot
 	capturedPiece := toSpot.Piece
+	wasEnPassant := false
+
+	if movingPiece.Type() == models.Pawn &&
+		toSpot.Piece == nil &&
+		move.From.File != move.To.File {
+
+		capturedPosition := models.NewPosition(move.From.Rank, move.To.File)
+		adjacentSpot := s.board.SpotAt(capturedPosition)
+
+		if adjacentSpot != nil &&
+			adjacentSpot.Piece != nil &&
+			adjacentSpot.Piece.Type() == models.Pawn &&
+			adjacentSpot.Piece.Color() != movingPiece.Color() {
+
+			capturedSpot = adjacentSpot
+			capturedPiece = adjacentSpot.Piece
+			wasEnPassant = true
+		}
+	}
 
 	return models.ResolvedMove{
 		Move:          move,
@@ -41,6 +61,8 @@ func (s *MoveServiceImpl) ResolveMove(move models.Move) (models.ResolvedMove, er
 		ToSpot:        toSpot,
 		MovingPiece:   movingPiece,
 		CapturedPiece: capturedPiece,
+		CapturedSpot:  capturedSpot,
+		WasEnPassant:  wasEnPassant,
 	}, nil
 }
 
@@ -49,11 +71,20 @@ func (s *MoveServiceImpl) ApplyMove(resolved models.ResolvedMove) {
 
 	resolved.ToSpot.Piece = resolved.MovingPiece
 	resolved.FromSpot.Piece = nil
+
+	if resolved.WasEnPassant {
+		resolved.CapturedSpot.Piece = nil
+	}
 }
 
 func (s *MoveServiceImpl) RevertMove(resolvedMove models.ResolvedMove) {
 	resolvedMove.MovingPiece.MoveTo(resolvedMove.FromSpot.Position)
-
-	resolvedMove.ToSpot.Piece = resolvedMove.CapturedPiece
 	resolvedMove.FromSpot.Piece = resolvedMove.MovingPiece
+
+	if resolvedMove.WasEnPassant {
+		resolvedMove.ToSpot.Piece = nil
+		resolvedMove.CapturedSpot.Piece = resolvedMove.CapturedPiece
+	} else {
+		resolvedMove.ToSpot.Piece = resolvedMove.CapturedPiece
+	}
 }
