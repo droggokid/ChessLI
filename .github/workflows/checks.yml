@@ -1,0 +1,34 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+jobs:
+  test:
+    name: Go checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run checks
+        run: make check
+
+      - name: Build
+        run: make build
+
+    timeout-minutes: 5
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
