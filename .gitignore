@@ -16,13 +16,14 @@ _deps
 
 ### CMake Patch ###
 CMakeUserPresets.json
+docs/
 
 # External projects
 *-prefix/
 
 ### Git ###
 # Created by git for backups. To disable backups in Git:
-# $ git config --global mergetool.keepBackup false
+# $ git conf --global mergetool.keepBackup false
 *.orig
 
 # Created by git when using merge tools for conflicts
