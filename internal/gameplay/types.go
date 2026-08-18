@@ -20,3 +20,11 @@ type waitingPlayer struct {
 	result  chan MatchResult
 	done    <-chan struct{}
 }
+
+type MoveNotation uint8
+
+const (
+	MoveNotationUCI MoveNotation = iota
+	MoveNotationSAN
+	MoveNotationLAN
+)

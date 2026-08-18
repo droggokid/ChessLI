@@ -13,7 +13,8 @@ import (
 type Game struct {
 	mu sync.Mutex
 
-	ID identity.GameID
+	ID      identity.GameID
+	version uint64
 
 	WhiteProfileID identity.ProfileID
 	BlackProfileID identity.ProfileID
@@ -30,6 +31,7 @@ type Game struct {
 func NewGame(id identity.GameID, white identity.ProfileID, black identity.ProfileID, initialTime time.Duration, increment time.Duration) *Game {
 	return &Game{
 		ID:             id,
+		version:        0,
 		WhiteProfileID: white,
 		BlackProfileID: black,
 		engine:         chess.NewGame(),
@@ -44,23 +46,41 @@ func (g *Game) Move(command MoveCommand) (MoveResult, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	if command.ExpectedVersion != g.version {
+		return MoveResult{}, ErrStaleGameVersion
+	}
+
 	if err := g.validateMove(command.ProfileID); err != nil {
 		return MoveResult{}, err
 	}
 
-	if err := g.engine.PushNotationMove(
-		command.Move,
-		chess.UCINotation{},
-		nil,
-	); err != nil {
+	position := g.engine.Position()
+
+	notation, err := engineNotation(command.Notation)
+	if err != nil {
+		return MoveResult{}, err
+	}
+
+	move, err := notation.Decode(position, command.Move)
+	if err != nil {
 		return MoveResult{}, fmt.Errorf("%w: %v", ErrIllegalMove, err)
 	}
+
+	san := chess.AlgebraicNotation{}.Encode(position, move)
+
+	if err = g.engine.Move(move, nil); err != nil {
+		return MoveResult{}, ErrIllegalMove
+	}
+
+	g.version++
 
 	return MoveResult{
 		GameID:  g.ID,
 		FEN:     g.engine.FEN(),
+		SAN:     san,
 		Outcome: g.engine.Outcome(),
 		Method:  g.engine.Method(),
+		Version: g.version,
 	}, nil
 }
 
@@ -97,6 +117,19 @@ func (g *Game) validateReady() error {
 	}
 
 	return nil
+}
+
+func engineNotation(notation MoveNotation) (chess.Notation, error) {
+	switch notation {
+	case MoveNotationUCI:
+		return chess.UCINotation{}, nil
+	case MoveNotationSAN:
+		return chess.AlgebraicNotation{}, nil
+	case MoveNotationLAN:
+		return chess.LongAlgebraicNotation{}, nil
+	default:
+		return nil, ErrUnsupportedNotation
+	}
 }
 
 // JoinPrivate assigns a profile to the unoccupied color in a private game.

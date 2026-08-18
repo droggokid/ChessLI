@@ -17,10 +17,11 @@ const (
 )
 
 type PlayerState struct {
-	ID                    string `json:"id"`
-	Color                 Color  `json:"color"`
-	Connected             bool   `json:"connected"`
-	RemainingMilliseconds *int64 `json:"remainingMilliseconds,omitempty"`
+	ID                    string       `json:"id"`
+	Color                 Color        `json:"color"`
+	Connected             bool         `json:"connected"`
+	RemainingMilliseconds *int64       `json:"remainingMilliseconds,omitempty"`
+	Notation              MoveNotation `json:"notation"`
 }
 
 type ColorPreference string

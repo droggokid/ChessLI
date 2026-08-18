@@ -17,16 +17,16 @@ type Service interface {
 	MakeMove(ctx context.Context, command MoveCommand) (MoveResult, error)
 }
 
-type MemoryService struct {
+type GameService struct {
 	mu            sync.RWMutex
 	waitingPlayer *waitingPlayer
 	games         map[identity.GameID]*Game
 	pickColor     func() chess.Color
 }
 
-// NewMemoryService returns an empty, in-memory gameplay service.
-func NewMemoryService() *MemoryService {
-	return &MemoryService{
+// NewGameService returns an empty, in-memory gameplay service.
+func NewGameService() *GameService {
+	return &GameService{
 		mu:    sync.RWMutex{},
 		games: make(map[identity.GameID]*Game),
 		pickColor: func() chess.Color {
@@ -39,7 +39,7 @@ func NewMemoryService() *MemoryService {
 	}
 }
 
-func (s *MemoryService) gameByID(id identity.GameID) (*Game, error) {
+func (s *GameService) gameByID(id identity.GameID) (*Game, error) {
 	s.mu.RLock()
 	game, ok := s.games[id]
 	s.mu.RUnlock()
@@ -52,7 +52,7 @@ func (s *MemoryService) gameByID(id identity.GameID) (*Game, error) {
 }
 
 // CreatePrivateGame creates a private game using the requested time control and color preference.
-func (s *MemoryService) CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (CreateResult, error) {
+func (s *GameService) CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (CreateResult, error) {
 	if err := ctx.Err(); err != nil {
 		return CreateResult{}, err
 	}
@@ -93,7 +93,7 @@ func validateTimeControl(command *CreatePrivateCommand) error {
 	return nil
 }
 
-func (s *MemoryService) handleColorPreference(cp ColorPreference) (chess.Color, error) {
+func (s *GameService) handleColorPreference(cp ColorPreference) (chess.Color, error) {
 	switch cp {
 	case ColorWhite:
 		return chess.White, nil
@@ -122,7 +122,7 @@ func assignPrivateColors(profileID identity.ProfileID, creatorColor chess.Color)
 }
 
 // JoinPrivateGame seats a profile in the open position of a private game.
-func (s *MemoryService) JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (JoinResult, error) {
+func (s *GameService) JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (JoinResult, error) {
 	if err := ctx.Err(); err != nil {
 		return JoinResult{}, err
 	}
@@ -143,7 +143,7 @@ func (s *MemoryService) JoinPrivateGame(ctx context.Context, command JoinPrivate
 	}, nil
 }
 
-func (s *MemoryService) EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error) {
+func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error) {
 	if err := ctx.Err(); err != nil {
 		return MatchTicket{}, err
 	}
@@ -182,7 +182,7 @@ func newWaitingPlayer(ctx context.Context, command EnterMatchmakingCommand) *wai
 	return &waitingPlayer{command: command, result: make(chan MatchResult, 1), done: ctx.Done()}
 }
 
-func (s *MemoryService) findOpponentLocked(player *waitingPlayer) (opponent *waitingPlayer, queued bool, err error) {
+func (s *GameService) findOpponentLocked(player *waitingPlayer) (opponent *waitingPlayer, queued bool, err error) {
 	s.removeStaleWaitingPlayerLocked()
 
 	if s.waitingPlayer == nil {
@@ -205,7 +205,7 @@ func (s *MemoryService) findOpponentLocked(player *waitingPlayer) (opponent *wai
 	return waiting, false, nil
 }
 
-func (s *MemoryService) removeStaleWaitingPlayerLocked() {
+func (s *GameService) removeStaleWaitingPlayerLocked() {
 	if s.waitingPlayer == nil {
 		return
 	}
@@ -225,7 +225,7 @@ func compatibleTimeControls(first EnterMatchmakingCommand, second EnterMatchmaki
 		first.Increment == second.Increment
 }
 
-func (s *MemoryService) createMatchLocked(waiting *waitingPlayer, current *waitingPlayer) (MatchResult, MatchResult) {
+func (s *GameService) createMatchLocked(waiting *waitingPlayer, current *waitingPlayer) (MatchResult, MatchResult) {
 	waitingColor := s.pickColor()
 	currentColor := waitingColor.Other()
 
@@ -253,7 +253,7 @@ func assignMatchmakingColors(waitingProfileID identity.ProfileID, currentProfile
 	return currentProfileID, waitingProfileID
 }
 
-func (s *MemoryService) removeWaitingPlayerOnCancel(player *waitingPlayer) {
+func (s *GameService) removeWaitingPlayerOnCancel(player *waitingPlayer) {
 	if player.done == nil {
 		return
 	}
@@ -287,7 +287,7 @@ func playerDone(done <-chan struct{}) bool {
 }
 
 // MakeMove applies a move to the identified game on behalf of a profile.
-func (s *MemoryService) MakeMove(ctx context.Context, command MoveCommand) (MoveResult, error) {
+func (s *GameService) MakeMove(ctx context.Context, command MoveCommand) (MoveResult, error) {
 	if err := ctx.Err(); err != nil {
 		return MoveResult{}, err
 	}
