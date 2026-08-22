@@ -5,8 +5,8 @@ import (
 )
 
 type CreateGamePayload struct {
-	TimeControl *TimeControl    `json:"timeControl,omitempty"`
-	Color       ColorPreference `json:"color,omitempty"`
+	TimeControl *TimeControl    `json:"timeControl"`
+	Color       ColorPreference `json:"color"`
 }
 
 type JoinGamePayload struct {
@@ -14,11 +14,27 @@ type JoinGamePayload struct {
 }
 
 type EnterMatchmakingPayload struct {
-	TimeControl *TimeControl `json:"timeControl,omitempty"`
+	TimeControl *TimeControl `json:"timeControl"`
 }
 
+type MatchFoundPayload struct {
+	GameID identity.GameID `json:"gameId"`
+	Color  Color           `json:"color"`
+}
+
+type MoveNotation string
+
+const (
+	MoveNotationUCI MoveNotation = "uci"
+	MoveNotationSAN MoveNotation = "san"
+	MoveNotationLAN MoveNotation = "lan"
+)
+
 type MovePayload struct {
-	Move string `json:"move"`
+	GameID          identity.GameID `json:"gameId"`
+	Move            string          `json:"move"`
+	Notation        MoveNotation    `json:"notation"`
+	ExpectedVersion *uint64         `json:"expectedVersion"`
 }
 
 type TimeControl struct {

@@ -24,6 +24,7 @@ type Server struct {
 	httpServer *http.Server
 
 	messageHandler *Handler
+	gameSessions   *GameSessions
 
 	connectionCtx     context.Context
 	cancelConnections context.CancelFunc
@@ -34,10 +35,13 @@ type Server struct {
 func NewServer(address string, gameService gameplay.Service) *Server {
 	connectionCtx, cancelConnections := context.WithCancel(context.Background())
 
+	sessions := NewGameSessions()
+
 	server := &Server{
 		connectionCtx:     connectionCtx,
+		messageHandler:    NewHandler(gameService, sessions),
+		gameSessions:      sessions,
 		cancelConnections: cancelConnections,
-		messageHandler:    NewHandler(gameService),
 	}
 
 	mux := http.NewServeMux()
@@ -123,6 +127,7 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := NewSession(conn)
+	defer s.gameSessions.Remove(client)
 
 	if err = client.Run(s.connectionCtx, s.messageHandler.Handle); err != nil {
 		if isExpectedClose(err) {

@@ -16,14 +16,6 @@ import (
 
 const outgoingBufferSize = 16
 
-// ErrSessionClosed indicates that a message was sent after the client stopped.
-var ErrSessionClosed = errors.New("session is closed")
-
-// ErrSessionNotRunning indicates that Run has not been called.
-var ErrSessionNotRunning = errors.New("session is not running")
-
-var errSessionAlreadyRun = errors.New("session has already been run")
-
 // HandlerFunc processes a JSON message received from a client.
 type HandlerFunc func(
 	ctx context.Context,
@@ -57,7 +49,7 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 		return errors.New("websocket message handler is required")
 	}
 	if !c.started.CompareAndSwap(false, true) {
-		return errSessionAlreadyRun
+		return protocol.ErrSessionAlreadyRun
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -121,7 +113,7 @@ func (c *Session) writeLoop(ctx context.Context) error {
 // Send queues a message for writing or returns if the context or client closes.
 func (c *Session) Send(ctx context.Context, message protocol.ServerEnvelope) error {
 	if !c.started.Load() {
-		return ErrSessionNotRunning
+		return protocol.ErrSessionNotRunning
 	}
 
 	select {
@@ -129,7 +121,7 @@ func (c *Session) Send(ctx context.Context, message protocol.ServerEnvelope) err
 		return ctx.Err()
 
 	case <-c.done:
-		return ErrSessionNotRunning
+		return protocol.ErrSessionNotRunning
 
 	case c.outgoing <- message:
 		return nil

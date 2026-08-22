@@ -14,7 +14,7 @@ import (
 func main() {
 	ctx := context.Background()
 
-	service := gameplay.NewMemoryService()
+	service := gameplay.NewGameService()
 
 	t := time.Minute * 10
 

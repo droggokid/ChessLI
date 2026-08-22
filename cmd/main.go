@@ -24,7 +24,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	games := gameplay.NewMemoryService()
+	games := gameplay.NewGameService()
+
 	server := websockettransport.NewServer(conf.ServerAddress, games)
 
 	slog.Info("starting websocket server", "address", conf.ServerAddress)

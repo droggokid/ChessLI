@@ -15,4 +15,6 @@ var (
 	ErrNoCompatibleOpponent   = errors.New("no compatible opponent")
 	ErrGameNotReady           = errors.New("game is waiting for another player")
 	ErrInvalidTimeControl     = errors.New("invalid time control")
+	ErrUnsupportedNotation    = errors.New("unsupported move notation")
+	ErrStaleGameVersion       = errors.New("stale game version")
 )
