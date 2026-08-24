@@ -11,16 +11,13 @@ import (
 )
 
 type Game struct {
-	mu sync.Mutex
-
-	ID      identity.GameID
-	version uint64
-
+	mu             sync.Mutex
+	ID             identity.GameID
+	version        uint64
 	WhiteProfileID identity.ProfileID
 	BlackProfileID identity.ProfileID
-
-	engine *chess.Game
-
+	engine         *chess.Game
+	lastMoveSAN    string
 	whiteRemaining time.Duration
 	blackRemaining time.Duration
 	increment      time.Duration
@@ -41,7 +38,7 @@ func NewGame(id identity.GameID, white identity.ProfileID, black identity.Profil
 	}
 }
 
-// Move validates and applies a UCI move for the profile whose turn it is.
+// Move decodes, validates, and applies a move for the profile whose turn it is.
 func (g *Game) Move(command MoveCommand) (MoveResult, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -73,6 +70,7 @@ func (g *Game) Move(command MoveCommand) (MoveResult, error) {
 	}
 
 	g.version++
+	g.lastMoveSAN = san
 
 	return MoveResult{
 		GameID:  g.ID,
@@ -151,5 +149,28 @@ func (g *Game) JoinPrivate(command JoinPrivateCommand) (chess.Color, error) {
 
 	default:
 		return chess.NoColor, ErrGameFull
+	}
+}
+
+// Snapshot returns a consistent copy of the game's current authoritative state.
+func (g *Game) Snapshot() GameSnapshot {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return g.snapshotLocked()
+}
+
+func (g *Game) snapshotLocked() GameSnapshot {
+	return GameSnapshot{
+		GameID:         g.ID,
+		FEN:            g.engine.FEN(),
+		Version:        g.version,
+		WhiteProfileID: g.WhiteProfileID,
+		BlackProfileID: g.BlackProfileID,
+		WhiteRemaining: g.whiteRemaining,
+		BlackRemaining: g.blackRemaining,
+		LastMoveSAN:    g.lastMoveSAN,
+		Outcome:        g.engine.Outcome(),
+		Method:         g.engine.Method(),
 	}
 }

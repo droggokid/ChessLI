@@ -18,11 +18,14 @@ const (
 type ServerMessageType string
 
 const (
-	ServerConnectionReady ServerMessageType = "connection.ready"
-	ServerGameCreated     ServerMessageType = "game.created"
-	ServerGameJoined      ServerMessageType = "game.joined"
-	ServerGameState       ServerMessageType = "game.state"
-	ServerDrawOffered     ServerMessageType = "draw.offered"
-	ServerGameOver        ServerMessageType = "game.over"
-	ServerError           ServerMessageType = "error"
+	ServerConnectionReady    ServerMessageType = "connection.ready"
+	ServerGameCreated        ServerMessageType = "game.created"
+	ServerGameJoined         ServerMessageType = "game.joined"
+	ServerMatchmakingEntered ServerMessageType = "matchmaking.entered"
+	ServerMatchFound         ServerMessageType = "matchmaking.found"
+	ServerGameInitial        ServerMessageType = "game.initial"
+	ServerGameState          ServerMessageType = "game.state"
+	ServerDrawOffered        ServerMessageType = "draw.offered"
+	ServerGameOver           ServerMessageType = "game.over"
+	ServerError              ServerMessageType = "error"
 )

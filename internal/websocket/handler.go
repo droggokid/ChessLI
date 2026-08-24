@@ -83,15 +83,16 @@ func (h *Handler) handleCreateGame(ctx context.Context, client *Session, message
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid color preference")
 	}
 
+	initial, increment, err := mapTimeControlPreset(request.TimeControl)
+	if err != nil {
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid time control preset")
+	}
+
 	command := gameplay.CreatePrivateCommand{
 		ProfileID:       client.profileID,
 		ColorPreference: colorPreference,
-	}
-
-	if request.TimeControl != nil {
-		command.Initial = time.Duration(request.TimeControl.InitialMilliseconds) * time.Millisecond
-
-		command.Increment = time.Duration(request.TimeControl.IncrementMilliseconds) * time.Millisecond
+		Initial:         initial,
+		Increment:       increment,
 	}
 
 	result, err := h.gameService.CreatePrivateGame(ctx, command)
@@ -116,14 +117,16 @@ func (h *Handler) handleCreateGame(ctx context.Context, client *Session, message
 		color = protocol.ColorBlack
 	}
 
-	return client.Send(ctx, protocol.ServerEnvelope{
+	envelope := protocol.ServerEnvelope{
 		Type:      protocol.ServerGameCreated,
 		RequestID: message.RequestID,
 		Payload: protocol.GameCreatedPayload{
 			GameID: result.GameID,
 			Color:  color,
 		},
-	})
+	}
+
+	return client.Send(ctx, envelope)
 }
 
 func (h *Handler) handleJoinGame(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
@@ -165,18 +168,115 @@ func (h *Handler) handleJoinGame(ctx context.Context, client *Session, message p
 		)
 	}
 
-	return client.Send(ctx, protocol.ServerEnvelope{
+	envelope := protocol.ServerEnvelope{
 		Type:      protocol.ServerGameJoined,
 		RequestID: message.RequestID,
 		Payload: protocol.GameJoinedPayload{
 			GameID: serviceResult.GameID,
 			Color:  mapColorFromServer(serviceResult.Color),
 		},
-	})
+	}
+	if err = client.Send(ctx, envelope); err != nil {
+		code, publicMessage := mapApplicationError(err)
+
+		return h.sendError(ctx, client, message.RequestID, code, publicMessage)
+	}
+
+	state, err := h.gameService.GameState(ctx, serviceResult.GameID)
+	if err != nil {
+		code, publicMessage := mapApplicationError(err)
+
+		return h.sendError(ctx, client, message.RequestID, code, publicMessage)
+	}
+
+	return h.gameSessions.Broadcast(ctx, serviceResult.GameID, client, h.initialState(state))
 }
 
 func (h *Handler) handleMatchmaking(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
-	return h.sendNotImplemented(ctx, client, message)
+	request, err := protocol.DecodePayload[protocol.EnterMatchmakingPayload](message)
+	if err != nil {
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid game.matchmaking payload")
+	}
+
+	if _, exists := h.gameSessions.GameID(client); exists {
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "session is already in a game")
+	}
+
+	initial, increment, err := mapTimeControlPreset(request.TimeControl)
+	if err != nil {
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid time control preset")
+	}
+
+	command := gameplay.NewEnterMatchmakingCommand(client.profileID, initial, increment)
+
+	ticket, err := h.gameService.EnterMatchmaking(ctx, *command)
+	if err != nil {
+		code, publicMessage := mapApplicationError(err)
+
+		return h.sendError(ctx, client, message.RequestID, code, publicMessage)
+	}
+
+	envelope := protocol.ServerEnvelope{
+		Type:      protocol.ServerMatchmakingEntered,
+		RequestID: message.RequestID,
+		Payload:   protocol.EnterMatchmakingPayload{TimeControl: request.TimeControl},
+	}
+
+	if err = client.Send(ctx, envelope); err != nil {
+		return err
+	}
+
+	go h.awaitMatch(ctx, client, message.RequestID, ticket)
+
+	return nil
+}
+
+func (h *Handler) awaitMatch(ctx context.Context, client *Session, requestID string, ticket gameplay.MatchTicket) {
+	var result gameplay.MatchResult
+
+	select {
+	case <-ctx.Done():
+		return
+	case match, ok := <-ticket.Result:
+		if !ok {
+			return
+		}
+
+		result = match
+	}
+
+	envelope := protocol.ServerEnvelope{
+		Type:      protocol.ServerMatchFound,
+		RequestID: requestID,
+		Payload: protocol.MatchFoundPayload{
+			GameID: result.GameID,
+			Color:  mapColorFromServer(result.Color),
+		},
+	}
+	if err := client.Send(ctx, envelope); err != nil {
+		slog.Warn("send matchmaking result", "error", err)
+		return
+	}
+
+	if err := h.gameSessions.Add(result.GameID, client); err != nil {
+		slog.Warn("register matched session", "game_id", result.GameID, "error", err)
+		return
+	}
+
+	state, err := h.gameService.GameState(ctx, result.GameID)
+	if err != nil {
+		code, publicMessage := mapApplicationError(err)
+
+		if sendErr := h.sendError(ctx, client, requestID, code, publicMessage); sendErr != nil {
+			slog.Warn("send matchmaking state error", "error", sendErr)
+		}
+
+		return
+	}
+
+	if err := client.Send(ctx, h.initialState(state)); err != nil {
+		slog.Warn("send matched game initial state", "game_id", result.GameID, "error", err)
+	}
 }
 
 func (h *Handler) handleMakeMove(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
@@ -259,6 +359,26 @@ func (h *Handler) sendError(ctx context.Context, client *Session, requestID stri
 
 func (h *Handler) sendNotImplemented(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
 	return h.sendError(ctx, client, message.RequestID, protocol.ErrorNotImplemented, fmt.Sprintf("%s is not implemented", message.Type))
+}
+
+func (h *Handler) initialState(state gameplay.GameSnapshot) protocol.ServerEnvelope {
+	return protocol.ServerEnvelope{
+		Type:    protocol.ServerGameInitial,
+		Payload: h.gameStatePayload(state),
+	}
+}
+
+func (h *Handler) gameStatePayload(state gameplay.GameSnapshot) protocol.GameStatePayload {
+	return protocol.GameStatePayload{
+		GameID:   state.GameID,
+		FEN:      state.FEN,
+		Status:   mapGameStatus(state.Outcome),
+		Version:  state.Version,
+		White:    nil,
+		Black:    nil,
+		LastMove: state.LastMoveSAN,
+		Outcome:  mapOutcome(state.Outcome, state.Method),
+	}
 }
 
 func mapApplicationError(err error) (protocol.ErrorCode, string) {
@@ -354,5 +474,77 @@ func mapColorPreference(preference protocol.ColorPreference) (gameplay.ColorPref
 
 	default:
 		return 0, gameplay.ErrInvalidColorPreference
+	}
+}
+
+func mapOutcome(outcome chess.Outcome, method chess.Method) *protocol.GameOutcome {
+	if outcome == chess.NoOutcome || outcome == chess.UnknownOutcome {
+		return nil
+	}
+
+	var result protocol.GameResult
+
+	switch outcome {
+	case chess.WhiteWon:
+		result = protocol.ResultWhiteWin
+	case chess.BlackWon:
+		result = protocol.ResultBlackWin
+	case chess.Draw:
+		result = protocol.ResultDraw
+	default:
+		return nil
+	}
+
+	var reason protocol.GameOverReason
+
+	switch method {
+	case chess.Checkmate:
+		reason = protocol.GameOverCheckmate
+	case chess.Resignation:
+		reason = protocol.GameOverResignation
+	case chess.DrawOffer:
+		reason = protocol.GameOverAgreement
+	case chess.Stalemate:
+		reason = protocol.GameOverStalemate
+	case chess.ThreefoldRepetition, chess.FivefoldRepetition:
+		reason = protocol.GameOverThreefoldRepetition
+	case chess.FiftyMoveRule, chess.SeventyFiveMoveRule:
+		reason = protocol.GameOverFiftyMoveRule
+	case chess.InsufficientMaterial:
+		reason = protocol.GameOverInsufficientMaterial
+	default:
+		return nil
+	}
+
+	return &protocol.GameOutcome{
+		Result: result,
+		Reason: reason,
+	}
+}
+
+func mapTimeControlPreset(preset protocol.TimeControlPreset) (time.Duration, time.Duration, error) {
+	switch preset {
+	case protocol.TimeControlBullet1Plus0:
+		return time.Minute, 0, nil
+	case protocol.TimeControlBullet1Plus1:
+		return time.Minute, time.Second, nil
+	case protocol.TimeControlBullet2Plus1:
+		return 2 * time.Minute, time.Second, nil
+	case protocol.TimeControlBlitz3Plus0:
+		return 3 * time.Minute, 0, nil
+	case protocol.TimeControlBlitz3Plus2:
+		return 3 * time.Minute, 2 * time.Second, nil
+	case protocol.TimeControlBlitz5Plus0:
+		return 5 * time.Minute, 0, nil
+	case protocol.TimeControlRapid10Plus0:
+		return 10 * time.Minute, 0, nil
+	case protocol.TimeControlRapid10Plus5:
+		return 10 * time.Minute, 5 * time.Second, nil
+	case protocol.TimeControlRapid15Plus10:
+		return 15 * time.Minute, 10 * time.Second, nil
+	case protocol.TimeControlClassical30Plus0:
+		return 30 * time.Minute, 0, nil
+	default:
+		return 0, 0, gameplay.ErrInvalidTimeControl
 	}
 }

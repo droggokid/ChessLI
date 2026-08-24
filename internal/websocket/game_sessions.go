@@ -4,7 +4,7 @@ import (
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
 	"context"
-	"errors"
+	"log/slog"
 	"sync"
 )
 
@@ -15,6 +15,7 @@ type GameSessions struct {
 	bySession map[*Session]identity.GameID
 }
 
+// NewGameSessions returns an empty registry of sessions grouped by game.
 func NewGameSessions() *GameSessions {
 	return &GameSessions{
 		byGame:    make(map[identity.GameID]map[*Session]struct{}),
@@ -22,6 +23,7 @@ func NewGameSessions() *GameSessions {
 	}
 }
 
+// Add registers a session with one game and rejects conflicting registration.
 func (g *GameSessions) Add(gameID identity.GameID, session *Session) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -43,6 +45,7 @@ func (g *GameSessions) Add(gameID identity.GameID, session *Session) error {
 	return nil
 }
 
+// Remove unregisters a session from its game.
 func (g *GameSessions) Remove(session *Session) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -62,6 +65,8 @@ func (g *GameSessions) Remove(session *Session) {
 	}
 }
 
+// Broadcast sends a message to the source and the other sessions in a game.
+// Source delivery is required; peer delivery is best effort without a request ID.
 func (g *GameSessions) Broadcast(ctx context.Context, gameID identity.GameID, source *Session, message protocol.ServerEnvelope) error {
 	g.mu.RLock()
 
@@ -74,23 +79,29 @@ func (g *GameSessions) Broadcast(ctx context.Context, gameID identity.GameID, so
 
 	g.mu.RUnlock()
 
-	var sendErrors []error
-
-	for _, session := range sessions {
-		outgoing := message
-
-		if session != source {
-			outgoing.RequestID = ""
-		}
-
-		if err := session.Send(ctx, outgoing); err != nil {
-			sendErrors = append(sendErrors, err)
+	if source != nil {
+		if err := source.Send(ctx, message); err != nil {
+			return err
 		}
 	}
 
-	return errors.Join(sendErrors...)
+	for _, session := range sessions {
+		if session == source {
+			continue
+		}
+
+		outgoing := message
+		outgoing.RequestID = ""
+
+		if err := session.Send(ctx, outgoing); err != nil {
+			slog.Warn("broadcast to game session", "game_id", gameID, "error", err)
+		}
+	}
+
+	return nil
 }
 
+// GameID returns the game currently associated with a session.
 func (g *GameSessions) GameID(session *Session) (identity.GameID, bool) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()

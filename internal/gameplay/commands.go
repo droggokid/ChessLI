@@ -13,6 +13,7 @@ type CreatePrivateCommand struct {
 	ColorPreference ColorPreference
 }
 
+// NewCreatePrivateCommand builds a command for creating a private game.
 func NewCreatePrivateCommand(profileID identity.ProfileID, initial time.Duration, increment time.Duration, colorPreference ColorPreference) *CreatePrivateCommand {
 	return &CreatePrivateCommand{
 		ProfileID:       profileID,
@@ -27,6 +28,7 @@ type JoinPrivateCommand struct {
 	GameID    identity.GameID
 }
 
+// NewJoinPrivateCommand builds a command for joining a private game.
 func NewJoinPrivateCommand(profileID identity.ProfileID, gameID identity.GameID) *JoinPrivateCommand {
 	return &JoinPrivateCommand{
 		ProfileID: profileID,
@@ -35,16 +37,18 @@ func NewJoinPrivateCommand(profileID identity.ProfileID, gameID identity.GameID)
 }
 
 type EnterMatchmakingCommand struct {
-	ProfileID identity.ProfileID
-	Initial   time.Duration
-	Increment time.Duration
+	ProfileID   identity.ProfileID
+	timeControl timeControlKey
 }
 
+// NewEnterMatchmakingCommand builds a command for entering a time-control pool.
 func NewEnterMatchmakingCommand(profileID identity.ProfileID, initial time.Duration, increment time.Duration) *EnterMatchmakingCommand {
 	return &EnterMatchmakingCommand{
 		ProfileID: profileID,
-		Initial:   initial,
-		Increment: increment,
+		timeControl: timeControlKey{
+			initial:   initial,
+			increment: increment,
+		},
 	}
 }
 
@@ -56,6 +60,7 @@ type MoveCommand struct {
 	ExpectedVersion uint64
 }
 
+// NewMoveCommand builds a versioned move command for a game participant.
 func NewMoveCommand(gameID identity.GameID, profileID identity.ProfileID, move string, notation MoveNotation, expectedVersion uint64) *MoveCommand {
 	return &MoveCommand{
 		GameID:          gameID,

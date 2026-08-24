@@ -16,7 +16,8 @@ _deps
 
 ### CMake Patch ###
 CMakeUserPresets.json
-docs/
+docs/*
+!docs/manual-error-testing.md
 
 # External projects
 *-prefix/
