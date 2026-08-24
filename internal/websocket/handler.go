@@ -269,12 +269,11 @@ func (h *Handler) awaitMatch(ctx context.Context, client *Session, requestID str
 
 		if sendErr := h.sendError(ctx, client, requestID, code, publicMessage); sendErr != nil {
 			slog.Warn("send matchmaking state error", "error", sendErr)
+			return
 		}
-
-		return
 	}
 
-	if err := client.Send(ctx, h.initialState(state)); err != nil {
+	if err = client.Send(ctx, h.initialState(state)); err != nil {
 		slog.Warn("send matched game initial state", "game_id", result.GameID, "error", err)
 	}
 }
