@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/rand/v2"
 	"sync"
+	"time"
 
 	"ChessLI/internal/identity"
 
@@ -15,20 +16,22 @@ type Service interface {
 	JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (JoinResult, error)
 	EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error)
 	MakeMove(ctx context.Context, command MoveCommand) (MoveResult, error)
+	GameState(ctx context.Context, gameID identity.GameID) (GameSnapshot, error)
 }
 
 type GameService struct {
-	mu            sync.RWMutex
-	waitingPlayer *waitingPlayer
-	games         map[identity.GameID]*Game
-	pickColor     func() chess.Color
+	mu             sync.RWMutex
+	waitingPlayers map[timeControlKey]*waitingPlayer
+	games          map[identity.GameID]*Game
+	pickColor      func() chess.Color
 }
 
 // NewGameService returns an empty, in-memory gameplay service.
 func NewGameService() *GameService {
 	return &GameService{
-		mu:    sync.RWMutex{},
-		games: make(map[identity.GameID]*Game),
+		mu:             sync.RWMutex{},
+		waitingPlayers: make(map[timeControlKey]*waitingPlayer),
+		games:          make(map[identity.GameID]*Game),
 		pickColor: func() chess.Color {
 			if rand.IntN(2) == 0 {
 				return chess.White
@@ -57,7 +60,7 @@ func (s *GameService) CreatePrivateGame(ctx context.Context, command CreatePriva
 		return CreateResult{}, err
 	}
 
-	if err := validateTimeControl(&command); err != nil {
+	if err := validateTimeControl(command.Initial, command.Increment); err != nil {
 		return CreateResult{}, err
 	}
 
@@ -82,14 +85,11 @@ func (s *GameService) CreatePrivateGame(ctx context.Context, command CreatePriva
 	}, nil
 }
 
-func validateTimeControl(command *CreatePrivateCommand) error {
-	if command.Initial <= 0 {
+func validateTimeControl(initial, increment time.Duration) error {
+	if initial <= 0 || increment < 0 {
 		return ErrInvalidTimeControl
 	}
 
-	if command.Increment < 0 {
-		return ErrInvalidTimeControl
-	}
 	return nil
 }
 
@@ -150,6 +150,12 @@ func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchma
 
 	player := newWaitingPlayer(ctx, command)
 
+	timeControl := command.timeControl
+
+	if err := validateTimeControl(timeControl.initial, timeControl.increment); err != nil {
+		return MatchTicket{}, err
+	}
+
 	s.mu.Lock()
 
 	waiting, queued, err := s.findOpponentLocked(player)
@@ -178,53 +184,49 @@ func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchma
 	return MatchTicket{Result: player.result}, nil
 }
 
+// newWaitingPlayer creates a queue entry that is canceled with ctx.
 func newWaitingPlayer(ctx context.Context, command EnterMatchmakingCommand) *waitingPlayer {
 	return &waitingPlayer{command: command, result: make(chan MatchResult, 1), done: ctx.Done()}
 }
 
+// findOpponentLocked matches player within its time-control pool or queues it.
+// The caller must hold s.mu.
 func (s *GameService) findOpponentLocked(player *waitingPlayer) (opponent *waitingPlayer, queued bool, err error) {
 	s.removeStaleWaitingPlayerLocked()
 
-	if s.waitingPlayer == nil {
-		s.waitingPlayer = player
+	for _, waiting := range s.waitingPlayers {
+		if waiting.command.ProfileID == player.command.ProfileID {
+			return nil, false, ErrAlreadyQueued
+		}
+	}
+
+	key := player.command.timeControl
+	waiting, exists := s.waitingPlayers[key]
+	if !exists {
+		s.waitingPlayers[key] = player
 		return nil, true, nil
 	}
 
-	waiting := s.waitingPlayer
-
-	if waiting.command.ProfileID == player.command.ProfileID {
-		return nil, false, ErrAlreadyQueued
-	}
-
-	if !compatibleTimeControls(waiting.command, player.command) {
-		return nil, false, ErrNoCompatibleOpponent
-	}
-
-	s.waitingPlayer = nil
+	delete(s.waitingPlayers, key)
 
 	return waiting, false, nil
 }
 
+// removeStaleWaitingPlayerLocked removes canceled players from every pool.
+// The caller must hold s.mu.
 func (s *GameService) removeStaleWaitingPlayerLocked() {
-	if s.waitingPlayer == nil {
-		return
+	for key, waiting := range s.waitingPlayers {
+		if !playerDone(waiting.done) {
+			continue
+		}
+
+		delete(s.waitingPlayers, key)
+		close(waiting.result)
 	}
-
-	if !playerDone(s.waitingPlayer.done) {
-		return
-	}
-
-	stale := s.waitingPlayer
-	s.waitingPlayer = nil
-
-	close(stale.result)
 }
 
-func compatibleTimeControls(first EnterMatchmakingCommand, second EnterMatchmakingCommand) bool {
-	return first.Initial == second.Initial &&
-		first.Increment == second.Increment
-}
-
+// createMatchLocked creates and stores a game for two matched players.
+// The caller must hold s.mu.
 func (s *GameService) createMatchLocked(waiting *waitingPlayer, current *waitingPlayer) (MatchResult, MatchResult) {
 	waitingColor := s.pickColor()
 	currentColor := waitingColor.Other()
@@ -232,19 +234,22 @@ func (s *GameService) createMatchLocked(waiting *waitingPlayer, current *waiting
 	whiteProfileID, blackProfileID := assignMatchmakingColors(waiting.command.ProfileID, current.command.ProfileID, waitingColor)
 
 	gameID := identity.NewGameID()
+	timeControl := current.command.timeControl
 
-	game := NewGame(gameID, whiteProfileID, blackProfileID, current.command.Initial, current.command.Increment)
+	game := NewGame(gameID, whiteProfileID, blackProfileID, timeControl.initial, timeControl.increment)
 
 	s.games[gameID] = game
 
 	return MatchResult{GameID: gameID, Color: waitingColor}, MatchResult{GameID: gameID, Color: currentColor}
 }
 
+// deliverMatchResult sends one match result and completes its ticket.
 func deliverMatchResult(resultChannel chan MatchResult, result MatchResult) {
 	resultChannel <- result
 	close(resultChannel)
 }
 
+// assignMatchmakingColors returns profile IDs ordered as White, then Black.
 func assignMatchmakingColors(waitingProfileID identity.ProfileID, currentProfileID identity.ProfileID, waitingColor chess.Color) (identity.ProfileID, identity.ProfileID) {
 	if waitingColor == chess.White {
 		return waitingProfileID, currentProfileID
@@ -253,6 +258,7 @@ func assignMatchmakingColors(waitingProfileID identity.ProfileID, currentProfile
 	return currentProfileID, waitingProfileID
 }
 
+// removeWaitingPlayerOnCancel unregisters a queued player when its context ends.
 func (s *GameService) removeWaitingPlayerOnCancel(player *waitingPlayer) {
 	if player.done == nil {
 		return
@@ -263,16 +269,18 @@ func (s *GameService) removeWaitingPlayerOnCancel(player *waitingPlayer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	key := player.command.timeControl
 	// The player may already have been matched. Only remove it
 	// when it is still the exact waiting entry.
-	if s.waitingPlayer != player {
+	if s.waitingPlayers[key] != player {
 		return
 	}
 
-	s.waitingPlayer = nil
+	delete(s.waitingPlayers, key)
 	close(player.result)
 }
 
+// playerDone reports whether a player's cancellation signal has fired.
 func playerDone(done <-chan struct{}) bool {
 	if done == nil {
 		return false
@@ -298,4 +306,17 @@ func (s *GameService) MakeMove(ctx context.Context, command MoveCommand) (MoveRe
 	}
 
 	return game.Move(command)
+}
+
+func (s *GameService) GameState(ctx context.Context, gameID identity.GameID) (GameSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return GameSnapshot{}, err
+	}
+
+	game, err := s.gameByID(gameID)
+	if err != nil {
+		return GameSnapshot{}, err
+	}
+
+	return game.Snapshot(), nil
 }

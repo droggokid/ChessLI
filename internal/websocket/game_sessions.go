@@ -4,7 +4,7 @@ import (
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
 	"context"
-	"errors"
+	"log/slog"
 	"sync"
 )
 
@@ -74,21 +74,26 @@ func (g *GameSessions) Broadcast(ctx context.Context, gameID identity.GameID, so
 
 	g.mu.RUnlock()
 
-	var sendErrors []error
-
-	for _, session := range sessions {
-		outgoing := message
-
-		if session != source {
-			outgoing.RequestID = ""
-		}
-
-		if err := session.Send(ctx, outgoing); err != nil {
-			sendErrors = append(sendErrors, err)
+	if source != nil {
+		if err := source.Send(ctx, message); err != nil {
+			return err
 		}
 	}
 
-	return errors.Join(sendErrors...)
+	for _, session := range sessions {
+		if session == source {
+			continue
+		}
+
+		outgoing := message
+		outgoing.RequestID = ""
+
+		if err := session.Send(ctx, outgoing); err != nil {
+			slog.Warn("broadcast to game session", "game_id", gameID, "error", err)
+		}
+	}
+
+	return nil
 }
 
 func (g *GameSessions) GameID(session *Session) (identity.GameID, bool) {

@@ -35,16 +35,17 @@ func NewJoinPrivateCommand(profileID identity.ProfileID, gameID identity.GameID)
 }
 
 type EnterMatchmakingCommand struct {
-	ProfileID identity.ProfileID
-	Initial   time.Duration
-	Increment time.Duration
+	ProfileID   identity.ProfileID
+	timeControl timeControlKey
 }
 
 func NewEnterMatchmakingCommand(profileID identity.ProfileID, initial time.Duration, increment time.Duration) *EnterMatchmakingCommand {
 	return &EnterMatchmakingCommand{
 		ProfileID: profileID,
-		Initial:   initial,
-		Increment: increment,
+		timeControl: timeControlKey{
+			initial:   initial,
+			increment: increment,
+		},
 	}
 }
 

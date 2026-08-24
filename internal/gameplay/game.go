@@ -11,16 +11,13 @@ import (
 )
 
 type Game struct {
-	mu sync.Mutex
-
-	ID      identity.GameID
-	version uint64
-
+	mu             sync.Mutex
+	ID             identity.GameID
+	version        uint64
 	WhiteProfileID identity.ProfileID
 	BlackProfileID identity.ProfileID
-
-	engine *chess.Game
-
+	engine         *chess.Game
+	lastMoveSAN    string
 	whiteRemaining time.Duration
 	blackRemaining time.Duration
 	increment      time.Duration
@@ -73,6 +70,7 @@ func (g *Game) Move(command MoveCommand) (MoveResult, error) {
 	}
 
 	g.version++
+	g.lastMoveSAN = san
 
 	return MoveResult{
 		GameID:  g.ID,
@@ -151,5 +149,27 @@ func (g *Game) JoinPrivate(command JoinPrivateCommand) (chess.Color, error) {
 
 	default:
 		return chess.NoColor, ErrGameFull
+	}
+}
+
+func (g *Game) Snapshot() GameSnapshot {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return g.snapshotLocked()
+}
+
+func (g *Game) snapshotLocked() GameSnapshot {
+	return GameSnapshot{
+		GameID:         g.ID,
+		FEN:            g.engine.FEN(),
+		Version:        g.version,
+		WhiteProfileID: g.WhiteProfileID,
+		BlackProfileID: g.BlackProfileID,
+		WhiteRemaining: g.whiteRemaining,
+		BlackRemaining: g.blackRemaining,
+		LastMoveSAN:    g.lastMoveSAN,
+		Outcome:        g.engine.Outcome(),
+		Method:         g.engine.Method(),
 	}
 }
