@@ -38,7 +38,7 @@ func NewGame(id identity.GameID, white identity.ProfileID, black identity.Profil
 	}
 }
 
-// Move validates and applies a UCI move for the profile whose turn it is.
+// Move decodes, validates, and applies a move for the profile whose turn it is.
 func (g *Game) Move(command MoveCommand) (MoveResult, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -152,6 +152,7 @@ func (g *Game) JoinPrivate(command JoinPrivateCommand) (chess.Color, error) {
 	}
 }
 
+// Snapshot returns a consistent copy of the game's current authoritative state.
 func (g *Game) Snapshot() GameSnapshot {
 	g.mu.Lock()
 	defer g.mu.Unlock()

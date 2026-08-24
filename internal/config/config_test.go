@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+// TestLoad verifies configuration defaults, overrides, and validation.
 func TestLoad(t *testing.T) {
 	tests := []struct {
 		name      string

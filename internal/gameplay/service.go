@@ -11,6 +11,8 @@ import (
 	"github.com/corentings/chess/v2"
 )
 
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -destination=service_mock.go -package=gameplay ChessLI/internal/gameplay Service
+
 type Service interface {
 	CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (CreateResult, error)
 	JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (JoinResult, error)
@@ -143,6 +145,7 @@ func (s *GameService) JoinPrivateGame(ctx context.Context, command JoinPrivateCo
 	}, nil
 }
 
+// EnterMatchmaking queues a profile or matches it with a compatible opponent.
 func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error) {
 	if err := ctx.Err(); err != nil {
 		return MatchTicket{}, err
@@ -308,6 +311,7 @@ func (s *GameService) MakeMove(ctx context.Context, command MoveCommand) (MoveRe
 	return game.Move(command)
 }
 
+// GameState returns the current authoritative snapshot of a game.
 func (s *GameService) GameState(ctx context.Context, gameID identity.GameID) (GameSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return GameSnapshot{}, err
