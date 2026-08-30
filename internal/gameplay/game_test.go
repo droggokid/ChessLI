@@ -147,8 +147,8 @@ func TestGameMoveUpdatesAuthoritativeState(t *testing.T) {
 			if result.Version != 1 {
 				t.Fatalf("Move() version = %d, want 1", result.Version)
 			}
-			if result.SAN != "e4" {
-				t.Fatalf("Move() SAN = %q, want %q", result.SAN, "e4")
+			if result.LastMoveSAN != "e4" {
+				t.Fatalf("Move() LastMoveSAN = %q, want %q", result.LastMoveSAN, "e4")
 			}
 
 			snapshot := game.Snapshot()
@@ -158,8 +158,8 @@ func TestGameMoveUpdatesAuthoritativeState(t *testing.T) {
 			if snapshot.Version != result.Version {
 				t.Fatalf("Snapshot().Version = %d, want %d", snapshot.Version, result.Version)
 			}
-			if snapshot.LastMoveSAN != result.SAN {
-				t.Fatalf("Snapshot().LastMoveSAN = %q, want %q", snapshot.LastMoveSAN, result.SAN)
+			if snapshot.LastMoveSAN != result.LastMoveSAN {
+				t.Fatalf("Snapshot().LastMoveSAN = %q, want %q", snapshot.LastMoveSAN, result.LastMoveSAN)
 			}
 		})
 	}
@@ -195,8 +195,8 @@ func TestGameRejectsMoveAfterCheckmate(t *testing.T) {
 			if result.Outcome != chess.BlackWon {
 				t.Fatalf("final outcome = %v, want %v", result.Outcome, chess.BlackWon)
 			}
-			if result.Method != chess.Checkmate {
-				t.Fatalf("final method = %v, want %v", result.Method, chess.Checkmate)
+			if result.Termination != TerminationCheckmate {
+				t.Fatalf("final termination = %v, want %v", result.Termination, TerminationCheckmate)
 			}
 		}
 	}
@@ -209,6 +209,115 @@ func TestGameRejectsMoveAfterCheckmate(t *testing.T) {
 	})
 	if !errors.Is(err, ErrGameFinished) {
 		t.Fatalf("Move() error = %v, want %v", err, ErrGameFinished)
+	}
+}
+
+func TestGamePrivateClockStartsWhenSecondPlayerJoins(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	now := base
+	game := NewGame("game", "white", "", time.Minute, 0)
+	game.now = func() time.Time { return now }
+
+	if _, err := game.JoinPrivate(JoinPrivateCommand{ProfileID: "black"}); err != nil {
+		t.Fatalf("JoinPrivate() error = %v", err)
+	}
+
+	now = now.Add(5 * time.Second)
+	snapshot := game.Snapshot()
+	if snapshot.WhiteRemaining != 55*time.Second {
+		t.Fatalf("WhiteRemaining = %v, want 55s", snapshot.WhiteRemaining)
+	}
+	if snapshot.BlackRemaining != time.Minute {
+		t.Fatalf("BlackRemaining = %v, want 1m", snapshot.BlackRemaining)
+	}
+}
+
+func TestGameMoveCommitsClockAndIncrement(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	now := base
+	game := NewGame("game", "white", "black", time.Minute, 2*time.Second)
+	game.now = func() time.Time { return now }
+	game.clock = newGameClock(time.Minute, 2*time.Second)
+	game.clock.start(now)
+
+	now = now.Add(5 * time.Second)
+	snapshot, err := game.Move(MoveCommand{
+		GameID:    game.ID,
+		ProfileID: "white",
+		Move:      "e2e4",
+		Notation:  MoveNotationUCI,
+	})
+	if err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+
+	if snapshot.WhiteRemaining != 57*time.Second {
+		t.Fatalf("WhiteRemaining = %v, want 57s", snapshot.WhiteRemaining)
+	}
+	if snapshot.BlackRemaining != time.Minute {
+		t.Fatalf("BlackRemaining = %v, want 1m", snapshot.BlackRemaining)
+	}
+}
+
+func TestGameSnapshotDoesNotAdjudicateTimeout(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	now := base
+	game := NewGame("game", "white", "black", time.Second, 0)
+	game.now = func() time.Time { return now }
+	game.clock = newGameClock(time.Second, 0)
+	game.clock.start(now)
+
+	now = now.Add(time.Second)
+	snapshot := game.Snapshot()
+
+	if snapshot.Outcome != chess.NoOutcome {
+		t.Fatalf("Outcome = %v, want %v", snapshot.Outcome, chess.NoOutcome)
+	}
+	if snapshot.Termination != TerminationNone {
+		t.Fatalf("Termination = %v, want %v", snapshot.Termination, TerminationNone)
+	}
+	if snapshot.Version != 0 {
+		t.Fatalf("Version = %d, want 0", snapshot.Version)
+	}
+	if snapshot.WhiteRemaining != 0 {
+		t.Fatalf("WhiteRemaining = %v, want 0", snapshot.WhiteRemaining)
+	}
+
+}
+
+func TestGameMoveReturnsTimeoutStateWithoutApplyingMove(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	now := base
+	game := NewGame("game", "white", "black", time.Second, 0)
+	game.now = func() time.Time { return now }
+	game.clock = newGameClock(time.Second, 0)
+	game.clock.start(now)
+	startingFEN := game.engine.FEN()
+
+	now = now.Add(time.Second)
+	snapshot, err := game.Move(MoveCommand{
+		GameID:    game.ID,
+		ProfileID: "white",
+		Move:      "e2e4",
+		Notation:  MoveNotationUCI,
+	})
+	if err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+
+	if snapshot.FEN != startingFEN || snapshot.LastMoveSAN != "" {
+		t.Fatalf("timed-out move changed position: FEN=%q lastMove=%q", snapshot.FEN, snapshot.LastMoveSAN)
+	}
+	if snapshot.Outcome != chess.BlackWon || snapshot.Termination != TerminationTimeout {
+		t.Fatalf("timeout state = (%v, %v), want (%v, %v)", snapshot.Outcome, snapshot.Termination, chess.BlackWon, TerminationTimeout)
 	}
 }
 

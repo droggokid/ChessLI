@@ -1,5 +1,7 @@
 package protocol
 
+import "ChessLI/internal/identity"
+
 type GameStatus string
 
 const (
@@ -17,11 +19,11 @@ const (
 )
 
 type PlayerState struct {
-	ID                    string       `json:"id"`
-	Color                 Color        `json:"color"`
-	Connected             bool         `json:"connected"`
-	RemainingMilliseconds *int64       `json:"remainingMilliseconds,omitempty"`
-	Notation              MoveNotation `json:"notation"`
+	ProfileID             identity.ProfileID `json:"profileId"`
+	Color                 Color              `json:"color"`
+	Connected             bool               `json:"connected"`
+	RemainingMilliseconds *int64             `json:"remainingMilliseconds,omitempty"`
+	Notation              MoveNotation       `json:"notation"`
 }
 
 type ColorPreference string
@@ -49,7 +51,9 @@ const (
 	GameOverTimeout              GameOverReason = "timeout"
 	GameOverAgreement            GameOverReason = "draw_agreement"
 	GameOverThreefoldRepetition  GameOverReason = "threefold_repetition"
+	GameOverFivefoldRepetition   GameOverReason = "fivefold_repetition"
 	GameOverFiftyMoveRule        GameOverReason = "fifty_move_rule"
+	GameOverSeventyFiveMoveRule  GameOverReason = "seventy_five_move_rule"
 	GameOverInsufficientMaterial GameOverReason = "insufficient_material"
 )
 

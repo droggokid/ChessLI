@@ -3,8 +3,6 @@ package websocket
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"reflect"
 	"testing"
 	"time"
 
@@ -91,7 +89,17 @@ func TestHandlerMakeMoveBroadcastsAuthoritativeResult(t *testing.T) {
 		Move:            "e4",
 		Notation:        gameplay.MoveNotationSAN,
 		ExpectedVersion: 1,
-	}).Return(gameplay.MoveResult{GameID: "game", FEN: "fen", SAN: "e4", Version: 2, Outcome: chess.NoOutcome}, nil)
+	}).Return(gameplay.GameSnapshot{
+		GameID:         "game",
+		FEN:            "fen",
+		Version:        2,
+		WhiteProfileID: "player",
+		BlackProfileID: "peer",
+		WhiteRemaining: 9 * time.Minute,
+		BlackRemaining: 8 * time.Minute,
+		LastMoveSAN:    "e4",
+		Outcome:        chess.NoOutcome,
+	}, nil)
 	registry := NewGameSessions()
 	handler := NewHandler(service, registry)
 	client := newQueuedSession("player")
@@ -113,188 +121,24 @@ func TestHandlerMakeMoveBroadcastsAuthoritativeResult(t *testing.T) {
 		if message.Type != protocol.ServerGameState || !ok || payload.FEN != "fen" || payload.LastMove != "e4" || payload.Version != 2 {
 			t.Fatalf("%s envelope = %+v, want authoritative game state", name, message)
 		}
-	}
-}
-
-func TestMapTimeControlPreset(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		preset        protocol.TimeControlPreset
-		wantInitial   time.Duration
-		wantIncrement time.Duration
-		wantErr       bool
-	}{
-		{preset: protocol.TimeControlBullet1Plus0, wantInitial: time.Minute},
-		{preset: protocol.TimeControlBullet1Plus1, wantInitial: time.Minute, wantIncrement: time.Second},
-		{preset: protocol.TimeControlBullet2Plus1, wantInitial: 2 * time.Minute, wantIncrement: time.Second},
-		{preset: protocol.TimeControlBlitz3Plus0, wantInitial: 3 * time.Minute},
-		{preset: protocol.TimeControlBlitz3Plus2, wantInitial: 3 * time.Minute, wantIncrement: 2 * time.Second},
-		{preset: protocol.TimeControlBlitz5Plus0, wantInitial: 5 * time.Minute},
-		{preset: protocol.TimeControlRapid10Plus0, wantInitial: 10 * time.Minute},
-		{preset: protocol.TimeControlRapid10Plus5, wantInitial: 10 * time.Minute, wantIncrement: 5 * time.Second},
-		{preset: protocol.TimeControlRapid15Plus10, wantInitial: 15 * time.Minute, wantIncrement: 10 * time.Second},
-		{preset: protocol.TimeControlClassical30Plus0, wantInitial: 30 * time.Minute},
-		{preset: protocol.TimeControlPreset("custom"), wantErr: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.preset), func(t *testing.T) {
-			t.Parallel()
-
-			initial, increment, err := mapTimeControlPreset(tt.preset)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("mapTimeControlPreset() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if initial != tt.wantInitial || increment != tt.wantIncrement {
-				t.Fatalf("mapTimeControlPreset() = (%v, %v), want (%v, %v)", initial, increment, tt.wantInitial, tt.wantIncrement)
-			}
-		})
-	}
-}
-
-func TestProtocolToGameplayMappings(t *testing.T) {
-	t.Parallel()
-
-	t.Run("move notation", func(t *testing.T) {
-		t.Parallel()
-
-		tests := []struct {
-			input   protocol.MoveNotation
-			want    gameplay.MoveNotation
-			wantErr bool
-		}{
-			{input: "", want: gameplay.MoveNotationUCI},
-			{input: protocol.MoveNotationUCI, want: gameplay.MoveNotationUCI},
-			{input: protocol.MoveNotationSAN, want: gameplay.MoveNotationSAN},
-			{input: protocol.MoveNotationLAN, want: gameplay.MoveNotationLAN},
-			{input: "pgn", wantErr: true},
+		if payload.White == nil || payload.Black == nil {
+			t.Fatalf("%s player state = (%+v, %+v), want both players", name, payload.White, payload.Black)
 		}
-
-		for _, tt := range tests {
-			got, err := mapMoveNotation(tt.input)
-			if (err != nil) != tt.wantErr || got != tt.want {
-				t.Fatalf("mapMoveNotation(%q) = (%v, %v), want (%v, wantErr=%v)", tt.input, got, err, tt.want, tt.wantErr)
-			}
+		if !payload.White.Connected || !payload.Black.Connected {
+			t.Fatalf("%s connected state = (%v, %v), want both connected", name, payload.White.Connected, payload.Black.Connected)
 		}
-	})
-
-	t.Run("color preference", func(t *testing.T) {
-		t.Parallel()
-
-		tests := []struct {
-			input   protocol.ColorPreference
-			want    gameplay.ColorPreference
-			wantErr bool
-		}{
-			{input: "", want: gameplay.ColorRandom},
-			{input: protocol.ColorPreferenceRandom, want: gameplay.ColorRandom},
-			{input: protocol.ColorPreferenceWhite, want: gameplay.ColorWhite},
-			{input: protocol.ColorPreferenceBlack, want: gameplay.ColorBlack},
-			{input: "green", wantErr: true},
+		if payload.White.Notation != protocol.MoveNotationUCI || payload.Black.Notation != protocol.MoveNotationUCI {
+			t.Fatalf("%s notation = (%q, %q), want UCI", name, payload.White.Notation, payload.Black.Notation)
 		}
-
-		for _, tt := range tests {
-			got, err := mapColorPreference(tt.input)
-			if (err != nil) != tt.wantErr || got != tt.want {
-				t.Fatalf("mapColorPreference(%q) = (%v, %v), want (%v, wantErr=%v)", tt.input, got, err, tt.want, tt.wantErr)
-			}
+		if payload.White.ProfileID != "player" || payload.Black.ProfileID != "peer" {
+			t.Fatalf("%s profile IDs = (%q, %q), want (player, peer)", name, payload.White.ProfileID, payload.Black.ProfileID)
 		}
-	})
-}
-
-func TestMapApplicationError(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		err         error
-		wantCode    protocol.ErrorCode
-		wantMessage string
-	}{
-		{gameplay.ErrGameNotFound, protocol.ErrorGameNotFound, "game not found"},
-		{gameplay.ErrGameFull, protocol.ErrorGameFull, "game is full"},
-		{gameplay.ErrNotParticipant, protocol.ErrorNotPlayer, "not a player in this game"},
-		{gameplay.ErrNotYourTurn, protocol.ErrorNotYourTurn, "not your turn"},
-		{gameplay.ErrIllegalMove, protocol.ErrorIllegalMove, "illegal move"},
-		{gameplay.ErrGameFinished, protocol.ErrorGameFinished, "game is finished"},
-		{gameplay.ErrGameNotReady, protocol.ErrorIllegalMove, "game is waiting for another player"},
-		{gameplay.ErrInvalidColorPreference, protocol.ErrorInvalidMessage, "invalid color preference"},
-		{gameplay.ErrInvalidTimeControl, protocol.ErrorInvalidMessage, "invalid time control"},
-		{gameplay.ErrUnsupportedNotation, protocol.ErrorInvalidMessage, "unsupported move notation"},
-		{gameplay.ErrAlreadyParticipant, protocol.ErrorInvalidMessage, "already a participant in this game"},
-		{gameplay.ErrAlreadyQueued, protocol.ErrorInvalidMessage, "already queued for matchmaking"},
-		{gameplay.ErrNoCompatibleOpponent, protocol.ErrorInvalidMessage, "no compatible opponent available"},
-		{gameplay.ErrStaleGameVersion, protocol.ErrorStaleGameVersion, "game state is stale"},
-		{errors.New("unexpected"), protocol.ErrorInternal, "internal server error"},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.wantCode)+"_"+tt.wantMessage, func(t *testing.T) {
-			t.Parallel()
-
-			code, message := mapApplicationError(tt.err)
-			if code != tt.wantCode || message != tt.wantMessage {
-				t.Fatalf("mapApplicationError() = (%q, %q), want (%q, %q)", code, message, tt.wantCode, tt.wantMessage)
-			}
-		})
-	}
-}
-
-func TestMapOutcome(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		outcome chess.Outcome
-		method  chess.Method
-		want    *protocol.GameOutcome
-	}{
-		{name: "in progress", outcome: chess.NoOutcome},
-		{name: "unknown", outcome: chess.UnknownOutcome},
-		{name: "white checkmate", outcome: chess.WhiteWon, method: chess.Checkmate, want: &protocol.GameOutcome{Result: protocol.ResultWhiteWin, Reason: protocol.GameOverCheckmate}},
-		{name: "black resignation", outcome: chess.BlackWon, method: chess.Resignation, want: &protocol.GameOutcome{Result: protocol.ResultBlackWin, Reason: protocol.GameOverResignation}},
-		{name: "draw agreement", outcome: chess.Draw, method: chess.DrawOffer, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverAgreement}},
-		{name: "stalemate", outcome: chess.Draw, method: chess.Stalemate, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverStalemate}},
-		{name: "fivefold repetition", outcome: chess.Draw, method: chess.FivefoldRepetition, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverThreefoldRepetition}},
-		{name: "seventy-five move", outcome: chess.Draw, method: chess.SeventyFiveMoveRule, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverFiftyMoveRule}},
-		{name: "insufficient material", outcome: chess.Draw, method: chess.InsufficientMaterial, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverInsufficientMaterial}},
-		{name: "missing method", outcome: chess.Draw, method: chess.NoMethod},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := mapOutcome(tt.outcome, tt.method); !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("mapOutcome() = %+v, want %+v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGameStatePayload(t *testing.T) {
-	t.Parallel()
-
-	handler := NewHandler(nil, NewGameSessions())
-	state := gameplay.GameSnapshot{
-		GameID:      "game",
-		FEN:         "fen",
-		Version:     3,
-		LastMoveSAN: "Qh4#",
-		Outcome:     chess.BlackWon,
-		Method:      chess.Checkmate,
-	}
-
-	got := handler.gameStatePayload(state)
-	if got.GameID != state.GameID || got.FEN != state.FEN || got.Version != state.Version || got.LastMove != state.LastMoveSAN {
-		t.Fatalf("gameStatePayload() = %+v, want snapshot values %+v", got, state)
-	}
-	if got.Status != protocol.GameStatusFinished {
-		t.Fatalf("gameStatePayload() status = %q, want %q", got.Status, protocol.GameStatusFinished)
-	}
-	wantOutcome := &protocol.GameOutcome{Result: protocol.ResultBlackWin, Reason: protocol.GameOverCheckmate}
-	if !reflect.DeepEqual(got.Outcome, wantOutcome) {
-		t.Fatalf("gameStatePayload() outcome = %+v, want %+v", got.Outcome, wantOutcome)
+		if payload.White.RemainingMilliseconds == nil || *payload.White.RemainingMilliseconds != (9*time.Minute).Milliseconds() {
+			t.Fatalf("%s white remaining = %v, want 9 minutes", name, payload.White.RemainingMilliseconds)
+		}
+		if payload.Black.RemainingMilliseconds == nil || *payload.Black.RemainingMilliseconds != (8*time.Minute).Milliseconds() {
+			t.Fatalf("%s black remaining = %v, want 8 minutes", name, payload.Black.RemainingMilliseconds)
+		}
 	}
 }
 

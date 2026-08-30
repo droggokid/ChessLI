@@ -16,15 +16,6 @@ type JoinResult struct {
 	Color  chess.Color     `json:"color"`
 }
 
-type MoveResult struct {
-	GameID  identity.GameID `json:"gameId"`
-	FEN     string          `json:"fen"`
-	SAN     string          `json:"san"`
-	Outcome chess.Outcome   `json:"outcome"`
-	Method  chess.Method    `json:"method"`
-	Version uint64          `json:"version"`
-}
-
 type MatchResult struct {
 	GameID identity.GameID `json:"gameId"`
 	Color  chess.Color     `json:"color"`

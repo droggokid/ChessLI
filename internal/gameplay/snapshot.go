@@ -1,8 +1,9 @@
 package gameplay
 
 import (
-	"ChessLI/internal/identity"
 	"time"
+
+	"ChessLI/internal/identity"
 
 	"github.com/corentings/chess/v2"
 )
@@ -17,5 +18,5 @@ type GameSnapshot struct {
 	BlackRemaining time.Duration
 	LastMoveSAN    string
 	Outcome        chess.Outcome
-	Method         chess.Method
+	Termination    TerminationReason
 }

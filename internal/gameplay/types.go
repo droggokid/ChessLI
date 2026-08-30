@@ -1,7 +1,5 @@
 package gameplay
 
-import "time"
-
 type GameMode uint8
 
 const (
@@ -17,12 +15,6 @@ const (
 	ColorBlack
 )
 
-type waitingPlayer struct {
-	command EnterMatchmakingCommand
-	result  chan MatchResult
-	done    <-chan struct{}
-}
-
 type MoveNotation uint8
 
 const (
@@ -30,9 +22,3 @@ const (
 	MoveNotationSAN
 	MoveNotationLAN
 )
-
-// timeControlKey identifies one matchmaking pool by its clock settings.
-type timeControlKey struct {
-	initial   time.Duration
-	increment time.Duration
-}

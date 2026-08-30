@@ -61,6 +61,13 @@ func TestGameServicePrivateGameLifecycle(t *testing.T) {
 		t.Fatalf("CreatePrivateGame() color = %v, want %v", created.Color, chess.White)
 	}
 
+	game, err := service.gameByID(created.GameID)
+	if err != nil {
+		t.Fatalf("gameByID() error = %v", err)
+	}
+	fixedNow := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	game.now = func() time.Time { return fixedNow }
+
 	joined, err := service.JoinPrivateGame(context.Background(), JoinPrivateCommand{
 		ProfileID: joiner,
 		GameID:    created.GameID,
@@ -81,6 +88,46 @@ func TestGameServicePrivateGameLifecycle(t *testing.T) {
 	}
 	if state.WhiteRemaining != 10*time.Minute || state.BlackRemaining != 10*time.Minute {
 		t.Fatalf("GameState() remaining = (%v, %v), want 10m for both", state.WhiteRemaining, state.BlackRemaining)
+	}
+}
+
+func TestGameServiceAutomaticallyExpiresPrivateGame(t *testing.T) {
+	t.Parallel()
+
+	service := NewGameService()
+	t.Cleanup(service.Close)
+
+	expired := make(chan GameSnapshot, 1)
+	service.SetGameExpiredHandler(func(state GameSnapshot) {
+		expired <- state
+	})
+
+	created, err := service.CreatePrivateGame(context.Background(), CreatePrivateCommand{
+		ProfileID:       "white",
+		Initial:         20 * time.Millisecond,
+		ColorPreference: ColorWhite,
+	})
+	if err != nil {
+		t.Fatalf("CreatePrivateGame() error = %v", err)
+	}
+
+	if _, err = service.JoinPrivateGame(context.Background(), JoinPrivateCommand{
+		GameID:    created.GameID,
+		ProfileID: "black",
+	}); err != nil {
+		t.Fatalf("JoinPrivateGame() error = %v", err)
+	}
+
+	select {
+	case state := <-expired:
+		if state.Outcome != chess.BlackWon || state.Termination != TerminationTimeout {
+			t.Fatalf("expired state = (%v, %v), want (%v, %v)", state.Outcome, state.Termination, chess.BlackWon, TerminationTimeout)
+		}
+		if state.Version != 1 || state.WhiteRemaining != 0 {
+			t.Fatalf("expired state version/time = (%d, %v), want (1, 0)", state.Version, state.WhiteRemaining)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("game did not expire automatically")
 	}
 }
 

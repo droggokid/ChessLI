@@ -109,3 +109,20 @@ func (g *GameSessions) GameID(session *Session) (identity.GameID, bool) {
 	gameID, exists := g.bySession[session]
 	return gameID, exists
 }
+
+// IsConnected reports whether a profile has an active session registered to the game.
+func (g *GameSessions) IsConnected(
+	gameID identity.GameID,
+	profileID identity.ProfileID,
+) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	for session := range g.byGame[gameID] {
+		if session.profileID == profileID {
+			return true
+		}
+	}
+
+	return false
+}

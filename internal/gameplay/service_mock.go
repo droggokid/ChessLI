@@ -102,10 +102,10 @@ func (mr *MockServiceMockRecorder) JoinPrivateGame(ctx, command any) *gomock.Cal
 }
 
 // MakeMove mocks base method.
-func (m *MockService) MakeMove(ctx context.Context, command MoveCommand) (MoveResult, error) {
+func (m *MockService) MakeMove(ctx context.Context, command MoveCommand) (GameSnapshot, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "MakeMove", ctx, command)
-	ret0, _ := ret[0].(MoveResult)
+	ret0, _ := ret[0].(GameSnapshot)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

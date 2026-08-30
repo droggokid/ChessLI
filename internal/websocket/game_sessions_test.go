@@ -39,6 +39,31 @@ func TestGameSessionsRegistrationLifecycle(t *testing.T) {
 	}
 }
 
+func TestGameSessionsIsConnected(t *testing.T) {
+	t.Parallel()
+
+	registry := NewGameSessions()
+	session := newQueuedSession("player")
+	if err := registry.Add("game", session); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if !registry.IsConnected("game", "player") {
+		t.Fatal("IsConnected() = false, want true for registered profile")
+	}
+	if registry.IsConnected("game", "other") {
+		t.Fatal("IsConnected() = true, want false for different profile")
+	}
+	if registry.IsConnected("other-game", "player") {
+		t.Fatal("IsConnected() = true, want false for different game")
+	}
+
+	registry.Remove(session)
+	if registry.IsConnected("game", "player") {
+		t.Fatal("IsConnected() = true after Remove, want false")
+	}
+}
+
 func TestGameSessionsBroadcastPreservesOnlySourceRequestID(t *testing.T) {
 	t.Parallel()
 

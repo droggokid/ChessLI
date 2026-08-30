@@ -27,7 +27,7 @@ The expected-error examples below show the `payload` portion of the server's
 In client A, create a game as White:
 
 ```json
-{"type":"game.create","requestId":"setup-create","payload":{"color":"white","timeControl":{"initialMilliseconds":600000,"incrementMilliseconds":0}}}
+{"type":"game.create","requestId":"setup-create","payload":{"color":"white","timeControl":"10+0"}}
 ```
 
 Copy the returned game ID and replace `GAME_ID` in the examples below.
@@ -37,6 +37,10 @@ When a scenario requires an active game, join from client B:
 ```json
 {"type":"game.join","requestId":"setup-join","payload":{"gameId":"GAME_ID"}}
 ```
+
+The resulting `game.initial` and subsequent `game.state` messages contain
+`white` and `black` objects with `profileId`, `color`, `connected`,
+`remainingMilliseconds`, and `notation`. Notation is currently always `uci`.
 
 ## Reachable gameplay errors
 
@@ -164,12 +168,23 @@ Expected error:
 {"code":"game_finished","message":"game is finished"}
 ```
 
+The accepted checkmating move first produces a `game.state` with status
+`finished` and outcome result `black_win` with reason `checkmate`. Other
+possible reasons are `stalemate`, `resignation`, `timeout`, `draw_agreement`,
+`threefold_repetition`, `fivefold_repetition`, `fifty_move_rule`,
+`seventy_five_move_rule`, and `insufficient_material`.
+
+When the active player reaches zero, both clients automatically receive a
+finished `game.state` whose version is one greater and whose outcome reason is
+`timeout`. Clock expiration is also checked when a move races with the timer;
+an expired player's move is not applied.
+
 ### Invalid color preference
 
 Send from a client that is not already registered with a game:
 
 ```json
-{"type":"game.create","requestId":"error-color","payload":{"color":"purple","timeControl":{"initialMilliseconds":600000,"incrementMilliseconds":0}}}
+{"type":"game.create","requestId":"error-color","payload":{"color":"purple","timeControl":"10+0"}}
 ```
 
 Expected error:
@@ -181,7 +196,7 @@ Expected error:
 ### Invalid time control
 
 ```json
-{"type":"game.create","requestId":"error-time-control","payload":{"color":"white","timeControl":{"initialMilliseconds":0,"incrementMilliseconds":0}}}
+{"type":"game.create","requestId":"error-time-control","payload":{"color":"white","timeControl":"custom"}}
 ```
 
 Expected error:
@@ -284,7 +299,7 @@ After a client creates or joins a game, send another create command from that
 same connection:
 
 ```json
-{"type":"game.create","requestId":"error-session-game","payload":{"color":"white","timeControl":{"initialMilliseconds":600000,"incrementMilliseconds":0}}}
+{"type":"game.create","requestId":"error-session-game","payload":{"color":"white","timeControl":"10+0"}}
 ```
 
 Expected error:

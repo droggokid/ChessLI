@@ -3,10 +3,8 @@ package websocket
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/websocket/protocol"
@@ -300,34 +298,19 @@ func (h *Handler) handleMakeMove(ctx context.Context, client *Session, message p
 
 	command := gameplay.NewMoveCommand(request.GameID, client.profileID, request.Move, moveNotation, *request.ExpectedVersion)
 
-	serviceResult, err := h.gameService.MakeMove(ctx, *command)
+	state, err := h.gameService.MakeMove(ctx, *command)
 	if err != nil {
 		code, publicMessage := mapApplicationError(err)
-
 		return h.sendError(ctx, client, message.RequestID, code, publicMessage)
 	}
-
-	gameStatus := mapGameStatus(serviceResult.Outcome)
 
 	envelope := protocol.ServerEnvelope{
 		Type:      protocol.ServerGameState,
 		RequestID: message.RequestID,
-		Payload: protocol.GameStatePayload{
-			GameID:   serviceResult.GameID,
-			FEN:      serviceResult.FEN,
-			Status:   gameStatus,
-			Version:  serviceResult.Version,
-			White:    nil,
-			Black:    nil,
-			LastMove: serviceResult.SAN,
-		},
+		Payload:   h.gameStatePayload(state),
 	}
 
-	if err = h.gameSessions.Broadcast(ctx, serviceResult.GameID, client, envelope); err != nil {
-		slog.Warn("broadcast game state", "game_id", serviceResult.GameID, "error", err)
-	}
-
-	return nil
+	return h.gameSessions.Broadcast(ctx, state.GameID, client, envelope)
 }
 
 func (h *Handler) handleResign(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
@@ -359,192 +342,4 @@ func (h *Handler) sendError(ctx context.Context, client *Session, requestID stri
 
 func (h *Handler) sendNotImplemented(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
 	return h.sendError(ctx, client, message.RequestID, protocol.ErrorNotImplemented, fmt.Sprintf("%s is not implemented", message.Type))
-}
-
-func (h *Handler) initialState(state gameplay.GameSnapshot) protocol.ServerEnvelope {
-	return protocol.ServerEnvelope{
-		Type:    protocol.ServerGameInitial,
-		Payload: h.gameStatePayload(state),
-	}
-}
-
-func (h *Handler) gameStatePayload(state gameplay.GameSnapshot) protocol.GameStatePayload {
-	return protocol.GameStatePayload{
-		GameID:   state.GameID,
-		FEN:      state.FEN,
-		Status:   mapGameStatus(state.Outcome),
-		Version:  state.Version,
-		White:    nil,
-		Black:    nil,
-		LastMove: state.LastMoveSAN,
-		Outcome:  mapOutcome(state.Outcome, state.Method),
-	}
-}
-
-func mapApplicationError(err error) (protocol.ErrorCode, string) {
-	switch {
-	case errors.Is(err, gameplay.ErrGameNotFound):
-		return protocol.ErrorGameNotFound, "game not found"
-
-	case errors.Is(err, gameplay.ErrGameFull):
-		return protocol.ErrorGameFull, "game is full"
-
-	case errors.Is(err, gameplay.ErrNotParticipant):
-		return protocol.ErrorNotPlayer, "not a player in this game"
-
-	case errors.Is(err, gameplay.ErrNotYourTurn):
-		return protocol.ErrorNotYourTurn, "not your turn"
-
-	case errors.Is(err, gameplay.ErrIllegalMove):
-		return protocol.ErrorIllegalMove, "illegal move"
-
-	case errors.Is(err, gameplay.ErrGameFinished):
-		return protocol.ErrorGameFinished, "game is finished"
-
-	case errors.Is(err, gameplay.ErrGameNotReady):
-		return protocol.ErrorIllegalMove, "game is waiting for another player"
-
-	case errors.Is(err, gameplay.ErrInvalidColorPreference):
-		return protocol.ErrorInvalidMessage, "invalid color preference"
-
-	case errors.Is(err, gameplay.ErrInvalidTimeControl):
-		return protocol.ErrorInvalidMessage, "invalid time control"
-
-	case errors.Is(err, gameplay.ErrUnsupportedNotation):
-		return protocol.ErrorInvalidMessage, "unsupported move notation"
-
-	case errors.Is(err, gameplay.ErrAlreadyParticipant):
-		return protocol.ErrorInvalidMessage, "already a participant in this game"
-
-	case errors.Is(err, gameplay.ErrAlreadyQueued):
-		return protocol.ErrorInvalidMessage, "already queued for matchmaking"
-
-	case errors.Is(err, gameplay.ErrNoCompatibleOpponent):
-		return protocol.ErrorInvalidMessage, "no compatible opponent available"
-
-	case errors.Is(err, gameplay.ErrStaleGameVersion):
-		return protocol.ErrorStaleGameVersion, "game state is stale"
-
-	default:
-		return protocol.ErrorInternal, "internal server error"
-	}
-}
-
-func mapColorFromServer(color chess.Color) protocol.Color {
-	if color == chess.White {
-		return protocol.ColorWhite
-	}
-	return protocol.ColorBlack
-}
-
-func mapMoveNotation(notation protocol.MoveNotation) (gameplay.MoveNotation, error) {
-	switch notation {
-	case "", protocol.MoveNotationUCI:
-		return gameplay.MoveNotationUCI, nil
-
-	case protocol.MoveNotationSAN:
-		return gameplay.MoveNotationSAN, nil
-
-	case protocol.MoveNotationLAN:
-		return gameplay.MoveNotationLAN, nil
-
-	default:
-		return 0, gameplay.ErrUnsupportedNotation
-	}
-}
-
-func mapGameStatus(outcome chess.Outcome) protocol.GameStatus {
-	if outcome == chess.NoOutcome {
-		return protocol.GameStatusActive
-	}
-
-	return protocol.GameStatusFinished
-}
-
-func mapColorPreference(preference protocol.ColorPreference) (gameplay.ColorPreference, error) {
-	switch preference {
-	case "", protocol.ColorPreferenceRandom:
-		return gameplay.ColorRandom, nil
-
-	case protocol.ColorPreferenceWhite:
-		return gameplay.ColorWhite, nil
-
-	case protocol.ColorPreferenceBlack:
-		return gameplay.ColorBlack, nil
-
-	default:
-		return 0, gameplay.ErrInvalidColorPreference
-	}
-}
-
-func mapOutcome(outcome chess.Outcome, method chess.Method) *protocol.GameOutcome {
-	if outcome == chess.NoOutcome || outcome == chess.UnknownOutcome {
-		return nil
-	}
-
-	var result protocol.GameResult
-
-	switch outcome {
-	case chess.WhiteWon:
-		result = protocol.ResultWhiteWin
-	case chess.BlackWon:
-		result = protocol.ResultBlackWin
-	case chess.Draw:
-		result = protocol.ResultDraw
-	default:
-		return nil
-	}
-
-	var reason protocol.GameOverReason
-
-	switch method {
-	case chess.Checkmate:
-		reason = protocol.GameOverCheckmate
-	case chess.Resignation:
-		reason = protocol.GameOverResignation
-	case chess.DrawOffer:
-		reason = protocol.GameOverAgreement
-	case chess.Stalemate:
-		reason = protocol.GameOverStalemate
-	case chess.ThreefoldRepetition, chess.FivefoldRepetition:
-		reason = protocol.GameOverThreefoldRepetition
-	case chess.FiftyMoveRule, chess.SeventyFiveMoveRule:
-		reason = protocol.GameOverFiftyMoveRule
-	case chess.InsufficientMaterial:
-		reason = protocol.GameOverInsufficientMaterial
-	default:
-		return nil
-	}
-
-	return &protocol.GameOutcome{
-		Result: result,
-		Reason: reason,
-	}
-}
-
-func mapTimeControlPreset(preset protocol.TimeControlPreset) (time.Duration, time.Duration, error) {
-	switch preset {
-	case protocol.TimeControlBullet1Plus0:
-		return time.Minute, 0, nil
-	case protocol.TimeControlBullet1Plus1:
-		return time.Minute, time.Second, nil
-	case protocol.TimeControlBullet2Plus1:
-		return 2 * time.Minute, time.Second, nil
-	case protocol.TimeControlBlitz3Plus0:
-		return 3 * time.Minute, 0, nil
-	case protocol.TimeControlBlitz3Plus2:
-		return 3 * time.Minute, 2 * time.Second, nil
-	case protocol.TimeControlBlitz5Plus0:
-		return 5 * time.Minute, 0, nil
-	case protocol.TimeControlRapid10Plus0:
-		return 10 * time.Minute, 0, nil
-	case protocol.TimeControlRapid10Plus5:
-		return 10 * time.Minute, 5 * time.Second, nil
-	case protocol.TimeControlRapid15Plus10:
-		return 15 * time.Minute, 10 * time.Second, nil
-	case protocol.TimeControlClassical30Plus0:
-		return 30 * time.Minute, 0, nil
-	default:
-		return 0, 0, gameplay.ErrInvalidTimeControl
-	}
 }
