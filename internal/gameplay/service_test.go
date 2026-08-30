@@ -205,6 +205,41 @@ func TestGameServiceMatchmakingMatchesWithinPool(t *testing.T) {
 	}
 }
 
+func TestGameServiceMatchmakingStopsCancellationCleanupAfterMatch(t *testing.T) {
+	t.Parallel()
+
+	service := NewGameService()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	first, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("first", time.Minute, 0))
+	if err != nil {
+		t.Fatalf("first EnterMatchmaking() error = %v", err)
+	}
+
+	key := timeControlKey{initial: time.Minute}
+	service.mu.RLock()
+	waiting := service.waitingPlayers[key]
+	service.mu.RUnlock()
+	if waiting == nil || waiting.stopCleanup == nil {
+		t.Fatal("queued player has no cancellation cleanup")
+	}
+
+	second, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("second", time.Minute, 0))
+	if err != nil {
+		t.Fatalf("second EnterMatchmaking() error = %v", err)
+	}
+	receiveMatch(t, first.Result)
+	receiveMatch(t, second.Result)
+
+	service.mu.RLock()
+	cleanup := waiting.stopCleanup
+	service.mu.RUnlock()
+	if cleanup != nil {
+		t.Fatal("matched player still has a cancellation cleanup")
+	}
+}
+
 func TestGameServiceMatchmakingKeepsPoolsSeparate(t *testing.T) {
 	t.Parallel()
 

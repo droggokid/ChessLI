@@ -28,8 +28,8 @@ func TestSessionRunRejectsMissingHandler(t *testing.T) {
 	t.Parallel()
 
 	err := NewSession(nil).Run(context.Background(), nil)
-	if err == nil || err.Error() != "websocket message handler is required" {
-		t.Fatalf("Run() error = %v, want missing-handler error", err)
+	if !errors.Is(err, errMessageHandlerRequired) {
+		t.Fatalf("Run() error = %v, want %v", err, errMessageHandlerRequired)
 	}
 }
 

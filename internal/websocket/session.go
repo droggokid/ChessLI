@@ -16,6 +16,8 @@ import (
 
 const outgoingBufferSize = 16
 
+var errMessageHandlerRequired = errors.New("websocket message handler is required")
+
 type sessionRunState uint32
 
 const (
@@ -52,7 +54,7 @@ func NewSession(conn *coderws.Conn) *Session {
 // Run exchanges messages until the context is canceled or an I/O loop stops.
 func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 	if handleMessage == nil {
-		return errors.New("websocket message handler is required")
+		return errMessageHandlerRequired
 	}
 	if !c.runState.CompareAndSwap(uint32(sessionNotStarted), uint32(sessionRunning)) {
 		return protocol.ErrSessionAlreadyRun

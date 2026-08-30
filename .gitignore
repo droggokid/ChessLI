@@ -18,6 +18,8 @@ _deps
 CMakeUserPresets.json
 docs/*
 !docs/manual-error-testing.md
+!docs/adr/
+!docs/adr/*.md
 
 # External projects
 *-prefix/

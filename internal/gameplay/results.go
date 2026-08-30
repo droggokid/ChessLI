@@ -7,18 +7,18 @@ import (
 )
 
 type CreateResult struct {
-	GameID identity.GameID `json:"gameId"`
-	Color  chess.Color     `json:"color"`
+	GameID identity.GameID
+	Color  chess.Color
 }
 
 type JoinResult struct {
-	GameID identity.GameID `json:"gameId"`
-	Color  chess.Color     `json:"color"`
+	GameID identity.GameID
+	Color  chess.Color
 }
 
 type MatchResult struct {
-	GameID identity.GameID `json:"gameId"`
-	Color  chess.Color     `json:"color"`
+	GameID identity.GameID
+	Color  chess.Color
 }
 
 type MatchTicket struct {
