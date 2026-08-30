@@ -19,8 +19,8 @@ const (
 )
 
 var (
-	ErrSessionClosed        = errors.New("session is closed")
 	ErrSessionNotRunning    = errors.New("session is not running")
 	ErrSessionAlreadyRun    = errors.New("session has already been run")
 	ErrSessionAlreadyInGame = errors.New("session is already registered with a game")
+	ErrSessionQueueFull     = errors.New("session outgoing queue is full")
 )

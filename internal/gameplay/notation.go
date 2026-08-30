@@ -2,6 +2,14 @@ package gameplay
 
 import "github.com/corentings/chess/v2"
 
+type MoveNotation uint8
+
+const (
+	MoveNotationUCI MoveNotation = iota
+	MoveNotationSAN
+	MoveNotationLAN
+)
+
 func engineNotation(notation MoveNotation) (chess.Notation, error) {
 	switch notation {
 	case MoveNotationUCI:

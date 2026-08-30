@@ -33,8 +33,6 @@ func mapApplicationError(err error) (protocol.ErrorCode, string) {
 		return protocol.ErrorInvalidMessage, "already a participant in this game"
 	case errors.Is(err, gameplay.ErrAlreadyQueued):
 		return protocol.ErrorInvalidMessage, "already queued for matchmaking"
-	case errors.Is(err, gameplay.ErrNoCompatibleOpponent):
-		return protocol.ErrorInvalidMessage, "no compatible opponent available"
 	case errors.Is(err, gameplay.ErrStaleGameVersion):
 		return protocol.ErrorStaleGameVersion, "game state is stale"
 	default:

@@ -98,6 +98,14 @@ func TestProtocolToGameplayMappings(t *testing.T) {
 	})
 }
 
+func TestMapColorFromServerRejectsInvalidColor(t *testing.T) {
+	t.Parallel()
+
+	if _, err := mapColorFromServer(chess.NoColor); err == nil {
+		t.Fatal("mapColorFromServer(NoColor) error = nil, want error")
+	}
+}
+
 func TestMapOutcome(t *testing.T) {
 	t.Parallel()
 

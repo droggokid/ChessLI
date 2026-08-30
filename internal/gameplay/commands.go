@@ -6,6 +6,14 @@ import (
 	"ChessLI/internal/identity"
 )
 
+type ColorPreference uint8
+
+const (
+	ColorRandom ColorPreference = iota
+	ColorWhite
+	ColorBlack
+)
+
 type CreatePrivateCommand struct {
 	ProfileID       identity.ProfileID
 	Initial         time.Duration
@@ -14,8 +22,8 @@ type CreatePrivateCommand struct {
 }
 
 // NewCreatePrivateCommand builds a command for creating a private game.
-func NewCreatePrivateCommand(profileID identity.ProfileID, initial time.Duration, increment time.Duration, colorPreference ColorPreference) *CreatePrivateCommand {
-	return &CreatePrivateCommand{
+func NewCreatePrivateCommand(profileID identity.ProfileID, initial time.Duration, increment time.Duration, colorPreference ColorPreference) CreatePrivateCommand {
+	return CreatePrivateCommand{
 		ProfileID:       profileID,
 		Initial:         initial,
 		Increment:       increment,
@@ -29,8 +37,8 @@ type JoinPrivateCommand struct {
 }
 
 // NewJoinPrivateCommand builds a command for joining a private game.
-func NewJoinPrivateCommand(profileID identity.ProfileID, gameID identity.GameID) *JoinPrivateCommand {
-	return &JoinPrivateCommand{
+func NewJoinPrivateCommand(profileID identity.ProfileID, gameID identity.GameID) JoinPrivateCommand {
+	return JoinPrivateCommand{
 		ProfileID: profileID,
 		GameID:    gameID,
 	}
@@ -42,8 +50,8 @@ type EnterMatchmakingCommand struct {
 }
 
 // NewEnterMatchmakingCommand builds a command for entering a time-control pool.
-func NewEnterMatchmakingCommand(profileID identity.ProfileID, initial time.Duration, increment time.Duration) *EnterMatchmakingCommand {
-	return &EnterMatchmakingCommand{
+func NewEnterMatchmakingCommand(profileID identity.ProfileID, initial time.Duration, increment time.Duration) EnterMatchmakingCommand {
+	return EnterMatchmakingCommand{
 		ProfileID: profileID,
 		timeControl: timeControlKey{
 			initial:   initial,
@@ -61,8 +69,8 @@ type MoveCommand struct {
 }
 
 // NewMoveCommand builds a versioned move command for a game participant.
-func NewMoveCommand(gameID identity.GameID, profileID identity.ProfileID, move string, notation MoveNotation, expectedVersion uint64) *MoveCommand {
-	return &MoveCommand{
+func NewMoveCommand(gameID identity.GameID, profileID identity.ProfileID, move string, notation MoveNotation, expectedVersion uint64) MoveCommand {
+	return MoveCommand{
 		GameID:          gameID,
 		ProfileID:       profileID,
 		Move:            move,

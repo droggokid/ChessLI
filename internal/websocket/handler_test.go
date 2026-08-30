@@ -145,28 +145,56 @@ func TestHandlerMakeMoveBroadcastsAuthoritativeResult(t *testing.T) {
 func TestAwaitMatchRegistersAndInitializesSession(t *testing.T) {
 	t.Parallel()
 
-	state := gameplay.GameSnapshot{GameID: "game", FEN: "fen", Outcome: chess.NoOutcome}
+	state := gameplay.GameSnapshot{
+		GameID:         "game",
+		FEN:            "fen",
+		WhiteProfileID: "white",
+		BlackProfileID: "black",
+		Outcome:        chess.NoOutcome,
+	}
 	service := gameplay.NewMockService(gomock.NewController(t))
-	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(state, nil)
+	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(state, nil).Times(2)
 	registry := NewGameSessions()
 	handler := NewHandler(service, registry)
-	client := newQueuedSession("player")
-	results := make(chan gameplay.MatchResult, 1)
-	results <- gameplay.MatchResult{GameID: "game", Color: chess.White}
-	close(results)
-
-	handler.awaitMatch(context.Background(), client, "request", gameplay.MatchTicket{Result: results})
-
-	matched := receiveEnvelope(t, client)
-	if matched.Type != protocol.ServerMatchFound || matched.RequestID != "request" {
-		t.Fatalf("match envelope = %+v, want match.found with request ID", matched)
+	white := newQueuedSession("white")
+	black := newQueuedSession("black")
+	if err := registry.Queue(white); err != nil {
+		t.Fatalf("Queue(white) error = %v", err)
 	}
-	initial := receiveEnvelope(t, client)
-	if initial.Type != protocol.ServerGameInitial {
-		t.Fatalf("initial envelope type = %q, want %q", initial.Type, protocol.ServerGameInitial)
+	if err := registry.Queue(black); err != nil {
+		t.Fatalf("Queue(black) error = %v", err)
 	}
-	if gameID, exists := registry.GameID(client); !exists || gameID != "game" {
-		t.Fatalf("registered game = (%q, %v), want (%q, true)", gameID, exists, "game")
+
+	whiteResults := matchResults(gameplay.MatchResult{GameID: "game", Color: chess.White})
+	blackResults := matchResults(gameplay.MatchResult{GameID: "game", Color: chess.Black})
+	done := make(chan struct{}, 2)
+	go func() {
+		handler.awaitMatch(context.Background(), white, "white-request", gameplay.MatchTicket{Result: whiteResults})
+		done <- struct{}{}
+	}()
+	go func() {
+		handler.awaitMatch(context.Background(), black, "black-request", gameplay.MatchTicket{Result: blackResults})
+		done <- struct{}{}
+	}()
+	<-done
+	<-done
+
+	for name, session := range map[string]*Session{"white": white, "black": black} {
+		matched := receiveEnvelope(t, session)
+		if matched.Type != protocol.ServerMatchFound {
+			t.Fatalf("%s match envelope = %+v, want match.found", name, matched)
+		}
+		initial := receiveEnvelope(t, session)
+		payload, ok := initial.Payload.(protocol.GameStatePayload)
+		if initial.Type != protocol.ServerGameInitial || !ok {
+			t.Fatalf("%s initial envelope = %+v, want game.initial", name, initial)
+		}
+		if payload.White == nil || payload.Black == nil || !payload.White.Connected || !payload.Black.Connected {
+			t.Fatalf("%s connected players = (%+v, %+v), want both connected", name, payload.White, payload.Black)
+		}
+		if gameID, exists := registry.GameID(session); !exists || gameID != "game" {
+			t.Fatalf("%s registered game = (%q, %v), want (%q, true)", name, gameID, exists, "game")
+		}
 	}
 }
 
@@ -175,11 +203,14 @@ func TestAwaitMatchStopsWhenInitialStateFails(t *testing.T) {
 
 	service := gameplay.NewMockService(gomock.NewController(t))
 	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(gameplay.GameSnapshot{}, gameplay.ErrGameNotFound)
-	handler := NewHandler(service, NewGameSessions())
+	registry := NewGameSessions()
+	handler := NewHandler(service, registry)
 	client := newQueuedSession("player")
-	results := make(chan gameplay.MatchResult, 1)
-	results <- gameplay.MatchResult{GameID: "game", Color: chess.White}
-	close(results)
+	peer := newQueuedSession("peer")
+	if err := registry.Add("game", peer); err != nil {
+		t.Fatalf("Add(peer) error = %v", err)
+	}
+	results := matchResults(gameplay.MatchResult{GameID: "game", Color: chess.White})
 
 	handler.awaitMatch(context.Background(), client, "request", gameplay.MatchTicket{Result: results})
 
@@ -195,4 +226,34 @@ func TestAwaitMatchStopsWhenInitialStateFails(t *testing.T) {
 	if len(client.outgoing) != 0 {
 		t.Fatalf("received %d envelopes after state error, want no game.initial", len(client.outgoing))
 	}
+}
+
+func TestHandlerRejectsPrivateGameWhileQueued(t *testing.T) {
+	t.Parallel()
+
+	service := gameplay.NewMockService(gomock.NewController(t))
+	registry := NewGameSessions()
+	handler := NewHandler(service, registry)
+	client := newQueuedSession("player")
+	if err := registry.Queue(client); err != nil {
+		t.Fatalf("Queue() error = %v", err)
+	}
+
+	raw := json.RawMessage(`{"type":"game.create","requestId":"request","payload":{"timeControl":"3+2","color":"white"}}`)
+	if err := handler.Handle(context.Background(), client, raw); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	message := receiveEnvelope(t, client)
+	payload, ok := message.Payload.(protocol.ErrorPayload)
+	if message.Type != protocol.ServerError || !ok || payload.Message != "session is already in a game or matchmaking" {
+		t.Fatalf("error envelope = %+v, want queued-session rejection", message)
+	}
+}
+
+func matchResults(result gameplay.MatchResult) <-chan gameplay.MatchResult {
+	results := make(chan gameplay.MatchResult, 1)
+	results <- result
+	close(results)
+	return results
 }

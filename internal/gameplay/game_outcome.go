@@ -60,6 +60,14 @@ func (g *Game) expireLocked(now time.Time) bool {
 		return false
 	}
 
+	winner := loser.Other()
+	if !g.hasMatingMaterialLocked(winner) {
+		g.outcome = chess.Draw
+		g.termination = TerminationTimeout
+		g.version++
+		return true
+	}
+
 	switch loser {
 	case chess.White:
 		g.outcome = chess.BlackWon
@@ -73,4 +81,17 @@ func (g *Game) expireLocked(now time.Time) bool {
 	g.version++
 
 	return true
+}
+
+// hasMatingMaterialLocked reports the minimum FIDE requirement for a timeout
+// win: the player who still has time must have some piece capable of
+// participating in checkmate. A bare king can never give checkmate.
+func (g *Game) hasMatingMaterialLocked(color chess.Color) bool {
+	for _, piece := range g.engine.Position().Board().SquareMap() {
+		if piece.Color() == color && piece.Type() != chess.King {
+			return true
+		}
+	}
+
+	return false
 }

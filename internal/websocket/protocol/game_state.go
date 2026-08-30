@@ -5,10 +5,8 @@ import "ChessLI/internal/identity"
 type GameStatus string
 
 const (
-	GameStatusWaiting  GameStatus = "waiting"
 	GameStatusActive   GameStatus = "active"
 	GameStatusFinished GameStatus = "finished"
-	GameStatusAborted  GameStatus = "aborted"
 )
 
 type Color string

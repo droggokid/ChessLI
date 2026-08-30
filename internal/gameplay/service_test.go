@@ -184,13 +184,13 @@ func TestGameServiceMatchmakingMatchesWithinPool(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	first, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("first", 3*time.Minute, 2*time.Second))
+	first, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("first", 3*time.Minute, 2*time.Second))
 	if err != nil {
 		t.Fatalf("first EnterMatchmaking() error = %v", err)
 	}
 	assertNoMatch(t, first.Result)
 
-	second, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("second", 3*time.Minute, 2*time.Second))
+	second, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("second", 3*time.Minute, 2*time.Second))
 	if err != nil {
 		t.Fatalf("second EnterMatchmaking() error = %v", err)
 	}
@@ -212,22 +212,22 @@ func TestGameServiceMatchmakingKeepsPoolsSeparate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	bullet, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("bullet-1", time.Minute, 0))
+	bullet, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("bullet-1", time.Minute, 0))
 	if err != nil {
 		t.Fatalf("bullet EnterMatchmaking() error = %v", err)
 	}
-	rapid, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("rapid-1", 10*time.Minute, 0))
+	rapid, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("rapid-1", 10*time.Minute, 0))
 	if err != nil {
 		t.Fatalf("rapid EnterMatchmaking() error = %v", err)
 	}
 	assertNoMatch(t, bullet.Result)
 	assertNoMatch(t, rapid.Result)
 
-	bulletPeer, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("bullet-2", time.Minute, 0))
+	bulletPeer, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("bullet-2", time.Minute, 0))
 	if err != nil {
 		t.Fatalf("bullet peer EnterMatchmaking() error = %v", err)
 	}
-	rapidPeer, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("rapid-2", 10*time.Minute, 0))
+	rapidPeer, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("rapid-2", 10*time.Minute, 0))
 	if err != nil {
 		t.Fatalf("rapid peer EnterMatchmaking() error = %v", err)
 	}
@@ -255,11 +255,11 @@ func TestGameServiceMatchmakingRejectsDuplicateProfileAcrossPools(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("player", time.Minute, 0))
+	_, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("player", time.Minute, 0))
 	if err != nil {
 		t.Fatalf("first EnterMatchmaking() error = %v", err)
 	}
-	_, err = service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("player", 10*time.Minute, 0))
+	_, err = service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("player", 10*time.Minute, 0))
 	if !errors.Is(err, ErrAlreadyQueued) {
 		t.Fatalf("second EnterMatchmaking() error = %v, want %v", err, ErrAlreadyQueued)
 	}
@@ -270,7 +270,7 @@ func TestGameServiceMatchmakingRemovesCanceledPlayer(t *testing.T) {
 
 	service := NewGameService()
 	ctx, cancel := context.WithCancel(context.Background())
-	ticket, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("player", time.Minute, 0))
+	ticket, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("player", time.Minute, 0))
 	if err != nil {
 		t.Fatalf("EnterMatchmaking() error = %v", err)
 	}
@@ -299,10 +299,18 @@ func TestGameServiceMatchmakingRejectsInvalidTimeControl(t *testing.T) {
 
 	_, err := NewGameService().EnterMatchmaking(
 		context.Background(),
-		*NewEnterMatchmakingCommand("player", 0, 0),
+		NewEnterMatchmakingCommand("player", 0, 0),
 	)
 	if !errors.Is(err, ErrInvalidTimeControl) {
 		t.Fatalf("EnterMatchmaking() error = %v, want %v", err, ErrInvalidTimeControl)
+	}
+}
+
+func TestAssignMatchmakingColorsRejectsInvalidColor(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := assignMatchmakingColors("waiting", "current", chess.NoColor); !errors.Is(err, ErrInvalidColorPreference) {
+		t.Fatalf("assignMatchmakingColors() error = %v, want %v", err, ErrInvalidColorPreference)
 	}
 }
 

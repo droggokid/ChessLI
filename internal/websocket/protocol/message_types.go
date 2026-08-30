@@ -25,7 +25,5 @@ const (
 	ServerMatchFound         ServerMessageType = "matchmaking.found"
 	ServerGameInitial        ServerMessageType = "game.initial"
 	ServerGameState          ServerMessageType = "game.state"
-	ServerDrawOffered        ServerMessageType = "draw.offered"
-	ServerGameOver           ServerMessageType = "game.over"
 	ServerError              ServerMessageType = "error"
 )

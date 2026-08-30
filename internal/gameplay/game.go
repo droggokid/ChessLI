@@ -107,6 +107,9 @@ func (g *Game) validateMove(source identity.ProfileID) error {
 	if g.outcome != chess.NoOutcome {
 		return ErrGameFinished
 	}
+	if source != g.WhiteProfileID && source != g.BlackProfileID {
+		return ErrNotParticipant
+	}
 
 	turn := g.engine.CurrentPosition().Turn()
 
@@ -158,28 +161,8 @@ func (g *Game) JoinPrivate(command JoinPrivateCommand) (chess.Color, error) {
 	}
 }
 
-// Snapshot returns a consistent copy of the game's current authoritative state.
-func (g *Game) Snapshot() GameSnapshot {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	now := g.now()
-	return g.snapshotLocked(now)
-}
-
-func (g *Game) snapshotLocked(now time.Time) GameSnapshot {
-	whiteRemaining, blackRemaining := g.clock.remaining(now, g.engine.Position().Turn())
-
-	return GameSnapshot{
-		GameID:         g.ID,
-		FEN:            g.engine.FEN(),
-		Version:        g.version,
-		WhiteProfileID: g.WhiteProfileID,
-		BlackProfileID: g.BlackProfileID,
-		WhiteRemaining: whiteRemaining,
-		BlackRemaining: blackRemaining,
-		LastMoveSAN:    g.lastMoveSAN,
-		Outcome:        g.outcome,
-		Termination:    g.termination,
+func (g *Game) startClockIfReadyLocked() {
+	if g.WhiteProfileID != "" && g.BlackProfileID != "" {
+		g.clock.start(g.now())
 	}
 }

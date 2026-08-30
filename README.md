@@ -54,15 +54,16 @@ Both players should now receive version `2`, with the authoritative FEN and
 the last move represented as SAN.
 
 When a move finishes the game, the same `game.state` has status `finished` and
-includes an `outcome` with the result and reason. Supported reasons are
-`checkmate`, `stalemate`, `resignation`, `timeout`, `draw_agreement`,
-`threefold_repetition`, `fivefold_repetition`, `fifty_move_rule`,
-`seventy_five_move_rule`, and `insufficient_material`.
+includes an `outcome` with the result and reason. The currently reachable
+reasons are `checkmate`, `stalemate`, `timeout`, `fivefold_repetition`,
+`seventy_five_move_rule`, and `insufficient_material`. Resignation, draw
+agreement, threefold claims, and fifty-move claims are not implemented yet.
 
 Clocks are authoritative on the server. When the active player's time reaches
 zero, the server automatically increments the state version and broadcasts a
-finished `game.state` with reason `timeout`. A move racing with the clock is
-not applied once that player's time has expired.
+finished `game.state` with reason `timeout`. If the opponent has only a king,
+the timeout result is a draw because that player cannot checkmate. A move
+racing with the clock is not applied once that player's time has expired.
 
 ## Manual matchmaking flow
 

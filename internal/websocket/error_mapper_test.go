@@ -28,7 +28,6 @@ func TestMapApplicationError(t *testing.T) {
 		{gameplay.ErrUnsupportedNotation, protocol.ErrorInvalidMessage, "unsupported move notation"},
 		{gameplay.ErrAlreadyParticipant, protocol.ErrorInvalidMessage, "already a participant in this game"},
 		{gameplay.ErrAlreadyQueued, protocol.ErrorInvalidMessage, "already queued for matchmaking"},
-		{gameplay.ErrNoCompatibleOpponent, protocol.ErrorInvalidMessage, "no compatible opponent available"},
 		{gameplay.ErrStaleGameVersion, protocol.ErrorStaleGameVersion, "game state is stale"},
 		{errors.New("unexpected"), protocol.ErrorInternal, "internal server error"},
 	}

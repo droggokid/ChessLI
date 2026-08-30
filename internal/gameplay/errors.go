@@ -12,7 +12,6 @@ var (
 	ErrInvalidColorPreference = errors.New("invalid color preference")
 	ErrAlreadyParticipant     = errors.New("already participant")
 	ErrAlreadyQueued          = errors.New("already queued")
-	ErrNoCompatibleOpponent   = errors.New("no compatible opponent")
 	ErrGameNotReady           = errors.New("game is waiting for another player")
 	ErrInvalidTimeControl     = errors.New("invalid time control")
 	ErrUnsupportedNotation    = errors.New("unsupported move notation")

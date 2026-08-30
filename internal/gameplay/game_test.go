@@ -93,6 +93,12 @@ func TestGameMoveRejectsInvalidCommands(t *testing.T) {
 			wantErr: ErrNotYourTurn,
 		},
 		{
+			name:    "non-participant",
+			game:    newReadyGame,
+			command: MoveCommand{ProfileID: "spectator", Move: "e2e4", Notation: MoveNotationUCI},
+			wantErr: ErrNotParticipant,
+		},
+		{
 			name:    "illegal move",
 			game:    newReadyGame,
 			command: MoveCommand{ProfileID: "white", Move: "e2e5", Notation: MoveNotationUCI},
@@ -263,7 +269,7 @@ func TestGameMoveCommitsClockAndIncrement(t *testing.T) {
 	}
 }
 
-func TestGameSnapshotDoesNotAdjudicateTimeout(t *testing.T) {
+func TestGameSnapshotAdjudicatesTimeout(t *testing.T) {
 	t.Parallel()
 
 	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
@@ -276,19 +282,42 @@ func TestGameSnapshotDoesNotAdjudicateTimeout(t *testing.T) {
 	now = now.Add(time.Second)
 	snapshot := game.Snapshot()
 
-	if snapshot.Outcome != chess.NoOutcome {
-		t.Fatalf("Outcome = %v, want %v", snapshot.Outcome, chess.NoOutcome)
+	if snapshot.Outcome != chess.BlackWon {
+		t.Fatalf("Outcome = %v, want %v", snapshot.Outcome, chess.BlackWon)
 	}
-	if snapshot.Termination != TerminationNone {
-		t.Fatalf("Termination = %v, want %v", snapshot.Termination, TerminationNone)
+	if snapshot.Termination != TerminationTimeout {
+		t.Fatalf("Termination = %v, want %v", snapshot.Termination, TerminationTimeout)
 	}
-	if snapshot.Version != 0 {
-		t.Fatalf("Version = %d, want 0", snapshot.Version)
+	if snapshot.Version != 1 {
+		t.Fatalf("Version = %d, want 1", snapshot.Version)
 	}
 	if snapshot.WhiteRemaining != 0 {
 		t.Fatalf("WhiteRemaining = %v, want 0", snapshot.WhiteRemaining)
 	}
 
+}
+
+func TestGameTimeoutIsDrawWhenOpponentHasBareKing(t *testing.T) {
+	t.Parallel()
+
+	position, err := chess.FEN("8/8/8/8/8/2k5/8/R2K4 w - - 0 1")
+	if err != nil {
+		t.Fatalf("FEN() error = %v", err)
+	}
+
+	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	now := base
+	game := NewGame("game", "white", "black", time.Second, 0)
+	game.engine = chess.NewGame(position)
+	game.now = func() time.Time { return now }
+	game.clock = newGameClock(time.Second, 0)
+	game.clock.start(now)
+
+	now = now.Add(time.Second)
+	snapshot := game.Snapshot()
+	if snapshot.Outcome != chess.Draw || snapshot.Termination != TerminationTimeout {
+		t.Fatalf("timeout state = (%v, %v), want (%v, %v)", snapshot.Outcome, snapshot.Termination, chess.Draw, TerminationTimeout)
+	}
 }
 
 func TestGameMoveReturnsTimeoutStateWithoutApplyingMove(t *testing.T) {

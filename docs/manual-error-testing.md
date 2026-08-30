@@ -100,6 +100,21 @@ Expected error:
 {"code":"not_your_turn","message":"not your turn"}
 ```
 
+### Not a participant
+
+From a third client that has not joined the game, send a move for the active
+game and its current version:
+
+```json
+{"type":"game.move","requestId":"error-not-player","payload":{"gameId":"GAME_ID","move":"e2e4","notation":"uci","expectedVersion":0}}
+```
+
+Expected error:
+
+```json
+{"code":"not_a_player","message":"not a player in this game"}
+```
+
 ### Illegal move
 
 At version `0`, send an illegal move from client A:
@@ -170,14 +185,16 @@ Expected error:
 
 The accepted checkmating move first produces a `game.state` with status
 `finished` and outcome result `black_win` with reason `checkmate`. Other
-possible reasons are `stalemate`, `resignation`, `timeout`, `draw_agreement`,
-`threefold_repetition`, `fivefold_repetition`, `fifty_move_rule`,
-`seventy_five_move_rule`, and `insufficient_material`.
+currently reachable reasons are `stalemate`, `timeout`,
+`fivefold_repetition`, `seventy_five_move_rule`, and
+`insufficient_material`. Resignation, draw agreement, threefold claims, and
+fifty-move claims are not implemented yet.
 
 When the active player reaches zero, both clients automatically receive a
 finished `game.state` whose version is one greater and whose outcome reason is
 `timeout`. Clock expiration is also checked when a move races with the timer;
-an expired player's move is not applied.
+an expired player's move is not applied. The result is a draw if the opponent
+has only a king and therefore cannot checkmate.
 
 ### Invalid color preference
 
@@ -202,7 +219,7 @@ Expected error:
 Expected error:
 
 ```json
-{"code":"invalid_message","message":"invalid time control"}
+{"code":"invalid_message","message":"invalid time control preset"}
 ```
 
 ### Unsupported move notation
@@ -305,7 +322,7 @@ same connection:
 Expected error:
 
 ```json
-{"code":"invalid_message","message":"session is already in a game"}
+{"code":"invalid_message","message":"session is already in a game or matchmaking"}
 ```
 
 ### Not implemented
@@ -320,23 +337,35 @@ Expected error:
 {"code":"not_implemented","message":"game.resign is not implemented"}
 ```
 
-The matchmaking and draw message types currently produce the same
-`not_implemented` code.
+The resignation and draw message types currently produce the same
+`not_implemented` code. Matchmaking is implemented; see the manual flow in the
+README.
+
+### Session already in matchmaking
+
+After entering matchmaking, sending another matchmaking, create, or join
+request from the same connection is rejected:
+
+```json
+{"type":"matchmaking.enter","requestId":"error-already-queued","payload":{"timeControl":"10+0"}}
+```
+
+Expected error:
+
+```json
+{"code":"invalid_message","message":"session is already in a game or matchmaking"}
+```
 
 ## Errors that are not currently reachable through WebSocket payloads
 
 The following gameplay errors exist in `mapApplicationError`, but the current
 handlers cannot produce them:
 
-- `ErrNotParticipant`: move validation currently reports `ErrNotYourTurn` when
-  a non-participant submits a move.
 - `ErrAlreadyParticipant`: an existing session is rejected by `GameSessions`
   before the gameplay join method is called, while a new connection receives a
   new profile ID.
-- `ErrAlreadyQueued`: matchmaking currently returns `not_implemented` without
-  calling the gameplay service.
-- `ErrNoCompatibleOpponent`: matchmaking currently returns `not_implemented`
-  without calling the gameplay service.
+- `ErrAlreadyQueued`: session lifecycle validation rejects a second
+  matchmaking request before the gameplay service is called.
 - The default `internal_error` mapping has no intentional client payload that
   triggers it; it is a fallback for unexpected server errors.
 

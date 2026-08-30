@@ -16,6 +16,14 @@ import (
 
 const outgoingBufferSize = 16
 
+type sessionRunState uint32
+
+const (
+	sessionNotStarted sessionRunState = iota
+	sessionRunning
+	sessionStopped
+)
+
 // HandlerFunc processes a JSON message received from a client.
 type HandlerFunc func(
 	ctx context.Context,
@@ -27,10 +35,9 @@ type HandlerFunc func(
 type Session struct {
 	profileID identity.ProfileID
 	conn      *coderws.Conn
-	started   atomic.Bool
+	runState  atomic.Uint32
 
 	outgoing chan protocol.ServerEnvelope
-	done     chan struct{}
 }
 
 // NewSession creates a client for conn.
@@ -39,7 +46,6 @@ func NewSession(conn *coderws.Conn) *Session {
 		profileID: identity.NewProfileID(),
 		conn:      conn,
 		outgoing:  make(chan protocol.ServerEnvelope, outgoingBufferSize),
-		done:      make(chan struct{}),
 	}
 }
 
@@ -48,7 +54,7 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 	if handleMessage == nil {
 		return errors.New("websocket message handler is required")
 	}
-	if !c.started.CompareAndSwap(false, true) {
+	if !c.runState.CompareAndSwap(uint32(sessionNotStarted), uint32(sessionRunning)) {
 		return protocol.ErrSessionAlreadyRun
 	}
 
@@ -66,7 +72,7 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 	}()
 
 	firstError := <-errCh
-	close(c.done)
+	c.runState.Store(uint32(sessionStopped))
 	cancel()
 
 	_ = c.conn.CloseNow()
@@ -95,11 +101,7 @@ func (c *Session) writeLoop(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 
-		case message, ok := <-c.outgoing:
-			if !ok {
-				return nil
-			}
-
+		case message := <-c.outgoing:
 			if err := wsjson.Write(ctx, c.conn, message); err != nil {
 				return fmt.Errorf(
 					"write websocket message: %w",
@@ -110,20 +112,19 @@ func (c *Session) writeLoop(ctx context.Context) error {
 	}
 }
 
-// Send queues a message for writing or returns if the context or client closes.
+// Send queues a message without allowing a slow client to block its caller.
 func (c *Session) Send(ctx context.Context, message protocol.ServerEnvelope) error {
-	if !c.started.Load() {
+	if sessionRunState(c.runState.Load()) != sessionRunning {
 		return protocol.ErrSessionNotRunning
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
-
-	case <-c.done:
-		return protocol.ErrSessionNotRunning
-
 	case c.outgoing <- message:
 		return nil
+	default:
+		return protocol.ErrSessionQueueFull
 	}
 }
