@@ -42,6 +42,21 @@ func (m *MockGameService) EXPECT() *MockGameServiceMockRecorder {
 	return m.recorder
 }
 
+// AcceptDraw mocks base method.
+func (m *MockGameService) AcceptDraw(arg0 context.Context, arg1 gameplay.DrawOfferResponseCommand) (gameplay.GameSnapshot, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AcceptDraw", arg0, arg1)
+	ret0, _ := ret[0].(gameplay.GameSnapshot)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AcceptDraw indicates an expected call of AcceptDraw.
+func (mr *MockGameServiceMockRecorder) AcceptDraw(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcceptDraw", reflect.TypeOf((*MockGameService)(nil).AcceptDraw), arg0, arg1)
+}
+
 // CreatePrivateGame mocks base method.
 func (m *MockGameService) CreatePrivateGame(ctx context.Context, command gameplay.CreatePrivateCommand) (gameplay.CreateResult, error) {
 	m.ctrl.T.Helper()
@@ -55,6 +70,21 @@ func (m *MockGameService) CreatePrivateGame(ctx context.Context, command gamepla
 func (mr *MockGameServiceMockRecorder) CreatePrivateGame(ctx, command any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreatePrivateGame", reflect.TypeOf((*MockGameService)(nil).CreatePrivateGame), ctx, command)
+}
+
+// DeclineDraw mocks base method.
+func (m *MockGameService) DeclineDraw(arg0 context.Context, arg1 gameplay.DrawOfferResponseCommand) (gameplay.GameSnapshot, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeclineDraw", arg0, arg1)
+	ret0, _ := ret[0].(gameplay.GameSnapshot)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DeclineDraw indicates an expected call of DeclineDraw.
+func (mr *MockGameServiceMockRecorder) DeclineDraw(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeclineDraw", reflect.TypeOf((*MockGameService)(nil).DeclineDraw), arg0, arg1)
 }
 
 // EnterMatchmaking mocks base method.
@@ -115,4 +145,34 @@ func (m *MockGameService) MakeMove(ctx context.Context, command gameplay.MoveCom
 func (mr *MockGameServiceMockRecorder) MakeMove(ctx, command any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MakeMove", reflect.TypeOf((*MockGameService)(nil).MakeMove), ctx, command)
+}
+
+// OfferDraw mocks base method.
+func (m *MockGameService) OfferDraw(arg0 context.Context, arg1 gameplay.OfferDrawCommand) (gameplay.GameSnapshot, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OfferDraw", arg0, arg1)
+	ret0, _ := ret[0].(gameplay.GameSnapshot)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// OfferDraw indicates an expected call of OfferDraw.
+func (mr *MockGameServiceMockRecorder) OfferDraw(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OfferDraw", reflect.TypeOf((*MockGameService)(nil).OfferDraw), arg0, arg1)
+}
+
+// Resign mocks base method.
+func (m *MockGameService) Resign(arg0 context.Context, arg1 gameplay.ResignCommand) (gameplay.GameSnapshot, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Resign", arg0, arg1)
+	ret0, _ := ret[0].(gameplay.GameSnapshot)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Resign indicates an expected call of Resign.
+func (mr *MockGameServiceMockRecorder) Resign(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resign", reflect.TypeOf((*MockGameService)(nil).Resign), arg0, arg1)
 }

@@ -19,14 +19,31 @@ func (h *Handler) initialState(state gameplay.GameSnapshot) protocol.ServerEnvel
 
 func (h *Handler) gameStatePayload(state gameplay.GameSnapshot) protocol.GameStatePayload {
 	return protocol.GameStatePayload{
-		GameID:   state.GameID,
-		FEN:      state.FEN,
-		Status:   mapGameStatus(state.Outcome),
-		Version:  state.Version,
-		White:    h.playerState(state.GameID, state.WhiteProfileID, protocol.ColorWhite, state.WhiteRemaining),
-		Black:    h.playerState(state.GameID, state.BlackProfileID, protocol.ColorBlack, state.BlackRemaining),
-		LastMove: state.LastMoveSAN,
-		Outcome:  mapOutcome(state.Outcome, state.Termination),
+		GameID:           state.GameID,
+		FEN:              state.FEN,
+		Status:           mapGameStatus(state.Outcome),
+		Version:          state.Version,
+		White:            h.playerState(state.GameID, state.WhiteProfileID, protocol.ColorWhite, state.WhiteRemaining),
+		Black:            h.playerState(state.GameID, state.BlackProfileID, protocol.ColorBlack, state.BlackRemaining),
+		LastMove:         state.LastMoveSAN,
+		Outcome:          mapOutcome(state.Outcome, state.Termination),
+		PendingDrawOffer: mapDrawOffer(state),
+	}
+}
+
+func mapDrawOffer(state gameplay.GameSnapshot) *protocol.DrawOfferPayload {
+	if state.PendingDrawOffer == nil {
+		return nil
+	}
+
+	offeredBy := protocol.ColorBlack
+	if state.PendingDrawOffer.OfferedBy == state.WhiteProfileID {
+		offeredBy = protocol.ColorWhite
+	}
+
+	return &protocol.DrawOfferPayload{
+		OfferID:   state.PendingDrawOffer.OfferID,
+		OfferedBy: offeredBy,
 	}
 }
 

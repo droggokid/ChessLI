@@ -35,6 +35,16 @@ func mapApplicationError(err error) (protocol.ErrorCode, string) {
 		return protocol.ErrorInvalidMessage, "already queued for matchmaking"
 	case errors.Is(err, gameplay.ErrStaleGameVersion):
 		return protocol.ErrorStaleGameVersion, "game state is stale"
+	case errors.Is(err, gameplay.ErrDrawOfferPending):
+		return protocol.ErrorInvalidMessage, "draw offer already pending"
+	case errors.Is(err, gameplay.ErrDrawOfferCooldown):
+		return protocol.ErrorInvalidMessage, "draw offer is on cooldown"
+	case errors.Is(err, gameplay.ErrDrawOfferNotFound):
+		return protocol.ErrorInvalidMessage, "draw offer not found"
+	case errors.Is(err, gameplay.ErrStaleDrawOffer):
+		return protocol.ErrorInvalidMessage, "draw offer is stale"
+	case errors.Is(err, gameplay.ErrCannotRespondToOwnDrawOffer):
+		return protocol.ErrorInvalidMessage, "cannot respond to own draw offer"
 	default:
 		return protocol.ErrorInternal, "internal server error"
 	}

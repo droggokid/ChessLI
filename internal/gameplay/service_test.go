@@ -131,6 +131,52 @@ func TestGameServiceAutomaticallyExpiresPrivateGame(t *testing.T) {
 	}
 }
 
+func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
+	tests := []struct {
+		name string
+		act  func(*GameService, *Game) error
+	}{
+		{
+			name: "resign",
+			act: func(service *GameService, game *Game) error {
+				_, err := service.Resign(context.Background(), NewResignCommand(game.ID, "white"))
+				return err
+			},
+		},
+		{
+			name: "accept draw",
+			act: func(service *GameService, game *Game) error {
+				state, err := service.OfferDraw(context.Background(), NewOfferDrawCommand(game.ID, "white"))
+				if err != nil {
+					return err
+				}
+				_, err = service.AcceptDraw(context.Background(), NewDrawOfferResponseCommand(game.ID, "black", state.PendingDrawOffer.OfferID))
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewGameService()
+			game := newReadyGame()
+			service.games[game.ID] = game
+			game.scheduleExpiration(nil)
+
+			if err := tt.act(service, game); err != nil {
+				t.Fatalf("terminal action error = %v", err)
+			}
+
+			game.mu.Lock()
+			timer := game.expirationTimer
+			game.mu.Unlock()
+			if timer != nil {
+				t.Fatal("terminal action left expiration timer running")
+			}
+		})
+	}
+}
+
 func TestGameServiceCreatePrivateGameRejectsInvalidCommands(t *testing.T) {
 	t.Parallel()
 

@@ -53,11 +53,35 @@ player terminal, play `e7e5` using that version:
 Both players should now receive version `2`, with the authoritative FEN and
 the last move represented as SAN.
 
+Either player can offer a draw without changing the game version:
+
+```json
+{"type":"draw.offer","requestId":"draw-1","payload":{"gameId":"GAME_ID"}}
+```
+
+The resulting `game.state` contains `pendingDrawOffer` with an opaque `offerId`
+and the offering color. The opponent can accept or decline that exact offer:
+
+```json
+{"type":"draw.accept","requestId":"draw-2","payload":{"gameId":"GAME_ID","offerId":"OFFER_ID"}}
+{"type":"draw.decline","requestId":"draw-3","payload":{"gameId":"GAME_ID","offerId":"OFFER_ID"}}
+```
+
+Declining leaves the version unchanged. Accepting increments it and finishes
+the game with reason `draw_agreement`. A successful move clears a pending
+offer, and each player must wait two minutes before offering again.
+
+A player can resign without supplying a game version:
+
+```json
+{"type":"game.resign","requestId":"resign-1","payload":{"gameId":"GAME_ID"}}
+```
+
 When a move finishes the game, the same `game.state` has status `finished` and
 includes an `outcome` with the result and reason. The currently reachable
 reasons are `checkmate`, `stalemate`, `timeout`, `fivefold_repetition`,
-`seventy_five_move_rule`, and `insufficient_material`. Resignation, draw
-agreement, threefold claims, and fifty-move claims are not implemented yet.
+`seventy_five_move_rule`, `insufficient_material`, `resignation`, and
+`draw_agreement`. Threefold and fifty-move claims are not implemented yet.
 
 Clocks are authoritative on the server. When the active player's time reaches
 zero, the server automatically increments the state version and broadcasts a

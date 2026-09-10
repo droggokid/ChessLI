@@ -187,7 +187,7 @@ The accepted checkmating move first produces a `game.state` with status
 `finished` and outcome result `black_win` with reason `checkmate`. Other
 currently reachable reasons are `stalemate`, `timeout`,
 `fivefold_repetition`, `seventy_five_move_rule`, and
-`insufficient_material`. Resignation, draw agreement, threefold claims, and
+`insufficient_material`, `resignation`, and `draw_agreement`. Threefold and
 fifty-move claims are not implemented yet.
 
 When the active player reaches zero, both clients automatically receive a
@@ -325,21 +325,48 @@ Expected error:
 {"code":"invalid_message","message":"session is already in a game or matchmaking"}
 ```
 
-### Not implemented
+### Draw offer errors
+
+From client A, create an offer and copy its `offerId` from
+`pendingDrawOffer` in the resulting `game.state`:
 
 ```json
-{"type":"game.resign","requestId":"error-not-implemented","payload":{}}
+{"type":"draw.offer","requestId":"draw-offer","payload":{"gameId":"GAME_ID"}}
+```
+
+The same player cannot respond to their own offer:
+
+```json
+{"type":"draw.accept","requestId":"error-own-offer","payload":{"gameId":"GAME_ID","offerId":"OFFER_ID"}}
 ```
 
 Expected error:
 
 ```json
-{"code":"not_implemented","message":"game.resign is not implemented"}
+{"code":"invalid_message","message":"cannot respond to own draw offer"}
 ```
 
-The resignation and draw message types currently produce the same
-`not_implemented` code. Matchmaking is implemented; see the manual flow in the
-README.
+Client B can decline the offer:
+
+```json
+{"type":"draw.decline","requestId":"draw-decline","payload":{"gameId":"GAME_ID","offerId":"OFFER_ID"}}
+```
+
+Client A cannot immediately offer again:
+
+```json
+{"type":"draw.offer","requestId":"error-draw-cooldown","payload":{"gameId":"GAME_ID"}}
+```
+
+Expected error:
+
+```json
+{"code":"invalid_message","message":"draw offer is on cooldown"}
+```
+
+The cooldown is enforced per player for two minutes. Offering and declining do
+not change the game version. Accepting increments the version and finishes the
+game with reason `draw_agreement`; a successful move clears the pending offer.
 
 ### Session already in matchmaking
 

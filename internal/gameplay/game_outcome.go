@@ -65,6 +65,7 @@ func (g *Game) expireLocked(now time.Time) bool {
 		g.outcome = chess.Draw
 		g.termination = TerminationTimeout
 		g.version++
+		g.clearPendingDrawOfferLocked()
 		return true
 	}
 
@@ -79,6 +80,7 @@ func (g *Game) expireLocked(now time.Time) bool {
 
 	g.termination = TerminationTimeout
 	g.version++
+	g.clearPendingDrawOfferLocked()
 
 	return true
 }

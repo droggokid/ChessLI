@@ -78,3 +78,44 @@ func NewMoveCommand(gameID identity.GameID, profileID identity.ProfileID, move s
 		ExpectedVersion: expectedVersion,
 	}
 }
+
+type ResignCommand struct {
+	GameID    identity.GameID
+	ProfileID identity.ProfileID
+}
+
+// NewResignCommand builds a resign command for a game participant.
+func NewResignCommand(gameID identity.GameID, profileID identity.ProfileID) ResignCommand {
+	return ResignCommand{
+		GameID:    gameID,
+		ProfileID: profileID,
+	}
+}
+
+type OfferDrawCommand struct {
+	GameID    identity.GameID
+	ProfileID identity.ProfileID
+}
+
+// NewOfferDrawCommand builds a draw-offer command for a game participant.
+func NewOfferDrawCommand(gameID identity.GameID, profileID identity.ProfileID) OfferDrawCommand {
+	return OfferDrawCommand{
+		GameID:    gameID,
+		ProfileID: profileID,
+	}
+}
+
+type DrawOfferResponseCommand struct {
+	GameID    identity.GameID
+	ProfileID identity.ProfileID
+	OfferID   identity.DrawOfferID
+}
+
+// NewDrawOfferResponseCommand builds a command responding to a draw offer.
+func NewDrawOfferResponseCommand(gameID identity.GameID, profileID identity.ProfileID, offerID identity.DrawOfferID) DrawOfferResponseCommand {
+	return DrawOfferResponseCommand{
+		GameID:    gameID,
+		ProfileID: profileID,
+		OfferID:   offerID,
+	}
+}

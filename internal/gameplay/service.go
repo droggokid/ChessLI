@@ -19,6 +19,10 @@ type Service interface {
 	EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error)
 	MakeMove(ctx context.Context, command MoveCommand) (GameSnapshot, error)
 	GameState(ctx context.Context, gameID identity.GameID) (GameSnapshot, error)
+	Resign(context.Context, ResignCommand) (GameSnapshot, error)
+	OfferDraw(context.Context, OfferDrawCommand) (GameSnapshot, error)
+	AcceptDraw(context.Context, DrawOfferResponseCommand) (GameSnapshot, error)
+	DeclineDraw(context.Context, DrawOfferResponseCommand) (GameSnapshot, error)
 }
 
 type GameService struct {
@@ -180,6 +184,70 @@ func (s *GameService) GameState(ctx context.Context, gameID identity.GameID) (Ga
 		return GameSnapshot{}, err
 	}
 	return game.Snapshot(), nil
+}
+
+func (s *GameService) Resign(ctx context.Context, command ResignCommand) (GameSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return GameSnapshot{}, err
+	}
+
+	game, err := s.gameByID(command.GameID)
+	if err != nil {
+		return GameSnapshot{}, err
+	}
+
+	snapshot, err := game.Resign(command)
+	if err != nil {
+		return GameSnapshot{}, err
+	}
+
+	game.scheduleExpiration(s.notifyGameExpired)
+	return snapshot, nil
+}
+
+func (s *GameService) OfferDraw(ctx context.Context, command OfferDrawCommand) (GameSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return GameSnapshot{}, err
+	}
+
+	game, err := s.gameByID(command.GameID)
+	if err != nil {
+		return GameSnapshot{}, err
+	}
+
+	return game.OfferDraw(command)
+}
+
+func (s *GameService) AcceptDraw(ctx context.Context, command DrawOfferResponseCommand) (GameSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return GameSnapshot{}, err
+	}
+
+	game, err := s.gameByID(command.GameID)
+	if err != nil {
+		return GameSnapshot{}, err
+	}
+
+	snapshot, err := game.AcceptDraw(command)
+	if err != nil {
+		return GameSnapshot{}, err
+	}
+
+	game.scheduleExpiration(s.notifyGameExpired)
+	return snapshot, nil
+}
+
+func (s *GameService) DeclineDraw(ctx context.Context, command DrawOfferResponseCommand) (GameSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return GameSnapshot{}, err
+	}
+
+	game, err := s.gameByID(command.GameID)
+	if err != nil {
+		return GameSnapshot{}, err
+	}
+
+	return game.DeclineDraw(command)
 }
 
 // Close stops every pending game expiration timer.

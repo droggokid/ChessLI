@@ -9,16 +9,17 @@ import (
 )
 
 type GameSnapshot struct {
-	GameID         identity.GameID
-	FEN            string
-	Version        uint64
-	WhiteProfileID identity.ProfileID
-	BlackProfileID identity.ProfileID
-	WhiteRemaining time.Duration
-	BlackRemaining time.Duration
-	LastMoveSAN    string
-	Outcome        chess.Outcome
-	Termination    TerminationReason
+	GameID           identity.GameID
+	FEN              string
+	Version          uint64
+	WhiteProfileID   identity.ProfileID
+	BlackProfileID   identity.ProfileID
+	WhiteRemaining   time.Duration
+	BlackRemaining   time.Duration
+	LastMoveSAN      string
+	Outcome          chess.Outcome
+	Termination      TerminationReason
+	PendingDrawOffer *DrawOffer
 }
 
 // Snapshot returns a consistent copy of the game's current authoritative state.
@@ -33,17 +34,23 @@ func (g *Game) Snapshot() GameSnapshot {
 
 func (g *Game) snapshotLocked(now time.Time) GameSnapshot {
 	whiteRemaining, blackRemaining := g.clock.remaining(now, g.engine.Position().Turn())
+	var pendingDrawOffer *DrawOffer
+	if g.drawOffers.pending != nil {
+		offer := *g.drawOffers.pending
+		pendingDrawOffer = &offer
+	}
 
 	return GameSnapshot{
-		GameID:         g.ID,
-		FEN:            g.engine.FEN(),
-		Version:        g.version,
-		WhiteProfileID: g.WhiteProfileID,
-		BlackProfileID: g.BlackProfileID,
-		WhiteRemaining: whiteRemaining,
-		BlackRemaining: blackRemaining,
-		LastMoveSAN:    g.lastMoveSAN,
-		Outcome:        g.outcome,
-		Termination:    g.termination,
+		GameID:           g.ID,
+		FEN:              g.engine.FEN(),
+		Version:          g.version,
+		WhiteProfileID:   g.WhiteProfileID,
+		BlackProfileID:   g.BlackProfileID,
+		WhiteRemaining:   whiteRemaining,
+		BlackRemaining:   blackRemaining,
+		LastMoveSAN:      g.lastMoveSAN,
+		Outcome:          g.outcome,
+		Termination:      g.termination,
+		PendingDrawOffer: pendingDrawOffer,
 	}
 }

@@ -282,38 +282,78 @@ func (h *Handler) handleMakeMove(ctx context.Context, client *Session, message p
 		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
 
-	envelope := protocol.ServerEnvelope{
-		Type:      protocol.ServerGameState,
-		RequestID: message.RequestID,
-		Payload:   h.gameStatePayload(state),
-	}
-
-	return h.gameSessions.Broadcast(ctx, state.GameID, client, envelope)
+	return h.broadcastGameState(ctx, client, message.RequestID, state)
 }
 
 func (h *Handler) handleResign(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
-	return h.sendNotImplemented(ctx, client, message)
+	request, err := protocol.DecodePayload[protocol.ResignPayload](message)
+	if err != nil || request.GameID == "" {
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid resign payload")
+	}
+
+	command := gameplay.NewResignCommand(request.GameID, client.profileID)
+
+	state, err := h.gameService.Resign(ctx, command)
+	if err != nil {
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
+	}
+
+	return h.broadcastGameState(ctx, client, message.RequestID, state)
 }
 
 func (h *Handler) handleOfferDraw(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
-	return h.sendNotImplemented(ctx, client, message)
+	request, err := protocol.DecodePayload[protocol.OfferDrawPayload](message)
+	if err != nil || request.GameID == "" {
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid draw.offer payload")
+	}
+
+	state, err := h.gameService.OfferDraw(ctx, gameplay.NewOfferDrawCommand(request.GameID, client.profileID))
+	if err != nil {
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
+	}
+
+	return h.broadcastGameState(ctx, client, message.RequestID, state)
 }
 
 func (h *Handler) handleAcceptDraw(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
-	return h.sendNotImplemented(ctx, client, message)
+	return h.handleDrawResponse(ctx, client, message, h.gameService.AcceptDraw)
 }
 
 func (h *Handler) handleDeclineDraw(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
-	return h.sendNotImplemented(ctx, client, message)
+	return h.handleDrawResponse(ctx, client, message, h.gameService.DeclineDraw)
 }
 
-func (h *Handler) completeGameAdmission(
+func (h *Handler) handleDrawResponse(
 	ctx context.Context,
 	client *Session,
-	requestID string,
-	gameID identity.GameID,
-	serviceColor chess.Color,
-) (protocol.Color, error) {
+	message protocol.ClientEnvelope,
+	respond func(context.Context, gameplay.DrawOfferResponseCommand) (gameplay.GameSnapshot, error),
+) error {
+	request, err := protocol.DecodePayload[protocol.DrawResponsePayload](message)
+
+	if err != nil || request.GameID == "" || request.OfferID == "" {
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid draw response payload")
+	}
+
+	command := gameplay.NewDrawOfferResponseCommand(request.GameID, client.profileID, request.OfferID)
+
+	state, err := respond(ctx, command)
+	if err != nil {
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
+	}
+
+	return h.broadcastGameState(ctx, client, message.RequestID, state)
+}
+
+func (h *Handler) broadcastGameState(ctx context.Context, client *Session, requestID string, state gameplay.GameSnapshot) error {
+	return h.gameSessions.Broadcast(ctx, state.GameID, client, protocol.ServerEnvelope{
+		Type:      protocol.ServerGameState,
+		RequestID: requestID,
+		Payload:   h.gameStatePayload(state),
+	})
+}
+
+func (h *Handler) completeGameAdmission(ctx context.Context, client *Session, requestID string, gameID identity.GameID, serviceColor chess.Color) (protocol.Color, error) {
 	if err := h.gameSessions.Add(gameID, client); err != nil {
 		return "", h.sendError(ctx, client, requestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
@@ -345,8 +385,4 @@ func (h *Handler) sendError(ctx context.Context, client *Session, requestID stri
 			Message: message,
 		},
 	})
-}
-
-func (h *Handler) sendNotImplemented(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
-	return h.sendError(ctx, client, message.RequestID, protocol.ErrorNotImplemented, fmt.Sprintf("%s is not implemented", message.Type))
 }

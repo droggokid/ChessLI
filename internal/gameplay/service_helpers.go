@@ -44,11 +44,7 @@ func assignPrivateColors(profileID identity.ProfileID, creatorColor chess.Color)
 	return "", profileID
 }
 
-func assignMatchmakingColors(
-	waitingProfileID identity.ProfileID,
-	currentProfileID identity.ProfileID,
-	waitingColor chess.Color,
-) (identity.ProfileID, identity.ProfileID, error) {
+func assignMatchmakingColors(waitingProfileID identity.ProfileID, currentProfileID identity.ProfileID, waitingColor chess.Color) (identity.ProfileID, identity.ProfileID, error) {
 	switch waitingColor {
 	case chess.White:
 		return waitingProfileID, currentProfileID, nil
@@ -56,6 +52,17 @@ func assignMatchmakingColors(
 		return currentProfileID, waitingProfileID, nil
 	default:
 		return "", "", ErrInvalidColorPreference
+	}
+}
+
+func colorFromProfileID(profileID, whiteProfileID, blackProfileID identity.ProfileID) (chess.Color, error) {
+	switch profileID {
+	case whiteProfileID:
+		return chess.White, nil
+	case blackProfileID:
+		return chess.Black, nil
+	default:
+		return chess.NoColor, ErrNotParticipant
 	}
 }
 

@@ -29,33 +29,36 @@ make tidy       # update go.mod/go.sum
 
 Direct Go commands are also acceptable, for example `go test ./...` or `go run ./cmd`.
 
+## Conversational Style
+
+- Be an insightful, candid, collaborative thought partner with a clear point of
+  view.
+- Lead with the outcome, then explain only the reasoning and trade-offs that
+  matter.
+- Match my technical level and tone; use plain language without becoming
+  simplistic.
+- Stay concise without becoming curt. Use minimal formatting.
+- Ask questions only when missing information materially changes the result or
+  creates risk.
+- When disagreeing, be direct, concrete, and constructive.
+- During tool-heavy work, give brief updates and make the final answer self-
+  contained.
+
 ## Go Conventions
 
-Use standard Go formatting via `gofmt` or `make fmt`; tabs are handled by the
-formatter. Keep package names short and lowercase. Constructors use `NewType`,
-such as `NewGameService`, `NewServer`, and `NewSession`.
+Follow idiomatic Go and the Uber Go Style Guide.
 
-Follow idiomatic Go and the Uber Go Style Guide where applicable.
+Repository-specific rules:
 
-- Prefer early returns over unnecessary `else` branches.
-- Keep error strings lowercase and without trailing punctuation.
-- Wrap errors only when adding useful context.
-- Use `errors.Is` and `errors.As`; never match errors by their strings.
-- Log an error or return it; normally do not do both at the same layer.
-- Return errors instead of panicking for expected failures.
-- Prefer concrete types over premature interfaces. When an interface is needed,
-  keep it small and define it near the consumer where practical.
-- Deliberate application service ports may be owned by the application package.
-  `gameplay.Service` is the transport-independent gameplay contract; keep
-  implementation-only lifecycle and configuration methods off that interface.
-- Keep all methods on `GameService` in `internal/gameplay/service.go`. Put only
-  receiver-free supporting types and functions in `service_helpers.go`; do not
-  spread one receiver's implementation across multiple `service_*.go` files.
+- Prefer concrete types over premature interfaces.
+- `gameplay.Service` is the transport-independent gameplay contract; keep
+  implementation-only lifecycle/configuration methods off it.
+- Keep all `GameService` methods in `internal/gameplay/service.go`.
+  `service_helpers.go` is only for receiver-free supporting code.
 - Avoid mutable package-level state.
-- Prefer the standard library and existing dependencies. New dependencies need
-  a concrete correctness, maintainability, or functionality benefit.
-- Do not expose third-party types from public APIs unless the dependency is an
-  intentional part of the contract.
+- Prefer the standard library and existing dependencies.
+- Do not expose third-party types from public APIs unless intentional.
+
 
 ## Testing Guidelines
 

@@ -37,6 +37,19 @@ type MovePayload struct {
 	ExpectedVersion *uint64         `json:"expectedVersion"`
 }
 
+type ResignPayload struct {
+	GameID identity.GameID `json:"gameId"`
+}
+
+type OfferDrawPayload struct {
+	GameID identity.GameID `json:"gameId"`
+}
+
+type DrawResponsePayload struct {
+	GameID  identity.GameID      `json:"gameId"`
+	OfferID identity.DrawOfferID `json:"offerId"`
+}
+
 type TimeControlPreset string
 
 const (

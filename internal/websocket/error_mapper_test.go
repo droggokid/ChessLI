@@ -29,6 +29,11 @@ func TestMapApplicationError(t *testing.T) {
 		{gameplay.ErrAlreadyParticipant, protocol.ErrorInvalidMessage, "already a participant in this game"},
 		{gameplay.ErrAlreadyQueued, protocol.ErrorInvalidMessage, "already queued for matchmaking"},
 		{gameplay.ErrStaleGameVersion, protocol.ErrorStaleGameVersion, "game state is stale"},
+		{gameplay.ErrDrawOfferPending, protocol.ErrorInvalidMessage, "draw offer already pending"},
+		{gameplay.ErrDrawOfferCooldown, protocol.ErrorInvalidMessage, "draw offer is on cooldown"},
+		{gameplay.ErrDrawOfferNotFound, protocol.ErrorInvalidMessage, "draw offer not found"},
+		{gameplay.ErrStaleDrawOffer, protocol.ErrorInvalidMessage, "draw offer is stale"},
+		{gameplay.ErrCannotRespondToOwnDrawOffer, protocol.ErrorInvalidMessage, "cannot respond to own draw offer"},
 		{errors.New("unexpected"), protocol.ErrorInternal, "internal server error"},
 	}
 

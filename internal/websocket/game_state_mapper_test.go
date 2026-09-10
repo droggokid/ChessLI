@@ -146,12 +146,17 @@ func TestGameStatePayload(t *testing.T) {
 
 	handler := NewHandler(nil, NewGameSessions())
 	state := gameplay.GameSnapshot{
-		GameID:      "game",
-		FEN:         "fen",
-		Version:     3,
-		LastMoveSAN: "Qh4#",
-		Outcome:     chess.BlackWon,
-		Termination: gameplay.TerminationCheckmate,
+		GameID:         "game",
+		FEN:            "fen",
+		Version:        3,
+		WhiteProfileID: "white",
+		LastMoveSAN:    "Qh4#",
+		Outcome:        chess.BlackWon,
+		Termination:    gameplay.TerminationCheckmate,
+		PendingDrawOffer: &gameplay.DrawOffer{
+			OfferID:   "offer",
+			OfferedBy: "white",
+		},
 	}
 
 	got := handler.gameStatePayload(state)
@@ -164,6 +169,9 @@ func TestGameStatePayload(t *testing.T) {
 	wantOutcome := &protocol.GameOutcome{Result: protocol.ResultBlackWin, Reason: protocol.GameOverCheckmate}
 	if !reflect.DeepEqual(got.Outcome, wantOutcome) {
 		t.Fatalf("gameStatePayload() outcome = %+v, want %+v", got.Outcome, wantOutcome)
+	}
+	if got.PendingDrawOffer == nil || got.PendingDrawOffer.OfferID != "offer" || got.PendingDrawOffer.OfferedBy != protocol.ColorWhite {
+		t.Fatalf("gameStatePayload() draw offer = %+v, want white offer", got.PendingDrawOffer)
 	}
 }
 

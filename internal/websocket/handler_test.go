@@ -25,7 +25,10 @@ func TestHandlerProtocolErrors(t *testing.T) {
 	}{
 		{name: "invalid JSON", raw: json.RawMessage(`{"type":`), wantCode: protocol.ErrorInvalidMessage},
 		{name: "unknown type", raw: json.RawMessage(`{"type":"unknown","requestId":"request"}`), wantRequestID: "request", wantCode: protocol.ErrorUnknownType},
-		{name: "unknown envelope field is ignored", raw: json.RawMessage(`{"type":"game.resign","requestId":"request","future":true}`), wantRequestID: "request", wantCode: protocol.ErrorNotImplemented},
+		{name: "unknown envelope field is ignored", raw: json.RawMessage(`{"type":"unknown","requestId":"request","future":true}`), wantRequestID: "request", wantCode: protocol.ErrorUnknownType},
+		{name: "missing draw game ID", raw: json.RawMessage(`{"type":"draw.offer","requestId":"request","payload":{}}`), wantRequestID: "request", wantCode: protocol.ErrorInvalidMessage},
+		{name: "missing draw offer ID", raw: json.RawMessage(`{"type":"draw.accept","requestId":"request","payload":{"gameId":"game"}}`), wantRequestID: "request", wantCode: protocol.ErrorInvalidMessage},
+		{name: "missing resign game ID", raw: json.RawMessage(`{"type":"game.resign","requestId":"request","payload":{}}`), wantRequestID: "request", wantCode: protocol.ErrorInvalidMessage},
 	}
 
 	for _, tt := range tests {
@@ -46,6 +49,85 @@ func TestHandlerProtocolErrors(t *testing.T) {
 			payload, ok := message.Payload.(protocol.ErrorPayload)
 			if !ok || payload.Code != tt.wantCode {
 				t.Fatalf("error payload = %+v, want code %q", message.Payload, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestHandlerGameActionsBroadcastState(t *testing.T) {
+	tests := []struct {
+		name   string
+		raw    json.RawMessage
+		expect func(*MockGameService) gameplay.GameSnapshot
+	}{
+		{
+			name: "resign",
+			raw:  json.RawMessage(`{"type":"game.resign","requestId":"request","payload":{"gameId":"game"}}`),
+			expect: func(service *MockGameService) gameplay.GameSnapshot {
+				state := gameplay.GameSnapshot{GameID: "game", Outcome: chess.BlackWon, Termination: gameplay.TerminationResignation}
+				service.EXPECT().Resign(gomock.Any(), gameplay.NewResignCommand("game", "white")).Return(state, nil)
+				return state
+			},
+		},
+		{
+			name: "offer draw",
+			raw:  json.RawMessage(`{"type":"draw.offer","requestId":"request","payload":{"gameId":"game"}}`),
+			expect: func(service *MockGameService) gameplay.GameSnapshot {
+				state := gameplay.GameSnapshot{GameID: "game", WhiteProfileID: "white", PendingDrawOffer: &gameplay.DrawOffer{OfferID: "offer", OfferedBy: "white"}}
+				service.EXPECT().OfferDraw(gomock.Any(), gameplay.NewOfferDrawCommand("game", "white")).Return(state, nil)
+				return state
+			},
+		},
+		{
+			name: "accept draw",
+			raw:  json.RawMessage(`{"type":"draw.accept","requestId":"request","payload":{"gameId":"game","offerId":"offer"}}`),
+			expect: func(service *MockGameService) gameplay.GameSnapshot {
+				state := gameplay.GameSnapshot{GameID: "game", Outcome: chess.Draw, Termination: gameplay.TerminationDrawAgreement, Version: 1}
+				service.EXPECT().AcceptDraw(gomock.Any(), gameplay.NewDrawOfferResponseCommand("game", "white", "offer")).Return(state, nil)
+				return state
+			},
+		},
+		{
+			name: "decline draw",
+			raw:  json.RawMessage(`{"type":"draw.decline","requestId":"request","payload":{"gameId":"game","offerId":"offer"}}`),
+			expect: func(service *MockGameService) gameplay.GameSnapshot {
+				state := gameplay.GameSnapshot{GameID: "game", Version: 2}
+				service.EXPECT().DeclineDraw(gomock.Any(), gameplay.NewDrawOfferResponseCommand("game", "white", "offer")).Return(state, nil)
+				return state
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewMockGameService(gomock.NewController(t))
+			want := tt.expect(service)
+			registry := NewGameSessions()
+			client := newQueuedSession("white")
+			peer := newQueuedSession("black")
+			if err := registry.Add("game", client); err != nil {
+				t.Fatalf("Add(client) error = %v", err)
+			}
+			if err := registry.Add("game", peer); err != nil {
+				t.Fatalf("Add(peer) error = %v", err)
+			}
+
+			if err := NewHandler(service, registry).Handle(context.Background(), client, tt.raw); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+
+			for name, session := range map[string]*Session{"source": client, "peer": peer} {
+				message := receiveEnvelope(t, session)
+				payload, ok := message.Payload.(protocol.GameStatePayload)
+				if message.Type != protocol.ServerGameState || !ok || payload.Version != want.Version {
+					t.Fatalf("%s envelope = %+v, want game state version %d", name, message, want.Version)
+				}
+				if name == "source" && message.RequestID != "request" {
+					t.Fatalf("source request ID = %q, want request", message.RequestID)
+				}
+				if name == "peer" && message.RequestID != "" {
+					t.Fatalf("peer request ID = %q, want empty", message.RequestID)
+				}
 			}
 		})
 	}

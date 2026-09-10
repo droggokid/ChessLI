@@ -24,6 +24,7 @@ type Game struct {
 	now             func() time.Time
 	outcome         chess.Outcome
 	termination     TerminationReason
+	drawOffers      drawOfferState
 }
 
 // NewGame returns a game with the standard starting position and the supplied
@@ -39,6 +40,9 @@ func NewGame(id identity.GameID, white identity.ProfileID, black identity.Profil
 		now:            time.Now,
 		outcome:        chess.NoOutcome,
 		termination:    TerminationNone,
+		drawOffers: drawOfferState{
+			lastOfferedAt: make(map[identity.ProfileID]time.Time, 2),
+		},
 	}
 
 	if white != "" && black != "" {
@@ -95,6 +99,7 @@ func (g *Game) Move(command MoveCommand) (GameSnapshot, error) {
 
 	g.version++
 	g.lastMoveSAN = san
+	g.clearPendingDrawOfferLocked()
 
 	return g.snapshotLocked(now), nil
 }
@@ -165,4 +170,30 @@ func (g *Game) startClockIfReadyLocked() {
 	if g.WhiteProfileID != "" && g.BlackProfileID != "" {
 		g.clock.start(g.now())
 	}
+}
+
+func (g *Game) Resign(command ResignCommand) (GameSnapshot, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	now := g.now()
+	if err := g.validateReady(); err != nil {
+		return GameSnapshot{}, err
+	}
+	if g.expireLocked(now) || g.outcome != chess.NoOutcome {
+		return GameSnapshot{}, ErrGameFinished
+	}
+
+	color, err := colorFromProfileID(command.ProfileID, g.WhiteProfileID, g.BlackProfileID)
+	if err != nil {
+		return GameSnapshot{}, err
+	}
+
+	g.engine.Resign(color)
+	g.syncOutcomeFromEngineLocked()
+	g.version++
+	g.clock.stop(now, g.engine.Position().Turn())
+	g.clearPendingDrawOfferLocked()
+
+	return g.snapshotLocked(now), nil
 }

@@ -13,7 +13,6 @@ const (
 	ErrorNotYourTurn      ErrorCode = "not_your_turn"
 	ErrorIllegalMove      ErrorCode = "illegal_move"
 	ErrorGameFinished     ErrorCode = "game_finished"
-	ErrorNotImplemented   ErrorCode = "not_implemented"
 	ErrorInternal         ErrorCode = "internal_error"
 	ErrorStaleGameVersion ErrorCode = "stale_game_version"
 )
