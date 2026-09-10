@@ -11,7 +11,6 @@ type gameClock struct {
 	blackRemaining time.Duration
 	increment      time.Duration
 	turnStartedAt  time.Time
-	started        bool
 	running        bool
 }
 
@@ -24,11 +23,10 @@ func newGameClock(initial, increment time.Duration) gameClock {
 }
 
 func (c *gameClock) start(now time.Time) {
-	if c.started {
+	if c.running {
 		return
 	}
 
-	c.started = true
 	c.running = true
 	c.turnStartedAt = now
 }

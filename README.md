@@ -122,3 +122,7 @@ same preset.
 
 For payloads that exercise the current error responses, see
 [Manual WebSocket Error Testing](docs/manual-error-testing.md).
+
+Malformed JSON receives an `invalid_message` error and does not close the
+connection, so the client can correct and resend its request. A `game.move`
+payload must also include a non-empty `gameId`.

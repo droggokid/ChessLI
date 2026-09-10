@@ -13,20 +13,21 @@ import (
 // game is safe for concurrent use through its methods.
 type game struct {
 	// mu guards all game state. Helpers ending in Locked require callers to hold it and do not lock it.
-	mu              sync.Mutex
-	id              identity.GameID
-	version         uint64
-	whiteProfileID  identity.ProfileID
-	blackProfileID  identity.ProfileID
-	engine          *chess.Game
-	lastMoveSAN     string
-	clock           gameClock
-	expirationTimer *time.Timer
-	expirationID    uint64
-	now             func() time.Time
-	outcome         chess.Outcome
-	termination     TerminationReason
-	drawOffers      drawOfferState
+	mu                 sync.Mutex
+	id                 identity.GameID
+	version            uint64
+	whiteProfileID     identity.ProfileID
+	blackProfileID     identity.ProfileID
+	engine             *chess.Game
+	lastMoveSAN        string
+	clock              gameClock
+	expirationTimer    *time.Timer
+	expirationID       uint64
+	expirationNotified bool
+	now                func() time.Time
+	outcome            chess.Outcome
+	termination        TerminationReason
+	drawOffers         drawOfferState
 }
 
 // newGame returns a game with the standard starting position and the supplied

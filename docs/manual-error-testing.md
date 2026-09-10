@@ -248,6 +248,9 @@ Expected error:
 {"code":"invalid_message","message":"message must be valid JSON"}
 ```
 
+The connection stays open after this error; send a valid command next to
+continue using the same client.
+
 ### Unknown message type
 
 ```json
@@ -296,6 +299,18 @@ Expected error:
 
 ```json
 {"code":"invalid_message","message":"move is required"}
+```
+
+### Missing move game ID
+
+```json
+{"type":"game.move","requestId":"error-missing-move-game-id","payload":{"move":"e2e4","notation":"uci","expectedVersion":0}}
+```
+
+Expected error:
+
+```json
+{"code":"invalid_message","message":"gameId is required"}
 ```
 
 ### Missing expected version

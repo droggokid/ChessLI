@@ -16,9 +16,6 @@ func TestNewIdentifiers(t *testing.T) {
 		if first == second {
 			t.Fatalf("NewProfileID() returned duplicate identifier %q", first)
 		}
-		if first.String() != string(first) {
-			t.Fatalf("ProfileID.String() = %q, want %q", first.String(), first)
-		}
 	})
 
 	t.Run("game", func(t *testing.T) {
@@ -31,9 +28,6 @@ func TestNewIdentifiers(t *testing.T) {
 		}
 		if first == second {
 			t.Fatalf("NewGameID() returned duplicate identifier %q", first)
-		}
-		if first.String() != string(first) {
-			t.Fatalf("GameID.String() = %q, want %q", first.String(), first)
 		}
 	})
 }

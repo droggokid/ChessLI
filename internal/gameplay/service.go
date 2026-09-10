@@ -72,6 +72,9 @@ func (s *GameService) CreatePrivateGame(ctx context.Context, command CreatePriva
 	if err := ctx.Err(); err != nil {
 		return CreateResult{}, err
 	}
+	if err := validateProfileID(command.ProfileID); err != nil {
+		return CreateResult{}, err
+	}
 	if err := validateTimeControl(command.Initial, command.Increment); err != nil {
 		return CreateResult{}, err
 	}
@@ -97,6 +100,9 @@ func (s *GameService) JoinPrivateGame(ctx context.Context, command JoinPrivateCo
 	if err := ctx.Err(); err != nil {
 		return JoinResult{}, err
 	}
+	if err := validateProfileID(command.ProfileID); err != nil {
+		return JoinResult{}, err
+	}
 
 	game, err := s.gameByID(command.GameID)
 	if err != nil {
@@ -115,6 +121,9 @@ func (s *GameService) JoinPrivateGame(ctx context.Context, command JoinPrivateCo
 // EnterMatchmaking queues a profile or matches it with a compatible opponent.
 func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error) {
 	if err := ctx.Err(); err != nil {
+		return MatchTicket{}, err
+	}
+	if err := validateProfileID(command.ProfileID); err != nil {
 		return MatchTicket{}, err
 	}
 
@@ -167,6 +176,7 @@ func (s *GameService) MakeMove(ctx context.Context, command MoveCommand) (GameSn
 	if err != nil {
 		return GameSnapshot{}, err
 	}
+	defer game.notifyExpiration(s.notifyGameExpired)
 
 	state, err := game.move(command)
 	if err != nil {
@@ -187,7 +197,9 @@ func (s *GameService) GameState(ctx context.Context, gameID identity.GameID) (Ga
 	if err != nil {
 		return GameSnapshot{}, err
 	}
-	return game.snapshot(), nil
+	state := game.snapshot()
+	game.notifyExpiration(s.notifyGameExpired)
+	return state, nil
 }
 
 // Resign resigns a game on behalf of a participant.
@@ -200,6 +212,7 @@ func (s *GameService) Resign(ctx context.Context, command ResignCommand) (GameSn
 	if err != nil {
 		return GameSnapshot{}, err
 	}
+	defer game.notifyExpiration(s.notifyGameExpired)
 
 	snapshot, err := game.resign(command)
 	if err != nil {
@@ -220,6 +233,7 @@ func (s *GameService) OfferDraw(ctx context.Context, command OfferDrawCommand) (
 	if err != nil {
 		return GameSnapshot{}, err
 	}
+	defer game.notifyExpiration(s.notifyGameExpired)
 
 	return game.offerDraw(command)
 }
@@ -234,6 +248,7 @@ func (s *GameService) AcceptDraw(ctx context.Context, command DrawOfferResponseC
 	if err != nil {
 		return GameSnapshot{}, err
 	}
+	defer game.notifyExpiration(s.notifyGameExpired)
 
 	snapshot, err := game.acceptDraw(command)
 	if err != nil {
@@ -254,6 +269,7 @@ func (s *GameService) DeclineDraw(ctx context.Context, command DrawOfferResponse
 	if err != nil {
 		return GameSnapshot{}, err
 	}
+	defer game.notifyExpiration(s.notifyGameExpired)
 
 	return game.declineDraw(command)
 }

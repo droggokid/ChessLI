@@ -23,6 +23,9 @@ jobs:
       - name: Run checks
         run: make check
 
+      - name: Run WebSocket stack tests
+        run: make test-stack
+
       - name: Build
         run: make build
 

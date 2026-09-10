@@ -20,8 +20,7 @@ type GameSessions struct {
 type sessionState uint8
 
 const (
-	sessionReserved sessionState = iota
-	sessionQueued
+	sessionPending sessionState = iota
 	sessionInGame
 )
 
@@ -41,19 +40,15 @@ func NewGameSessions() *GameSessions {
 
 // Reserve holds an idle session while a private game operation is committed.
 func (g *GameSessions) Reserve(session *Session) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	if _, exists := g.bySession[session]; exists {
-		return protocol.ErrSessionAlreadyInGame
-	}
-
-	g.bySession[session] = sessionRegistration{state: sessionReserved}
-	return nil
+	return g.hold(session)
 }
 
 // Queue marks an idle session as waiting for matchmaking.
 func (g *GameSessions) Queue(session *Session) error {
+	return g.hold(session)
+}
+
+func (g *GameSessions) hold(session *Session) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -61,7 +56,7 @@ func (g *GameSessions) Queue(session *Session) error {
 		return protocol.ErrSessionAlreadyInGame
 	}
 
-	g.bySession[session] = sessionRegistration{state: sessionQueued}
+	g.bySession[session] = sessionRegistration{state: sessionPending}
 	return nil
 }
 

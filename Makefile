@@ -1,10 +1,11 @@
-.PHONY: help run build test fmt fmt-check vet check test-race cover tidy clean generate mockgen
+.PHONY: help run build test test-stack fmt fmt-check vet check test-race cover tidy clean generate mockgen
 
 help:
 	@echo "Available targets:"
 	@echo "  make run    - run the app"
 	@echo "  make build  - build all packages"
 	@echo "  make test   - run tests"
+	@echo "  make test-stack - run WebSocket stack tests with the race detector"
 	@echo "  make fmt    - format Go code"
 	@echo "  make fmt-check - verify Go formatting"
 	@echo "  make vet    - run go vet"
@@ -25,6 +26,9 @@ build:
 
 test:
 	go test ./...
+
+test-stack:
+	go test -count=1 -race ./internal/websocket -run '^TestWebSocketStack'
 
 fmt:
 	go fmt ./...

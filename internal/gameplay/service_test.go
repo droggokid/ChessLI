@@ -131,6 +131,70 @@ func TestGameServiceAutomaticallyExpiresPrivateGame(t *testing.T) {
 	}
 }
 
+func TestGameServiceNotifiesTimeoutDetectedByCommandsOrState(t *testing.T) {
+	tests := []struct {
+		name string
+		act  func(*GameService, identity.GameID) error
+	}{
+		{name: "move", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.MakeMove(context.Background(), NewMoveCommand(id, "white", "e2e4", MoveNotationUCI, 0))
+			return err
+		}},
+		{name: "resign", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.Resign(context.Background(), NewResignCommand(id, "white"))
+			return err
+		}},
+		{name: "offer draw", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.OfferDraw(context.Background(), NewOfferDrawCommand(id, "white"))
+			return err
+		}},
+		{name: "accept draw", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.AcceptDraw(context.Background(), NewDrawOfferResponseCommand(id, "black", "offer"))
+			return err
+		}},
+		{name: "decline draw", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.DeclineDraw(context.Background(), NewDrawOfferResponseCommand(id, "black", "offer"))
+			return err
+		}},
+		{name: "state", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.GameState(context.Background(), id)
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewGameService()
+			game := newReadyGame()
+			now := time.Now()
+			game.now = func() time.Time { return now }
+			game.clock = newGameClock(time.Second, 0)
+			game.clock.start(now)
+			service.games[game.id] = game
+			now = now.Add(time.Second)
+
+			expired := make(chan GameSnapshot, 1)
+			service.SetGameExpiredHandler(func(state GameSnapshot) { expired <- state })
+			_ = tt.act(service, game.id)
+
+			select {
+			case state := <-expired:
+				if state.Termination != TerminationTimeout {
+					t.Fatalf("expiration termination = %v, want timeout", state.Termination)
+				}
+			default:
+				t.Fatal("timeout did not notify")
+			}
+			_ = tt.act(service, game.id)
+			select {
+			case state := <-expired:
+				t.Fatalf("duplicate timeout notification = %+v", state)
+			default:
+			}
+		})
+	}
+}
+
 func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
 	tests := []struct {
 		name string
@@ -193,19 +257,19 @@ func TestGameServiceCreatePrivateGameRejectsInvalidCommands(t *testing.T) {
 				cancel()
 				return ctx
 			},
-			command: CreatePrivateCommand{Initial: time.Minute, ColorPreference: ColorWhite},
+			command: CreatePrivateCommand{ProfileID: "player", Initial: time.Minute, ColorPreference: ColorWhite},
 			wantErr: context.Canceled,
 		},
 		{
 			name:    "invalid time control",
 			ctx:     context.Background,
-			command: CreatePrivateCommand{Initial: 0, ColorPreference: ColorWhite},
+			command: CreatePrivateCommand{ProfileID: "player", Initial: 0, ColorPreference: ColorWhite},
 			wantErr: ErrInvalidTimeControl,
 		},
 		{
 			name:    "invalid color",
 			ctx:     context.Background,
-			command: CreatePrivateCommand{Initial: time.Minute, ColorPreference: ColorPreference(99)},
+			command: CreatePrivateCommand{ProfileID: "player", Initial: time.Minute, ColorPreference: ColorPreference(99)},
 			wantErr: ErrInvalidColorPreference,
 		},
 	}
@@ -219,6 +283,31 @@ func TestGameServiceCreatePrivateGameRejectsInvalidCommands(t *testing.T) {
 				t.Fatalf("CreatePrivateGame() error = %v, want %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestGameServiceRejectsEmptyProfileID(t *testing.T) {
+	t.Parallel()
+
+	service := NewGameService()
+	created, err := service.CreatePrivateGame(context.Background(), CreatePrivateCommand{
+		Initial: time.Minute, ColorPreference: ColorWhite,
+	})
+	if !errors.Is(err, ErrInvalidProfileID) {
+		t.Fatalf("CreatePrivateGame() error = %v, want %v", err, ErrInvalidProfileID)
+	}
+
+	created, err = service.CreatePrivateGame(context.Background(), CreatePrivateCommand{
+		ProfileID: "white", Initial: time.Minute, ColorPreference: ColorWhite,
+	})
+	if err != nil {
+		t.Fatalf("CreatePrivateGame() error = %v", err)
+	}
+	if _, err = service.JoinPrivateGame(context.Background(), JoinPrivateCommand{GameID: created.GameID}); !errors.Is(err, ErrInvalidProfileID) {
+		t.Fatalf("JoinPrivateGame() error = %v, want %v", err, ErrInvalidProfileID)
+	}
+	if _, err = service.EnterMatchmaking(context.Background(), NewEnterMatchmakingCommand("", time.Minute, 0)); !errors.Is(err, ErrInvalidProfileID) {
+		t.Fatalf("EnterMatchmaking() error = %v, want %v", err, ErrInvalidProfileID)
 	}
 }
 

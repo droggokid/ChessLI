@@ -37,6 +37,13 @@ func validateTimeControl(initial, increment time.Duration) error {
 	return nil
 }
 
+func validateProfileID(profileID identity.ProfileID) error {
+	if profileID == "" {
+		return ErrInvalidProfileID
+	}
+	return nil
+}
+
 func assignPrivateColors(profileID identity.ProfileID, creatorColor chess.Color) (identity.ProfileID, identity.ProfileID) {
 	if creatorColor == chess.White {
 		return profileID, ""

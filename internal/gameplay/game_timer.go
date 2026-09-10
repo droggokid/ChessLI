@@ -59,10 +59,24 @@ func (g *game) expireFromTimer(expirationID, expectedVersion uint64, deadline ti
 
 	g.expirationTimer = nil
 	expired := g.expireLocked(now)
-	state := g.snapshotLocked(now)
 	g.mu.Unlock()
 
-	if expired && onExpired != nil {
+	if expired {
+		g.notifyExpiration(onExpired)
+	}
+}
+
+func (g *game) notifyExpiration(onExpired func(GameSnapshot)) {
+	g.mu.Lock()
+	if g.termination != TerminationTimeout || g.expirationNotified {
+		g.mu.Unlock()
+		return
+	}
+	g.expirationNotified = true
+	state := g.snapshotLocked(g.now())
+	g.mu.Unlock()
+
+	if onExpired != nil {
 		onExpired(state)
 	}
 }

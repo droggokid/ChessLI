@@ -29,6 +29,7 @@ func TestHandlerProtocolErrors(t *testing.T) {
 		{name: "missing draw game ID", raw: json.RawMessage(`{"type":"draw.offer","requestId":"request","payload":{}}`), wantRequestID: "request", wantCode: protocol.ErrorInvalidMessage},
 		{name: "missing draw offer ID", raw: json.RawMessage(`{"type":"draw.accept","requestId":"request","payload":{"gameId":"game"}}`), wantRequestID: "request", wantCode: protocol.ErrorInvalidMessage},
 		{name: "missing resign game ID", raw: json.RawMessage(`{"type":"game.resign","requestId":"request","payload":{}}`), wantRequestID: "request", wantCode: protocol.ErrorInvalidMessage},
+		{name: "missing move game ID", raw: json.RawMessage(`{"type":"game.move","requestId":"request","payload":{"move":"e2e4","notation":"uci","expectedVersion":0}}`), wantRequestID: "request", wantCode: protocol.ErrorInvalidMessage},
 	}
 
 	for _, tt := range tests {
@@ -52,6 +53,58 @@ func TestHandlerProtocolErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandlerRejectsInvalidServiceColorWithoutRegistering(t *testing.T) {
+	t.Parallel()
+
+	service := NewMockGameService(gomock.NewController(t))
+	service.EXPECT().CreatePrivateGame(gomock.Any(), gomock.Any()).Return(gameplay.CreateResult{GameID: "game", Color: chess.NoColor}, nil)
+	registry := NewGameSessions()
+	client := newQueuedSession("player")
+	if err := NewHandler(service, registry).Handle(context.Background(), client, json.RawMessage(`{"type":"game.create","requestId":"request","payload":{"color":"white","timeControl":"3+2"}}`)); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	message := receiveEnvelope(t, client)
+	if message.Type != protocol.ServerError || errorPayloadCode(t, message) != protocol.ErrorInternal {
+		t.Fatalf("response = %+v, want internal error", message)
+	}
+	if _, exists := registry.GameID(client); exists {
+		t.Fatal("invalid color registered the session")
+	}
+	if err := registry.Reserve(client); err != nil {
+		t.Fatalf("Reserve() after invalid color = %v, want released session", err)
+	}
+}
+
+func TestAwaitMatchRejectsInvalidColorAndReleasesSession(t *testing.T) {
+	t.Parallel()
+
+	registry := NewGameSessions()
+	client := newQueuedSession("player")
+	if err := registry.Queue(client); err != nil {
+		t.Fatalf("Queue() error = %v", err)
+	}
+	handler := NewHandler(NewMockGameService(gomock.NewController(t)), registry)
+	handler.awaitMatch(context.Background(), client, "request", gameplay.MatchTicket{
+		Result: matchResults(gameplay.MatchResult{GameID: "game", Color: chess.NoColor}),
+	})
+	message := receiveEnvelope(t, client)
+	if message.Type != protocol.ServerError || errorPayloadCode(t, message) != protocol.ErrorInternal {
+		t.Fatalf("response = %+v, want internal error", message)
+	}
+	if err := registry.Reserve(client); err != nil {
+		t.Fatalf("Reserve() after invalid match color = %v, want released session", err)
+	}
+}
+
+func errorPayloadCode(t *testing.T, message protocol.ServerEnvelope) protocol.ErrorCode {
+	t.Helper()
+	payload, ok := message.Payload.(protocol.ErrorPayload)
+	if !ok {
+		t.Fatalf("error payload = %T, want protocol.ErrorPayload", message.Payload)
+	}
+	return payload.Code
 }
 
 func TestHandlerGameActionsBroadcastState(t *testing.T) {

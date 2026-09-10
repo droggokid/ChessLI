@@ -87,13 +87,12 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 
 func (c *Session) readLoop(ctx context.Context, handleMessage HandlerFunc) error {
 	for {
-		var message json.RawMessage
-
-		if err := wsjson.Read(ctx, c.conn, &message); err != nil {
+		_, message, err := c.conn.Read(ctx)
+		if err != nil {
 			return fmt.Errorf("read websocket message: %w", err)
 		}
 
-		if err := handleMessage(ctx, c, message); err != nil {
+		if err := handleMessage(ctx, c, json.RawMessage(message)); err != nil {
 			return fmt.Errorf("handle websocket message: %w", err)
 		}
 	}

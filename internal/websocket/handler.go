@@ -85,12 +85,7 @@ func (h *Handler) handleCreateGame(ctx context.Context, client *Session, message
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
 
-	command := gameplay.CreatePrivateCommand{
-		ProfileID:       client.profileID,
-		ColorPreference: colorPreference,
-		Initial:         initial,
-		Increment:       increment,
-	}
+	command := gameplay.NewCreatePrivateCommand(client.profileID, initial, increment, colorPreference)
 
 	result, err := h.gameService.CreatePrivateGame(ctx, command)
 	if err != nil {
@@ -214,20 +209,20 @@ func (h *Handler) awaitMatch(ctx context.Context, client *Session, requestID str
 		result = match
 	}
 
+	color, err := mapColorFromServer(result.Color)
+	if err != nil {
+		h.gameSessions.Release(client)
+		if sendErr := h.sendError(ctx, client, requestID, protocol.ErrorInternal, "internal server error"); sendErr != nil {
+			slog.Warn("send matchmaking color error", "error", sendErr)
+		}
+		return
+	}
 	if err := h.gameSessions.Add(result.GameID, client); err != nil {
 		slog.Warn("register matched session", "game_id", result.GameID, "error", err)
 		return
 	}
 
 	if err := h.gameSessions.WaitForPlayers(ctx, result.GameID, 2); err != nil {
-		return
-	}
-
-	color, err := mapColorFromServer(result.Color)
-	if err != nil {
-		if sendErr := h.sendError(ctx, client, requestID, protocol.ErrorInternal, "internal server error"); sendErr != nil {
-			slog.Warn("send matchmaking color error", "error", sendErr)
-		}
 		return
 	}
 
@@ -262,6 +257,10 @@ func (h *Handler) handleMakeMove(ctx context.Context, client *Session, message p
 	request, err := protocol.DecodePayload[protocol.MovePayload](message)
 	if err != nil {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid game.move payload")
+	}
+
+	if request.GameID == "" {
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "gameId is required")
 	}
 
 	if request.Move == "" {
@@ -356,13 +355,13 @@ func (h *Handler) broadcastGameState(ctx context.Context, client *Session, reque
 }
 
 func (h *Handler) completeGameAdmission(ctx context.Context, client *Session, requestID string, gameID identity.GameID, serviceColor chess.Color) (protocol.Color, error) {
-	if err := h.gameSessions.Add(gameID, client); err != nil {
-		return "", h.sendError(ctx, client, requestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
-	}
-
 	color, err := mapColorFromServer(serviceColor)
 	if err != nil {
+		h.gameSessions.Release(client)
 		return "", h.sendError(ctx, client, requestID, protocol.ErrorInternal, "internal server error")
+	}
+	if err := h.gameSessions.Add(gameID, client); err != nil {
+		return "", h.sendError(ctx, client, requestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
 
 	return color, nil
