@@ -15,12 +15,14 @@ import (
 
 const sessionUnavailableMessage = "session is already in a game or matchmaking"
 
+// Handler decodes and dispatches WebSocket messages.
+// It is safe for concurrent use when its Service is.
 type Handler struct {
 	gameService  gameplay.Service
 	gameSessions *GameSessions
 }
 
-// NewHandler returns a WebSocket message handler backed by gameService.
+// NewHandler creates a WebSocket message handler backed by gameService.
 func NewHandler(gameService gameplay.Service, sessions *GameSessions) *Handler {
 	return &Handler{gameService: gameService, gameSessions: sessions}
 }

@@ -16,24 +16,24 @@ func TestGameJoinPrivate(t *testing.T) {
 	t.Run("fills white seat", func(t *testing.T) {
 		t.Parallel()
 
-		game := NewGame("game", "", "black", time.Minute, 0)
-		color, err := game.JoinPrivate(JoinPrivateCommand{ProfileID: "white"})
+		game := newGame("game", "", "black", time.Minute, 0)
+		color, err := game.joinPrivate(JoinPrivateCommand{ProfileID: "white"})
 		if err != nil {
 			t.Fatalf("JoinPrivate() error = %v", err)
 		}
 		if color != chess.White {
 			t.Fatalf("JoinPrivate() color = %v, want %v", color, chess.White)
 		}
-		if game.WhiteProfileID != "white" {
-			t.Fatalf("WhiteProfileID = %q, want %q", game.WhiteProfileID, "white")
+		if game.whiteProfileID != "white" {
+			t.Fatalf("WhiteProfileID = %q, want %q", game.whiteProfileID, "white")
 		}
 	})
 
 	t.Run("fills black seat", func(t *testing.T) {
 		t.Parallel()
 
-		game := NewGame("game", "white", "", time.Minute, 0)
-		color, err := game.JoinPrivate(JoinPrivateCommand{ProfileID: "black"})
+		game := newGame("game", "white", "", time.Minute, 0)
+		color, err := game.joinPrivate(JoinPrivateCommand{ProfileID: "black"})
 		if err != nil {
 			t.Fatalf("JoinPrivate() error = %v", err)
 		}
@@ -45,8 +45,8 @@ func TestGameJoinPrivate(t *testing.T) {
 	t.Run("rejects existing participant", func(t *testing.T) {
 		t.Parallel()
 
-		game := NewGame("game", "white", "", time.Minute, 0)
-		_, err := game.JoinPrivate(JoinPrivateCommand{ProfileID: "white"})
+		game := newGame("game", "white", "", time.Minute, 0)
+		_, err := game.joinPrivate(JoinPrivateCommand{ProfileID: "white"})
 		if !errors.Is(err, ErrAlreadyParticipant) {
 			t.Fatalf("JoinPrivate() error = %v, want %v", err, ErrAlreadyParticipant)
 		}
@@ -56,7 +56,7 @@ func TestGameJoinPrivate(t *testing.T) {
 		t.Parallel()
 
 		game := newReadyGame()
-		_, err := game.JoinPrivate(JoinPrivateCommand{ProfileID: "third"})
+		_, err := game.joinPrivate(JoinPrivateCommand{ProfileID: "third"})
 		if !errors.Is(err, ErrGameFull) {
 			t.Fatalf("JoinPrivate() error = %v, want %v", err, ErrGameFull)
 		}
@@ -68,14 +68,14 @@ func TestGameMoveRejectsInvalidCommands(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		game    func() *Game
+		game    func() *game
 		command MoveCommand
 		wantErr error
 	}{
 		{
 			name: "game not ready",
-			game: func() *Game {
-				return NewGame("game", "white", "", time.Minute, 0)
+			game: func() *game {
+				return newGame("game", "white", "", time.Minute, 0)
 			},
 			command: MoveCommand{ProfileID: "white", Move: "e2e4", Notation: MoveNotationUCI},
 			wantErr: ErrGameNotReady,
@@ -116,7 +116,7 @@ func TestGameMoveRejectsInvalidCommands(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := tt.game().Move(tt.command)
+			_, err := tt.game().move(tt.command)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Move() error = %v, want %v", err, tt.wantErr)
 			}
@@ -141,8 +141,8 @@ func TestGameMoveUpdatesAuthoritativeState(t *testing.T) {
 			t.Parallel()
 
 			game := newReadyGame()
-			result, err := game.Move(MoveCommand{
-				GameID:    game.ID,
+			result, err := game.move(MoveCommand{
+				GameID:    game.id,
 				ProfileID: "white",
 				Move:      tt.move,
 				Notation:  tt.notation,
@@ -157,7 +157,7 @@ func TestGameMoveUpdatesAuthoritativeState(t *testing.T) {
 				t.Fatalf("Move() LastMoveSAN = %q, want %q", result.LastMoveSAN, "e4")
 			}
 
-			snapshot := game.Snapshot()
+			snapshot := game.snapshot()
 			if snapshot.FEN != result.FEN {
 				t.Fatalf("Snapshot().FEN = %q, want %q", snapshot.FEN, result.FEN)
 			}
@@ -186,8 +186,8 @@ func TestGameRejectsMoveAfterCheckmate(t *testing.T) {
 	}
 
 	for version, move := range moves {
-		result, err := game.Move(MoveCommand{
-			GameID:          game.ID,
+		result, err := game.move(MoveCommand{
+			GameID:          game.id,
 			ProfileID:       move.profile,
 			Move:            move.move,
 			Notation:        MoveNotationUCI,
@@ -207,7 +207,7 @@ func TestGameRejectsMoveAfterCheckmate(t *testing.T) {
 		}
 	}
 
-	_, err := game.Move(MoveCommand{
+	_, err := game.move(MoveCommand{
 		ProfileID:       "white",
 		Move:            "e2e4",
 		Notation:        MoveNotationUCI,
@@ -223,15 +223,15 @@ func TestGamePrivateClockStartsWhenSecondPlayerJoins(t *testing.T) {
 
 	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	now := base
-	game := NewGame("game", "white", "", time.Minute, 0)
+	game := newGame("game", "white", "", time.Minute, 0)
 	game.now = func() time.Time { return now }
 
-	if _, err := game.JoinPrivate(JoinPrivateCommand{ProfileID: "black"}); err != nil {
+	if _, err := game.joinPrivate(JoinPrivateCommand{ProfileID: "black"}); err != nil {
 		t.Fatalf("JoinPrivate() error = %v", err)
 	}
 
 	now = now.Add(5 * time.Second)
-	snapshot := game.Snapshot()
+	snapshot := game.snapshot()
 	if snapshot.WhiteRemaining != 55*time.Second {
 		t.Fatalf("WhiteRemaining = %v, want 55s", snapshot.WhiteRemaining)
 	}
@@ -245,14 +245,14 @@ func TestGameMoveCommitsClockAndIncrement(t *testing.T) {
 
 	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	now := base
-	game := NewGame("game", "white", "black", time.Minute, 2*time.Second)
+	game := newGame("game", "white", "black", time.Minute, 2*time.Second)
 	game.now = func() time.Time { return now }
 	game.clock = newGameClock(time.Minute, 2*time.Second)
 	game.clock.start(now)
 
 	now = now.Add(5 * time.Second)
-	snapshot, err := game.Move(MoveCommand{
-		GameID:    game.ID,
+	snapshot, err := game.move(MoveCommand{
+		GameID:    game.id,
 		ProfileID: "white",
 		Move:      "e2e4",
 		Notation:  MoveNotationUCI,
@@ -274,13 +274,13 @@ func TestGameSnapshotAdjudicatesTimeout(t *testing.T) {
 
 	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	now := base
-	game := NewGame("game", "white", "black", time.Second, 0)
+	game := newGame("game", "white", "black", time.Second, 0)
 	game.now = func() time.Time { return now }
 	game.clock = newGameClock(time.Second, 0)
 	game.clock.start(now)
 
 	now = now.Add(time.Second)
-	snapshot := game.Snapshot()
+	snapshot := game.snapshot()
 
 	if snapshot.Outcome != chess.BlackWon {
 		t.Fatalf("Outcome = %v, want %v", snapshot.Outcome, chess.BlackWon)
@@ -307,14 +307,14 @@ func TestGameTimeoutIsDrawWhenOpponentHasBareKing(t *testing.T) {
 
 	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	now := base
-	game := NewGame("game", "white", "black", time.Second, 0)
+	game := newGame("game", "white", "black", time.Second, 0)
 	game.engine = chess.NewGame(position)
 	game.now = func() time.Time { return now }
 	game.clock = newGameClock(time.Second, 0)
 	game.clock.start(now)
 
 	now = now.Add(time.Second)
-	snapshot := game.Snapshot()
+	snapshot := game.snapshot()
 	if snapshot.Outcome != chess.Draw || snapshot.Termination != TerminationTimeout {
 		t.Fatalf("timeout state = (%v, %v), want (%v, %v)", snapshot.Outcome, snapshot.Termination, chess.Draw, TerminationTimeout)
 	}
@@ -325,15 +325,15 @@ func TestGameMoveReturnsTimeoutStateWithoutApplyingMove(t *testing.T) {
 
 	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	now := base
-	game := NewGame("game", "white", "black", time.Second, 0)
+	game := newGame("game", "white", "black", time.Second, 0)
 	game.now = func() time.Time { return now }
 	game.clock = newGameClock(time.Second, 0)
 	game.clock.start(now)
 	startingFEN := game.engine.FEN()
 
 	now = now.Add(time.Second)
-	snapshot, err := game.Move(MoveCommand{
-		GameID:    game.ID,
+	snapshot, err := game.move(MoveCommand{
+		GameID:    game.id,
 		ProfileID: "white",
 		Move:      "e2e4",
 		Notation:  MoveNotationUCI,
@@ -350,6 +350,6 @@ func TestGameMoveReturnsTimeoutStateWithoutApplyingMove(t *testing.T) {
 	}
 }
 
-func newReadyGame() *Game {
-	return NewGame("game", "white", "black", 10*time.Minute, 0)
+func newReadyGame() *game {
+	return newGame("game", "white", "black", 10*time.Minute, 0)
 }

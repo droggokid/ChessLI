@@ -13,6 +13,7 @@ import (
 //go:generate go run go.uber.org/mock/mockgen@v0.6.0 -destination=../websocket/game_service_mock.go -package=websocket -mock_names=Service=MockGameService ChessLI/internal/gameplay Service
 
 // Service is the application boundary offered to transports and other clients.
+// Implementations must support concurrent calls.
 type Service interface {
 	CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (CreateResult, error)
 	JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (JoinResult, error)
@@ -25,10 +26,12 @@ type Service interface {
 	DeclineDraw(context.Context, DrawOfferResponseCommand) (GameSnapshot, error)
 }
 
+// GameService is an in-memory Service safe for concurrent use by multiple goroutines.
 type GameService struct {
+	// mu guards service state. Helpers ending in Locked require callers to hold it and do not lock it.
 	mu             sync.RWMutex
 	waitingPlayers map[timeControlKey]*waitingPlayer
-	games          map[identity.GameID]*Game
+	games          map[identity.GameID]*game
 	pickColor      func() chess.Color
 	onGameExpired  func(GameSnapshot)
 }
@@ -37,7 +40,7 @@ type GameService struct {
 func NewGameService() *GameService {
 	return &GameService{
 		waitingPlayers: make(map[timeControlKey]*waitingPlayer),
-		games:          make(map[identity.GameID]*Game),
+		games:          make(map[identity.GameID]*game),
 		pickColor: func() chess.Color {
 			if rand.IntN(2) == 0 {
 				return chess.White
@@ -47,7 +50,8 @@ func NewGameService() *GameService {
 	}
 }
 
-// SetGameExpiredHandler sets the function called after a clock expires.
+// SetGameExpiredHandler sets the handler called asynchronously when a game clock expires.
+// The handler may be called concurrently.
 func (s *GameService) SetGameExpiredHandler(handler func(GameSnapshot)) {
 	s.mu.Lock()
 	s.onGameExpired = handler
@@ -79,7 +83,7 @@ func (s *GameService) CreatePrivateGame(ctx context.Context, command CreatePriva
 
 	whiteProfileID, blackProfileID := assignPrivateColors(command.ProfileID, creatorColor)
 	gameID := identity.NewGameID()
-	game := NewGame(gameID, whiteProfileID, blackProfileID, command.Initial, command.Increment)
+	game := newGame(gameID, whiteProfileID, blackProfileID, command.Initial, command.Increment)
 
 	s.mu.Lock()
 	s.games[gameID] = game
@@ -99,13 +103,13 @@ func (s *GameService) JoinPrivateGame(ctx context.Context, command JoinPrivateCo
 		return JoinResult{}, err
 	}
 
-	color, err := game.JoinPrivate(command)
+	color, err := game.joinPrivate(command)
 	if err != nil {
 		return JoinResult{}, err
 	}
 
 	game.scheduleExpiration(s.notifyGameExpired)
-	return JoinResult{GameID: game.ID, Color: color}, nil
+	return JoinResult{GameID: game.id, Color: color}, nil
 }
 
 // EnterMatchmaking queues a profile or matches it with a compatible opponent.
@@ -164,7 +168,7 @@ func (s *GameService) MakeMove(ctx context.Context, command MoveCommand) (GameSn
 		return GameSnapshot{}, err
 	}
 
-	state, err := game.Move(command)
+	state, err := game.move(command)
 	if err != nil {
 		return GameSnapshot{}, err
 	}
@@ -183,9 +187,10 @@ func (s *GameService) GameState(ctx context.Context, gameID identity.GameID) (Ga
 	if err != nil {
 		return GameSnapshot{}, err
 	}
-	return game.Snapshot(), nil
+	return game.snapshot(), nil
 }
 
+// Resign resigns a game on behalf of a participant.
 func (s *GameService) Resign(ctx context.Context, command ResignCommand) (GameSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return GameSnapshot{}, err
@@ -196,7 +201,7 @@ func (s *GameService) Resign(ctx context.Context, command ResignCommand) (GameSn
 		return GameSnapshot{}, err
 	}
 
-	snapshot, err := game.Resign(command)
+	snapshot, err := game.resign(command)
 	if err != nil {
 		return GameSnapshot{}, err
 	}
@@ -205,6 +210,7 @@ func (s *GameService) Resign(ctx context.Context, command ResignCommand) (GameSn
 	return snapshot, nil
 }
 
+// OfferDraw makes a draw offer on behalf of a game participant.
 func (s *GameService) OfferDraw(ctx context.Context, command OfferDrawCommand) (GameSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return GameSnapshot{}, err
@@ -215,9 +221,10 @@ func (s *GameService) OfferDraw(ctx context.Context, command OfferDrawCommand) (
 		return GameSnapshot{}, err
 	}
 
-	return game.OfferDraw(command)
+	return game.offerDraw(command)
 }
 
+// AcceptDraw accepts a pending draw offer on behalf of a game participant.
 func (s *GameService) AcceptDraw(ctx context.Context, command DrawOfferResponseCommand) (GameSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return GameSnapshot{}, err
@@ -228,7 +235,7 @@ func (s *GameService) AcceptDraw(ctx context.Context, command DrawOfferResponseC
 		return GameSnapshot{}, err
 	}
 
-	snapshot, err := game.AcceptDraw(command)
+	snapshot, err := game.acceptDraw(command)
 	if err != nil {
 		return GameSnapshot{}, err
 	}
@@ -237,6 +244,7 @@ func (s *GameService) AcceptDraw(ctx context.Context, command DrawOfferResponseC
 	return snapshot, nil
 }
 
+// DeclineDraw declines a pending draw offer on behalf of a game participant.
 func (s *GameService) DeclineDraw(ctx context.Context, command DrawOfferResponseCommand) (GameSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return GameSnapshot{}, err
@@ -247,13 +255,13 @@ func (s *GameService) DeclineDraw(ctx context.Context, command DrawOfferResponse
 		return GameSnapshot{}, err
 	}
 
-	return game.DeclineDraw(command)
+	return game.declineDraw(command)
 }
 
 // Close stops every pending game expiration timer.
 func (s *GameService) Close() {
 	s.mu.RLock()
-	games := make([]*Game, 0, len(s.games))
+	games := make([]*game, 0, len(s.games))
 	for _, game := range s.games {
 		games = append(games, game)
 	}
@@ -264,7 +272,7 @@ func (s *GameService) Close() {
 	}
 }
 
-func (s *GameService) gameByID(id identity.GameID) (*Game, error) {
+func (s *GameService) gameByID(id identity.GameID) (*game, error) {
 	s.mu.RLock()
 	game, ok := s.games[id]
 	s.mu.RUnlock()
@@ -340,7 +348,7 @@ func (s *GameService) removeWaitingPlayerOnCancel(player *waitingPlayer) {
 
 // createMatchLocked creates and stores a game for two matched players.
 // The caller must hold s.mu.
-func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (MatchResult, MatchResult, *Game, error) {
+func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (MatchResult, MatchResult, *game, error) {
 	waitingColor := s.pickColor()
 	currentColor := waitingColor.Other()
 
@@ -355,7 +363,7 @@ func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (MatchR
 
 	gameID := identity.NewGameID()
 	timeControl := current.command.timeControl
-	game := NewGame(gameID, whiteProfileID, blackProfileID, timeControl.initial, timeControl.increment)
+	game := newGame(gameID, whiteProfileID, blackProfileID, timeControl.initial, timeControl.increment)
 	s.games[gameID] = game
 
 	return MatchResult{GameID: gameID, Color: waitingColor},

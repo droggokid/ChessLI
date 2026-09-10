@@ -21,6 +21,7 @@ const (
 )
 
 // Server accepts and manages WebSocket client connections.
+// Run must be called at most once.
 type Server struct {
 	httpServer *http.Server
 

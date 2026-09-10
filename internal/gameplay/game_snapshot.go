@@ -22,8 +22,9 @@ type GameSnapshot struct {
 	PendingDrawOffer *DrawOffer
 }
 
-// Snapshot returns a consistent copy of the game's current authoritative state.
-func (g *Game) Snapshot() GameSnapshot {
+// snapshot returns a consistent copy of the game's authoritative state.
+// It takes g.mu exclusively because observing an expired clock updates that state.
+func (g *game) snapshot() GameSnapshot {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -32,7 +33,7 @@ func (g *Game) Snapshot() GameSnapshot {
 	return g.snapshotLocked(now)
 }
 
-func (g *Game) snapshotLocked(now time.Time) GameSnapshot {
+func (g *game) snapshotLocked(now time.Time) GameSnapshot {
 	whiteRemaining, blackRemaining := g.clock.remaining(now, g.engine.Position().Turn())
 	var pendingDrawOffer *DrawOffer
 	if g.drawOffers.pending != nil {
@@ -41,11 +42,11 @@ func (g *Game) snapshotLocked(now time.Time) GameSnapshot {
 	}
 
 	return GameSnapshot{
-		GameID:           g.ID,
+		GameID:           g.id,
 		FEN:              g.engine.FEN(),
 		Version:          g.version,
-		WhiteProfileID:   g.WhiteProfileID,
-		BlackProfileID:   g.BlackProfileID,
+		WhiteProfileID:   g.whiteProfileID,
+		BlackProfileID:   g.blackProfileID,
 		WhiteRemaining:   whiteRemaining,
 		BlackRemaining:   blackRemaining,
 		LastMoveSAN:      g.lastMoveSAN,

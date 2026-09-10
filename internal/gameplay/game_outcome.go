@@ -47,12 +47,12 @@ func terminationReason(method chess.Method) TerminationReason {
 	}
 }
 
-func (g *Game) syncOutcomeFromEngineLocked() {
+func (g *game) syncOutcomeFromEngineLocked() {
 	g.outcome = g.engine.Outcome()
 	g.termination = terminationReason(g.engine.Method())
 }
 
-func (g *Game) expireLocked(now time.Time) bool {
+func (g *game) expireLocked(now time.Time) bool {
 	active := g.engine.Position().Turn()
 
 	loser, expired := g.clock.expire(now, active)
@@ -88,7 +88,7 @@ func (g *Game) expireLocked(now time.Time) bool {
 // hasMatingMaterialLocked reports the minimum FIDE requirement for a timeout
 // win: the player who still has time must have some piece capable of
 // participating in checkmate. A bare king can never give checkmate.
-func (g *Game) hasMatingMaterialLocked(color chess.Color) bool {
+func (g *game) hasMatingMaterialLocked(color chess.Color) bool {
 	for _, piece := range g.engine.Position().Board().SquareMap() {
 		if piece.Color() == color && piece.Type() != chess.King {
 			return true

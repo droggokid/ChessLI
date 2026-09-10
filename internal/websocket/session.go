@@ -34,6 +34,7 @@ type HandlerFunc func(
 ) error
 
 // Session exchanges JSON messages over a WebSocket connection.
+// Send is safe for concurrent use; Run may be called only once.
 type Session struct {
 	profileID identity.ProfileID
 	conn      *coderws.Conn
@@ -42,7 +43,7 @@ type Session struct {
 	outgoing chan protocol.ServerEnvelope
 }
 
-// NewSession creates a client for conn.
+// NewSession creates a Session for conn.
 func NewSession(conn *coderws.Conn) *Session {
 	return &Session{
 		profileID: identity.NewProfileID(),
@@ -52,6 +53,7 @@ func NewSession(conn *coderws.Conn) *Session {
 }
 
 // Run exchanges messages until the context is canceled or an I/O loop stops.
+// It may be called only once.
 func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 	if handleMessage == nil {
 		return errMessageHandlerRequired
@@ -115,6 +117,7 @@ func (c *Session) writeLoop(ctx context.Context) error {
 }
 
 // Send queues a message without allowing a slow client to block its caller.
+// It is safe for concurrent use.
 func (c *Session) Send(ctx context.Context, message protocol.ServerEnvelope) error {
 	if sessionRunState(c.runState.Load()) != sessionRunning {
 		return protocol.ErrSessionNotRunning

@@ -8,6 +8,7 @@ import (
 	"sync"
 )
 
+// GameSessions tracks sessions by game and is safe for concurrent use.
 type GameSessions struct {
 	mu sync.RWMutex
 

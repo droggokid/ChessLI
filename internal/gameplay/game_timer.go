@@ -7,7 +7,7 @@ import (
 )
 
 // scheduleExpiration replaces the real timer for the active turn.
-func (g *Game) scheduleExpiration(onExpired func(GameSnapshot)) {
+func (g *game) scheduleExpiration(onExpired func(GameSnapshot)) {
 	g.mu.Lock()
 
 	if g.expirationTimer != nil {
@@ -36,7 +36,7 @@ func (g *Game) scheduleExpiration(onExpired func(GameSnapshot)) {
 	g.mu.Unlock()
 }
 
-func (g *Game) expireFromTimer(expirationID, expectedVersion uint64, deadline time.Time, onExpired func(GameSnapshot)) {
+func (g *game) expireFromTimer(expirationID, expectedVersion uint64, deadline time.Time, onExpired func(GameSnapshot)) {
 	g.mu.Lock()
 
 	if g.expirationID != expirationID || g.version != expectedVersion || g.outcome != chess.NoOutcome {
@@ -67,7 +67,7 @@ func (g *Game) expireFromTimer(expirationID, expectedVersion uint64, deadline ti
 	}
 }
 
-func (g *Game) stopExpiration() {
+func (g *game) stopExpiration() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 

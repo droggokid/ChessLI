@@ -134,23 +134,23 @@ func TestGameServiceAutomaticallyExpiresPrivateGame(t *testing.T) {
 func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
 	tests := []struct {
 		name string
-		act  func(*GameService, *Game) error
+		act  func(*GameService, *game) error
 	}{
 		{
 			name: "resign",
-			act: func(service *GameService, game *Game) error {
-				_, err := service.Resign(context.Background(), NewResignCommand(game.ID, "white"))
+			act: func(service *GameService, game *game) error {
+				_, err := service.Resign(context.Background(), NewResignCommand(game.id, "white"))
 				return err
 			},
 		},
 		{
 			name: "accept draw",
-			act: func(service *GameService, game *Game) error {
-				state, err := service.OfferDraw(context.Background(), NewOfferDrawCommand(game.ID, "white"))
+			act: func(service *GameService, game *game) error {
+				state, err := service.OfferDraw(context.Background(), NewOfferDrawCommand(game.id, "white"))
 				if err != nil {
 					return err
 				}
-				_, err = service.AcceptDraw(context.Background(), NewDrawOfferResponseCommand(game.ID, "black", state.PendingDrawOffer.OfferID))
+				_, err = service.AcceptDraw(context.Background(), NewDrawOfferResponseCommand(game.id, "black", state.PendingDrawOffer.OfferID))
 				return err
 			},
 		},
@@ -160,7 +160,7 @@ func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			service := NewGameService()
 			game := newReadyGame()
-			service.games[game.ID] = game
+			service.games[game.id] = game
 			game.scheduleExpiration(nil)
 
 			if err := tt.act(service, game); err != nil {

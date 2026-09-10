@@ -22,7 +22,8 @@ type drawOfferState struct {
 	lastOfferedAt map[identity.ProfileID]time.Time
 }
 
-func (g *Game) OfferDraw(command OfferDrawCommand) (GameSnapshot, error) {
+// offerDraw makes a draw offer for a game participant.
+func (g *game) offerDraw(command OfferDrawCommand) (GameSnapshot, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -39,7 +40,7 @@ func (g *Game) OfferDraw(command OfferDrawCommand) (GameSnapshot, error) {
 
 	offer := DrawOffer{
 		OfferID:   identity.NewDrawOfferID(),
-		GameID:    g.ID,
+		GameID:    g.id,
 		OfferedBy: command.ProfileID,
 		CreatedAt: now,
 	}
@@ -49,7 +50,8 @@ func (g *Game) OfferDraw(command OfferDrawCommand) (GameSnapshot, error) {
 	return g.snapshotLocked(now), nil
 }
 
-func (g *Game) AcceptDraw(command DrawOfferResponseCommand) (GameSnapshot, error) {
+// acceptDraw accepts a pending draw offer.
+func (g *game) acceptDraw(command DrawOfferResponseCommand) (GameSnapshot, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -72,7 +74,8 @@ func (g *Game) AcceptDraw(command DrawOfferResponseCommand) (GameSnapshot, error
 	return g.snapshotLocked(now), nil
 }
 
-func (g *Game) DeclineDraw(command DrawOfferResponseCommand) (GameSnapshot, error) {
+// declineDraw declines a pending draw offer.
+func (g *game) declineDraw(command DrawOfferResponseCommand) (GameSnapshot, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -88,20 +91,20 @@ func (g *Game) DeclineDraw(command DrawOfferResponseCommand) (GameSnapshot, erro
 	return g.snapshotLocked(now), nil
 }
 
-func (g *Game) validateDrawParticipantLocked(profileID identity.ProfileID, now time.Time) error {
-	if err := g.validateReady(); err != nil {
+func (g *game) validateDrawParticipantLocked(profileID identity.ProfileID, now time.Time) error {
+	if err := g.validateReadyLocked(); err != nil {
 		return err
 	}
 	if g.expireLocked(now) || g.outcome != chess.NoOutcome {
 		return ErrGameFinished
 	}
-	if profileID != g.WhiteProfileID && profileID != g.BlackProfileID {
+	if profileID != g.whiteProfileID && profileID != g.blackProfileID {
 		return ErrNotParticipant
 	}
 	return nil
 }
 
-func (g *Game) validateDrawResponseLocked(command DrawOfferResponseCommand) error {
+func (g *game) validateDrawResponseLocked(command DrawOfferResponseCommand) error {
 	offer := g.drawOffers.pending
 	if offer == nil {
 		return ErrDrawOfferNotFound
@@ -115,6 +118,6 @@ func (g *Game) validateDrawResponseLocked(command DrawOfferResponseCommand) erro
 	return nil
 }
 
-func (g *Game) clearPendingDrawOfferLocked() {
+func (g *game) clearPendingDrawOfferLocked() {
 	g.drawOffers.pending = nil
 }
