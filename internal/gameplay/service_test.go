@@ -61,6 +61,13 @@ func TestGameServicePrivateGameLifecycle(t *testing.T) {
 		t.Fatalf("CreatePrivateGame() color = %v, want %v", created.Color, chess.White)
 	}
 
+	game, err := service.gameByID(created.GameID)
+	if err != nil {
+		t.Fatalf("gameByID() error = %v", err)
+	}
+	fixedNow := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	game.now = func() time.Time { return fixedNow }
+
 	joined, err := service.JoinPrivateGame(context.Background(), JoinPrivateCommand{
 		ProfileID: joiner,
 		GameID:    created.GameID,
@@ -84,6 +91,156 @@ func TestGameServicePrivateGameLifecycle(t *testing.T) {
 	}
 }
 
+func TestGameServiceAutomaticallyExpiresPrivateGame(t *testing.T) {
+	t.Parallel()
+
+	service := NewGameService()
+	t.Cleanup(service.Close)
+
+	expired := make(chan GameSnapshot, 1)
+	service.SetGameExpiredHandler(func(state GameSnapshot) {
+		expired <- state
+	})
+
+	created, err := service.CreatePrivateGame(context.Background(), CreatePrivateCommand{
+		ProfileID:       "white",
+		Initial:         20 * time.Millisecond,
+		ColorPreference: ColorWhite,
+	})
+	if err != nil {
+		t.Fatalf("CreatePrivateGame() error = %v", err)
+	}
+
+	if _, err = service.JoinPrivateGame(context.Background(), JoinPrivateCommand{
+		GameID:    created.GameID,
+		ProfileID: "black",
+	}); err != nil {
+		t.Fatalf("JoinPrivateGame() error = %v", err)
+	}
+
+	select {
+	case state := <-expired:
+		if state.Outcome != chess.BlackWon || state.Termination != TerminationTimeout {
+			t.Fatalf("expired state = (%v, %v), want (%v, %v)", state.Outcome, state.Termination, chess.BlackWon, TerminationTimeout)
+		}
+		if state.Version != 1 || state.WhiteRemaining != 0 {
+			t.Fatalf("expired state version/time = (%d, %v), want (1, 0)", state.Version, state.WhiteRemaining)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("game did not expire automatically")
+	}
+}
+
+func TestGameServiceNotifiesTimeoutDetectedByCommandsOrState(t *testing.T) {
+	tests := []struct {
+		name string
+		act  func(*GameService, identity.GameID) error
+	}{
+		{name: "move", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.MakeMove(context.Background(), NewMoveCommand(id, "white", "e2e4", MoveNotationUCI, 0))
+			return err
+		}},
+		{name: "resign", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.Resign(context.Background(), NewResignCommand(id, "white"))
+			return err
+		}},
+		{name: "offer draw", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.OfferDraw(context.Background(), NewOfferDrawCommand(id, "white"))
+			return err
+		}},
+		{name: "accept draw", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.AcceptDraw(context.Background(), NewDrawOfferResponseCommand(id, "black", "offer"))
+			return err
+		}},
+		{name: "decline draw", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.DeclineDraw(context.Background(), NewDrawOfferResponseCommand(id, "black", "offer"))
+			return err
+		}},
+		{name: "state", act: func(s *GameService, id identity.GameID) error {
+			_, err := s.GameState(context.Background(), id)
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewGameService()
+			game := newReadyGame()
+			now := time.Now()
+			game.now = func() time.Time { return now }
+			game.clock = newGameClock(time.Second, 0)
+			game.clock.start(now)
+			service.games[game.id] = game
+			now = now.Add(time.Second)
+
+			expired := make(chan GameSnapshot, 1)
+			service.SetGameExpiredHandler(func(state GameSnapshot) { expired <- state })
+			_ = tt.act(service, game.id)
+
+			select {
+			case state := <-expired:
+				if state.Termination != TerminationTimeout {
+					t.Fatalf("expiration termination = %v, want timeout", state.Termination)
+				}
+			default:
+				t.Fatal("timeout did not notify")
+			}
+			_ = tt.act(service, game.id)
+			select {
+			case state := <-expired:
+				t.Fatalf("duplicate timeout notification = %+v", state)
+			default:
+			}
+		})
+	}
+}
+
+func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
+	tests := []struct {
+		name string
+		act  func(*GameService, *game) error
+	}{
+		{
+			name: "resign",
+			act: func(service *GameService, game *game) error {
+				_, err := service.Resign(context.Background(), NewResignCommand(game.id, "white"))
+				return err
+			},
+		},
+		{
+			name: "accept draw",
+			act: func(service *GameService, game *game) error {
+				state, err := service.OfferDraw(context.Background(), NewOfferDrawCommand(game.id, "white"))
+				if err != nil {
+					return err
+				}
+				_, err = service.AcceptDraw(context.Background(), NewDrawOfferResponseCommand(game.id, "black", state.PendingDrawOffer.OfferID))
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewGameService()
+			game := newReadyGame()
+			service.games[game.id] = game
+			game.scheduleExpiration(nil)
+
+			if err := tt.act(service, game); err != nil {
+				t.Fatalf("terminal action error = %v", err)
+			}
+
+			game.mu.Lock()
+			timer := game.expirationTimer
+			game.mu.Unlock()
+			if timer != nil {
+				t.Fatal("terminal action left expiration timer running")
+			}
+		})
+	}
+}
+
 func TestGameServiceCreatePrivateGameRejectsInvalidCommands(t *testing.T) {
 	t.Parallel()
 
@@ -100,19 +257,19 @@ func TestGameServiceCreatePrivateGameRejectsInvalidCommands(t *testing.T) {
 				cancel()
 				return ctx
 			},
-			command: CreatePrivateCommand{Initial: time.Minute, ColorPreference: ColorWhite},
+			command: CreatePrivateCommand{ProfileID: "player", Initial: time.Minute, ColorPreference: ColorWhite},
 			wantErr: context.Canceled,
 		},
 		{
 			name:    "invalid time control",
 			ctx:     context.Background,
-			command: CreatePrivateCommand{Initial: 0, ColorPreference: ColorWhite},
+			command: CreatePrivateCommand{ProfileID: "player", Initial: 0, ColorPreference: ColorWhite},
 			wantErr: ErrInvalidTimeControl,
 		},
 		{
 			name:    "invalid color",
 			ctx:     context.Background,
-			command: CreatePrivateCommand{Initial: time.Minute, ColorPreference: ColorPreference(99)},
+			command: CreatePrivateCommand{ProfileID: "player", Initial: time.Minute, ColorPreference: ColorPreference(99)},
 			wantErr: ErrInvalidColorPreference,
 		},
 	}
@@ -129,6 +286,31 @@ func TestGameServiceCreatePrivateGameRejectsInvalidCommands(t *testing.T) {
 	}
 }
 
+func TestGameServiceRejectsEmptyProfileID(t *testing.T) {
+	t.Parallel()
+
+	service := NewGameService()
+	created, err := service.CreatePrivateGame(context.Background(), CreatePrivateCommand{
+		Initial: time.Minute, ColorPreference: ColorWhite,
+	})
+	if !errors.Is(err, ErrInvalidProfileID) {
+		t.Fatalf("CreatePrivateGame() error = %v, want %v", err, ErrInvalidProfileID)
+	}
+
+	created, err = service.CreatePrivateGame(context.Background(), CreatePrivateCommand{
+		ProfileID: "white", Initial: time.Minute, ColorPreference: ColorWhite,
+	})
+	if err != nil {
+		t.Fatalf("CreatePrivateGame() error = %v", err)
+	}
+	if _, err = service.JoinPrivateGame(context.Background(), JoinPrivateCommand{GameID: created.GameID}); !errors.Is(err, ErrInvalidProfileID) {
+		t.Fatalf("JoinPrivateGame() error = %v, want %v", err, ErrInvalidProfileID)
+	}
+	if _, err = service.EnterMatchmaking(context.Background(), NewEnterMatchmakingCommand("", time.Minute, 0)); !errors.Is(err, ErrInvalidProfileID) {
+		t.Fatalf("EnterMatchmaking() error = %v, want %v", err, ErrInvalidProfileID)
+	}
+}
+
 func TestGameServiceMatchmakingMatchesWithinPool(t *testing.T) {
 	t.Parallel()
 
@@ -137,13 +319,13 @@ func TestGameServiceMatchmakingMatchesWithinPool(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	first, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("first", 3*time.Minute, 2*time.Second))
+	first, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("first", 3*time.Minute, 2*time.Second))
 	if err != nil {
 		t.Fatalf("first EnterMatchmaking() error = %v", err)
 	}
 	assertNoMatch(t, first.Result)
 
-	second, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("second", 3*time.Minute, 2*time.Second))
+	second, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("second", 3*time.Minute, 2*time.Second))
 	if err != nil {
 		t.Fatalf("second EnterMatchmaking() error = %v", err)
 	}
@@ -158,6 +340,41 @@ func TestGameServiceMatchmakingMatchesWithinPool(t *testing.T) {
 	}
 }
 
+func TestGameServiceMatchmakingStopsCancellationCleanupAfterMatch(t *testing.T) {
+	t.Parallel()
+
+	service := NewGameService()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	first, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("first", time.Minute, 0))
+	if err != nil {
+		t.Fatalf("first EnterMatchmaking() error = %v", err)
+	}
+
+	key := timeControlKey{initial: time.Minute}
+	service.mu.RLock()
+	waiting := service.waitingPlayers[key]
+	service.mu.RUnlock()
+	if waiting == nil || waiting.stopCleanup == nil {
+		t.Fatal("queued player has no cancellation cleanup")
+	}
+
+	second, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("second", time.Minute, 0))
+	if err != nil {
+		t.Fatalf("second EnterMatchmaking() error = %v", err)
+	}
+	receiveMatch(t, first.Result)
+	receiveMatch(t, second.Result)
+
+	service.mu.RLock()
+	cleanup := waiting.stopCleanup
+	service.mu.RUnlock()
+	if cleanup != nil {
+		t.Fatal("matched player still has a cancellation cleanup")
+	}
+}
+
 func TestGameServiceMatchmakingKeepsPoolsSeparate(t *testing.T) {
 	t.Parallel()
 
@@ -165,22 +382,22 @@ func TestGameServiceMatchmakingKeepsPoolsSeparate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	bullet, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("bullet-1", time.Minute, 0))
+	bullet, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("bullet-1", time.Minute, 0))
 	if err != nil {
 		t.Fatalf("bullet EnterMatchmaking() error = %v", err)
 	}
-	rapid, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("rapid-1", 10*time.Minute, 0))
+	rapid, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("rapid-1", 10*time.Minute, 0))
 	if err != nil {
 		t.Fatalf("rapid EnterMatchmaking() error = %v", err)
 	}
 	assertNoMatch(t, bullet.Result)
 	assertNoMatch(t, rapid.Result)
 
-	bulletPeer, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("bullet-2", time.Minute, 0))
+	bulletPeer, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("bullet-2", time.Minute, 0))
 	if err != nil {
 		t.Fatalf("bullet peer EnterMatchmaking() error = %v", err)
 	}
-	rapidPeer, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("rapid-2", 10*time.Minute, 0))
+	rapidPeer, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("rapid-2", 10*time.Minute, 0))
 	if err != nil {
 		t.Fatalf("rapid peer EnterMatchmaking() error = %v", err)
 	}
@@ -208,11 +425,11 @@ func TestGameServiceMatchmakingRejectsDuplicateProfileAcrossPools(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("player", time.Minute, 0))
+	_, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("player", time.Minute, 0))
 	if err != nil {
 		t.Fatalf("first EnterMatchmaking() error = %v", err)
 	}
-	_, err = service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("player", 10*time.Minute, 0))
+	_, err = service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("player", 10*time.Minute, 0))
 	if !errors.Is(err, ErrAlreadyQueued) {
 		t.Fatalf("second EnterMatchmaking() error = %v, want %v", err, ErrAlreadyQueued)
 	}
@@ -223,7 +440,7 @@ func TestGameServiceMatchmakingRemovesCanceledPlayer(t *testing.T) {
 
 	service := NewGameService()
 	ctx, cancel := context.WithCancel(context.Background())
-	ticket, err := service.EnterMatchmaking(ctx, *NewEnterMatchmakingCommand("player", time.Minute, 0))
+	ticket, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("player", time.Minute, 0))
 	if err != nil {
 		t.Fatalf("EnterMatchmaking() error = %v", err)
 	}
@@ -252,10 +469,18 @@ func TestGameServiceMatchmakingRejectsInvalidTimeControl(t *testing.T) {
 
 	_, err := NewGameService().EnterMatchmaking(
 		context.Background(),
-		*NewEnterMatchmakingCommand("player", 0, 0),
+		NewEnterMatchmakingCommand("player", 0, 0),
 	)
 	if !errors.Is(err, ErrInvalidTimeControl) {
 		t.Fatalf("EnterMatchmaking() error = %v, want %v", err, ErrInvalidTimeControl)
+	}
+}
+
+func TestAssignMatchmakingColorsRejectsInvalidColor(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := assignMatchmakingColors("waiting", "current", chess.NoColor); !errors.Is(err, ErrInvalidColorPreference) {
+		t.Fatalf("assignMatchmakingColors() error = %v, want %v", err, ErrInvalidColorPreference)
 	}
 }
 

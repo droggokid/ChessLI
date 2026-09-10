@@ -23,19 +23,14 @@ type GameStatePayload struct {
 	White *PlayerState `json:"white,omitempty"`
 	Black *PlayerState `json:"black,omitempty"`
 
-	LastMove string       `json:"lastMove,omitempty"`
-	Outcome  *GameOutcome `json:"outcome,omitempty"`
+	LastMove         string            `json:"lastMove,omitempty"`
+	Outcome          *GameOutcome      `json:"outcome,omitempty"`
+	PendingDrawOffer *DrawOfferPayload `json:"pendingDrawOffer,omitempty"`
 }
 
-type DrawOfferedPayload struct {
-	OfferedBy Color `json:"offeredBy"`
-}
-
-type GameOverPayload struct {
-	GameID  identity.GameID `json:"gameId"`
-	FEN     string          `json:"fen"`
-	Version uint64          `json:"version"`
-	Outcome GameOutcome     `json:"outcome"`
+type DrawOfferPayload struct {
+	OfferID   identity.DrawOfferID `json:"offerId"`
+	OfferedBy Color                `json:"offeredBy"`
 }
 
 type ErrorPayload struct {

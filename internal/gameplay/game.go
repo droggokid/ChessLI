@@ -10,96 +10,124 @@ import (
 	"github.com/corentings/chess/v2"
 )
 
-type Game struct {
-	mu             sync.Mutex
-	ID             identity.GameID
-	version        uint64
-	WhiteProfileID identity.ProfileID
-	BlackProfileID identity.ProfileID
-	engine         *chess.Game
-	lastMoveSAN    string
-	whiteRemaining time.Duration
-	blackRemaining time.Duration
-	increment      time.Duration
+// game is safe for concurrent use through its methods.
+type game struct {
+	// mu guards all game state. Helpers ending in Locked require callers to hold it and do not lock it.
+	mu                 sync.Mutex
+	id                 identity.GameID
+	version            uint64
+	whiteProfileID     identity.ProfileID
+	blackProfileID     identity.ProfileID
+	engine             *chess.Game
+	lastMoveSAN        string
+	clock              gameClock
+	expirationTimer    *time.Timer
+	expirationID       uint64
+	expirationNotified bool
+	now                func() time.Time
+	outcome            chess.Outcome
+	termination        TerminationReason
+	drawOffers         drawOfferState
 }
 
-// NewGame returns a game with the standard starting position and the supplied
+// newGame returns a game with the standard starting position and the supplied
 // players and time control.
-func NewGame(id identity.GameID, white identity.ProfileID, black identity.ProfileID, initialTime time.Duration, increment time.Duration) *Game {
-	return &Game{
-		ID:             id,
+func newGame(id identity.GameID, white identity.ProfileID, black identity.ProfileID, initialTime time.Duration, increment time.Duration) *game {
+	g := &game{
+		id:             id,
 		version:        0,
-		WhiteProfileID: white,
-		BlackProfileID: black,
+		whiteProfileID: white,
+		blackProfileID: black,
 		engine:         chess.NewGame(),
-		whiteRemaining: initialTime,
-		blackRemaining: initialTime,
-		increment:      increment,
+		clock:          newGameClock(initialTime, increment),
+		now:            time.Now,
+		outcome:        chess.NoOutcome,
+		termination:    TerminationNone,
+		drawOffers: drawOfferState{
+			lastOfferedAt: make(map[identity.ProfileID]time.Time, 2),
+		},
 	}
+
+	if white != "" && black != "" {
+		g.clock.start(g.now())
+	}
+
+	return g
 }
 
-// Move decodes, validates, and applies a move for the profile whose turn it is.
-func (g *Game) Move(command MoveCommand) (MoveResult, error) {
+// move decodes, validates, and applies a move for the profile whose turn it is.
+func (g *game) move(command MoveCommand) (GameSnapshot, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if command.ExpectedVersion != g.version {
-		return MoveResult{}, ErrStaleGameVersion
+	now := g.now()
+
+	if g.expireLocked(now) {
+		return g.snapshotLocked(now), nil
 	}
 
-	if err := g.validateMove(command.ProfileID); err != nil {
-		return MoveResult{}, err
+	if command.ExpectedVersion != g.version {
+		return GameSnapshot{}, ErrStaleGameVersion
+	}
+
+	if err := g.validateMoveLocked(command.ProfileID); err != nil {
+		return GameSnapshot{}, err
 	}
 
 	position := g.engine.Position()
 
 	notation, err := engineNotation(command.Notation)
 	if err != nil {
-		return MoveResult{}, err
+		return GameSnapshot{}, err
 	}
 
 	move, err := notation.Decode(position, command.Move)
 	if err != nil {
-		return MoveResult{}, fmt.Errorf("%w: %v", ErrIllegalMove, err)
+		return GameSnapshot{}, fmt.Errorf("%w: %v", ErrIllegalMove, err)
 	}
 
 	san := chess.AlgebraicNotation{}.Encode(position, move)
+	mover := position.Turn()
 
 	if err = g.engine.Move(move, nil); err != nil {
-		return MoveResult{}, ErrIllegalMove
+		return GameSnapshot{}, ErrIllegalMove
+	}
+
+	g.clock.completeMove(now, mover)
+	g.syncOutcomeFromEngineLocked()
+
+	if g.outcome != chess.NoOutcome {
+		g.clock.stop(now, g.engine.Position().Turn())
 	}
 
 	g.version++
 	g.lastMoveSAN = san
+	g.clearPendingDrawOfferLocked()
 
-	return MoveResult{
-		GameID:  g.ID,
-		FEN:     g.engine.FEN(),
-		SAN:     san,
-		Outcome: g.engine.Outcome(),
-		Method:  g.engine.Method(),
-		Version: g.version,
-	}, nil
+	return g.snapshotLocked(now), nil
 }
 
-func (g *Game) validateMove(source identity.ProfileID) error {
-	if err := g.validateReady(); err != nil {
+func (g *game) validateMoveLocked(source identity.ProfileID) error {
+	if err := g.validateReadyLocked(); err != nil {
 		return err
 	}
 
-	if g.engine.Outcome() != chess.NoOutcome {
+	if g.outcome != chess.NoOutcome {
 		return ErrGameFinished
+	}
+	if source != g.whiteProfileID && source != g.blackProfileID {
+		return ErrNotParticipant
 	}
 
 	turn := g.engine.CurrentPosition().Turn()
 
 	switch turn {
 	case chess.White:
-		if source != g.WhiteProfileID {
+		if source != g.whiteProfileID {
 			return ErrNotYourTurn
 		}
 	case chess.Black:
-		if source != g.BlackProfileID {
+		if source != g.blackProfileID {
 			return ErrNotYourTurn
 		}
 	default:
@@ -109,42 +137,31 @@ func (g *Game) validateMove(source identity.ProfileID) error {
 	return nil
 }
 
-func (g *Game) validateReady() error {
-	if g.WhiteProfileID == "" || g.BlackProfileID == "" {
+func (g *game) validateReadyLocked() error {
+	if g.whiteProfileID == "" || g.blackProfileID == "" {
 		return ErrGameNotReady
 	}
 
 	return nil
 }
 
-func engineNotation(notation MoveNotation) (chess.Notation, error) {
-	switch notation {
-	case MoveNotationUCI:
-		return chess.UCINotation{}, nil
-	case MoveNotationSAN:
-		return chess.AlgebraicNotation{}, nil
-	case MoveNotationLAN:
-		return chess.LongAlgebraicNotation{}, nil
-	default:
-		return nil, ErrUnsupportedNotation
-	}
-}
-
-// JoinPrivate assigns a profile to the unoccupied color in a private game.
-func (g *Game) JoinPrivate(command JoinPrivateCommand) (chess.Color, error) {
+// joinPrivate assigns a profile to the unoccupied color in a private game.
+func (g *game) joinPrivate(command JoinPrivateCommand) (chess.Color, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	switch {
-	case g.WhiteProfileID == command.ProfileID || g.BlackProfileID == command.ProfileID:
+	case g.whiteProfileID == command.ProfileID || g.blackProfileID == command.ProfileID:
 		return chess.NoColor, ErrAlreadyParticipant
 
-	case g.WhiteProfileID == "":
-		g.WhiteProfileID = command.ProfileID
+	case g.whiteProfileID == "":
+		g.whiteProfileID = command.ProfileID
+		g.startClockIfReadyLocked()
 		return chess.White, nil
 
-	case g.BlackProfileID == "":
-		g.BlackProfileID = command.ProfileID
+	case g.blackProfileID == "":
+		g.blackProfileID = command.ProfileID
+		g.startClockIfReadyLocked()
 		return chess.Black, nil
 
 	default:
@@ -152,25 +169,35 @@ func (g *Game) JoinPrivate(command JoinPrivateCommand) (chess.Color, error) {
 	}
 }
 
-// Snapshot returns a consistent copy of the game's current authoritative state.
-func (g *Game) Snapshot() GameSnapshot {
+func (g *game) startClockIfReadyLocked() {
+	if g.whiteProfileID != "" && g.blackProfileID != "" {
+		g.clock.start(g.now())
+	}
+}
+
+// resign resigns a game participant.
+func (g *game) resign(command ResignCommand) (GameSnapshot, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	return g.snapshotLocked()
-}
-
-func (g *Game) snapshotLocked() GameSnapshot {
-	return GameSnapshot{
-		GameID:         g.ID,
-		FEN:            g.engine.FEN(),
-		Version:        g.version,
-		WhiteProfileID: g.WhiteProfileID,
-		BlackProfileID: g.BlackProfileID,
-		WhiteRemaining: g.whiteRemaining,
-		BlackRemaining: g.blackRemaining,
-		LastMoveSAN:    g.lastMoveSAN,
-		Outcome:        g.engine.Outcome(),
-		Method:         g.engine.Method(),
+	now := g.now()
+	if err := g.validateReadyLocked(); err != nil {
+		return GameSnapshot{}, err
 	}
+	if g.expireLocked(now) || g.outcome != chess.NoOutcome {
+		return GameSnapshot{}, ErrGameFinished
+	}
+
+	color, err := colorFromProfileID(command.ProfileID, g.whiteProfileID, g.blackProfileID)
+	if err != nil {
+		return GameSnapshot{}, err
+	}
+
+	g.engine.Resign(color)
+	g.syncOutcomeFromEngineLocked()
+	g.version++
+	g.clock.stop(now, g.engine.Position().Turn())
+	g.clearPendingDrawOfferLocked()
+
+	return g.snapshotLocked(now), nil
 }

@@ -13,14 +13,13 @@ const (
 	ErrorNotYourTurn      ErrorCode = "not_your_turn"
 	ErrorIllegalMove      ErrorCode = "illegal_move"
 	ErrorGameFinished     ErrorCode = "game_finished"
-	ErrorNotImplemented   ErrorCode = "not_implemented"
 	ErrorInternal         ErrorCode = "internal_error"
 	ErrorStaleGameVersion ErrorCode = "stale_game_version"
 )
 
 var (
-	ErrSessionClosed        = errors.New("session is closed")
 	ErrSessionNotRunning    = errors.New("session is not running")
 	ErrSessionAlreadyRun    = errors.New("session has already been run")
 	ErrSessionAlreadyInGame = errors.New("session is already registered with a game")
+	ErrSessionQueueFull     = errors.New("session outgoing queue is full")
 )

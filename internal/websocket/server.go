@@ -1,8 +1,6 @@
 package websocket
 
 import (
-	"ChessLI/internal/gameplay"
-	protocol2 "ChessLI/internal/websocket/protocol"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +8,9 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"ChessLI/internal/gameplay"
+	"ChessLI/internal/websocket/protocol"
 
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -20,6 +21,7 @@ const (
 )
 
 // Server accepts and manages WebSocket client connections.
+// Run must be called at most once.
 type Server struct {
 	httpServer *http.Server
 
@@ -120,7 +122,7 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(maxMessageSize)
 
-	if err = wsjson.Write(r.Context(), conn, protocol2.ServerEnvelope{Type: protocol2.ServerConnectionReady}); err != nil {
+	if err = wsjson.Write(r.Context(), conn, protocol.ServerEnvelope{Type: protocol.ServerConnectionReady}); err != nil {
 		slog.Error("send connection ack", "error", err)
 		_ = conn.CloseNow()
 		return
@@ -139,6 +141,18 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 			"error",
 			err,
 		)
+	}
+}
+
+// BroadcastGameState sends an unsolicited authoritative state to every session in the game.
+func (s *Server) BroadcastGameState(state gameplay.GameSnapshot) {
+	envelope := protocol.ServerEnvelope{
+		Type:    protocol.ServerGameState,
+		Payload: s.messageHandler.gameStatePayload(state),
+	}
+
+	if err := s.gameSessions.Broadcast(s.connectionCtx, state.GameID, nil, envelope); err != nil {
+		slog.Warn("broadcast automatic game state", "game_id", state.GameID, "error", err)
 	}
 }
 

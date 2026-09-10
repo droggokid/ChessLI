@@ -5,6 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	"ChessLI/internal/gameplay"
+	"ChessLI/internal/websocket/protocol"
+
 	coderws "github.com/coder/websocket"
 )
 
@@ -20,6 +23,33 @@ func TestNewServerWiresDependencies(t *testing.T) {
 	}
 	if server.messageHandler.gameSessions != server.gameSessions {
 		t.Fatal("handler and server do not share the same session registry")
+	}
+}
+
+func TestServerBroadcastGameState(t *testing.T) {
+	t.Parallel()
+
+	server := NewServer("127.0.0.1:0", nil)
+	client := newQueuedSession("white")
+
+	if err := server.gameSessions.Add("game", client); err != nil {
+		t.Fatalf("GameSessions.Add() error = %v", err)
+	}
+
+	server.BroadcastGameState(gameplay.GameSnapshot{
+		GameID:         "game",
+		FEN:            "fen",
+		Version:        1,
+		WhiteProfileID: "white",
+	})
+
+	message := receiveEnvelope(t, client)
+	payload, ok := message.Payload.(protocol.GameStatePayload)
+	if message.Type != protocol.ServerGameState || !ok {
+		t.Fatalf("broadcast envelope = %+v, want game.state", message)
+	}
+	if payload.GameID != "game" || payload.Version != 1 || payload.FEN != "fen" {
+		t.Fatalf("broadcast payload = %+v, want authoritative state", payload)
 	}
 }
 

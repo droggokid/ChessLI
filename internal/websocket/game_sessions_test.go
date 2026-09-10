@@ -39,6 +39,53 @@ func TestGameSessionsRegistrationLifecycle(t *testing.T) {
 	}
 }
 
+func TestGameSessionsReservationPreventsConflictingLifecycle(t *testing.T) {
+	t.Parallel()
+
+	registry := NewGameSessions()
+	session := newQueuedSession("player")
+	if err := registry.Queue(session); err != nil {
+		t.Fatalf("Queue() error = %v", err)
+	}
+	if err := registry.Reserve(session); !errors.Is(err, protocol.ErrSessionAlreadyInGame) {
+		t.Fatalf("Reserve() error = %v, want %v", err, protocol.ErrSessionAlreadyInGame)
+	}
+	if _, exists := registry.GameID(session); exists {
+		t.Fatal("GameID() reports queued session as in-game")
+	}
+	if err := registry.Add("game", session); err != nil {
+		t.Fatalf("Add() queued session error = %v", err)
+	}
+	if gameID, exists := registry.GameID(session); !exists || gameID != "game" {
+		t.Fatalf("GameID() = (%q, %v), want (game, true)", gameID, exists)
+	}
+}
+
+func TestGameSessionsIsConnected(t *testing.T) {
+	t.Parallel()
+
+	registry := NewGameSessions()
+	session := newQueuedSession("player")
+	if err := registry.Add("game", session); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if !registry.IsConnected("game", "player") {
+		t.Fatal("IsConnected() = false, want true for registered profile")
+	}
+	if registry.IsConnected("game", "other") {
+		t.Fatal("IsConnected() = true, want false for different profile")
+	}
+	if registry.IsConnected("other-game", "player") {
+		t.Fatal("IsConnected() = true, want false for different game")
+	}
+
+	registry.Remove(session)
+	if registry.IsConnected("game", "player") {
+		t.Fatal("IsConnected() = true after Remove, want false")
+	}
+}
+
 func TestGameSessionsBroadcastPreservesOnlySourceRequestID(t *testing.T) {
 	t.Parallel()
 
@@ -78,7 +125,7 @@ func TestGameSessionsBroadcastReturnsSourceFailure(t *testing.T) {
 	source := newQueuedSession("source")
 	peer := newQueuedSession("peer")
 	source.outgoing = make(chan protocol.ServerEnvelope)
-	close(source.done)
+	source.runState.Store(uint32(sessionStopped))
 	if err := registry.Add("game", source); err != nil {
 		t.Fatalf("Add(source) error = %v", err)
 	}
@@ -126,10 +173,40 @@ func TestSessionSend(t *testing.T) {
 
 		session := newQueuedSession("player")
 		session.outgoing = make(chan protocol.ServerEnvelope)
-		close(session.done)
+		session.runState.Store(uint32(sessionStopped))
 		err := session.Send(context.Background(), protocol.ServerEnvelope{})
 		if !errors.Is(err, protocol.ErrSessionNotRunning) {
 			t.Fatalf("Send() error = %v, want %v", err, protocol.ErrSessionNotRunning)
+		}
+	})
+
+	t.Run("rejects closed session with buffer space", func(t *testing.T) {
+		t.Parallel()
+
+		session := newQueuedSession("player")
+		session.runState.Store(uint32(sessionStopped))
+		err := session.Send(context.Background(), protocol.ServerEnvelope{})
+		if !errors.Is(err, protocol.ErrSessionNotRunning) {
+			t.Fatalf("Send() error = %v, want %v", err, protocol.ErrSessionNotRunning)
+		}
+		if len(session.outgoing) != 0 {
+			t.Fatalf("Send() queued %d messages after close, want 0", len(session.outgoing))
+		}
+	})
+
+	t.Run("rejects full outgoing queue", func(t *testing.T) {
+		t.Parallel()
+
+		session := newQueuedSession("player")
+		session.outgoing = make(chan protocol.ServerEnvelope, 1)
+		session.outgoing <- protocol.ServerEnvelope{Type: protocol.ServerConnectionReady}
+
+		err := session.Send(context.Background(), protocol.ServerEnvelope{})
+		if !errors.Is(err, protocol.ErrSessionQueueFull) {
+			t.Fatalf("Send() error = %v, want %v", err, protocol.ErrSessionQueueFull)
+		}
+		if len(session.outgoing) != 1 {
+			t.Fatalf("outgoing queue length = %d, want 1", len(session.outgoing))
 		}
 	})
 }
@@ -138,9 +215,8 @@ func newQueuedSession(profileID identity.ProfileID) *Session {
 	session := &Session{
 		profileID: profileID,
 		outgoing:  make(chan protocol.ServerEnvelope, 8),
-		done:      make(chan struct{}),
 	}
-	session.started.Store(true)
+	session.runState.Store(uint32(sessionRunning))
 	return session
 }
 

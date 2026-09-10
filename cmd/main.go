@@ -27,10 +27,14 @@ func main() {
 	games := gameplay.NewGameService()
 
 	server := websockettransport.NewServer(conf.ServerAddress, games)
+	games.SetGameExpiredHandler(server.BroadcastGameState)
 
 	slog.Info("starting websocket server", "address", conf.ServerAddress)
 
-	if err = server.Run(ctx); err != nil {
+	err = server.Run(ctx)
+	games.Close()
+
+	if err != nil {
 		slog.Error("websocket server stopped", "error", err)
 		os.Exit(1)
 	}
