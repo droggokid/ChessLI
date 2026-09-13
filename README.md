@@ -11,6 +11,9 @@ Start the server from the repository root:
 make run
 ```
 
+`GET /healthz` and `GET /readyz` return `200 OK`. `readyz` is currently a
+placeholder; add dependency checks only when the server gains dependencies.
+
 Open two more terminals and connect both players:
 
 ```sh

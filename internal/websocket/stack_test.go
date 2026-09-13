@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -15,6 +16,20 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
+
+func TestServerHealthEndpoints(t *testing.T) {
+	server := NewServer("", gameplay.NewGameService())
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want %d", path, response.Code, http.StatusOK)
+			}
+		})
+	}
+}
 
 func TestWebSocketStackMalformedJSONThenGameFlow(t *testing.T) {
 	server, url := startStackServer(t)

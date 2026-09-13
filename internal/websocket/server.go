@@ -55,6 +55,8 @@ func NewServer(address string, gameService gameplay.Service) *Server {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", handleHealth)
+	mux.HandleFunc("GET /readyz", handleHealth)
 	mux.HandleFunc("GET /ws", server.handleConnection)
 
 	server.httpServer = &http.Server{
@@ -66,6 +68,10 @@ func NewServer(address string, gameService gameplay.Service) *Server {
 	server.httpServer.RegisterOnShutdown(server.cancelConnections)
 
 	return server
+}
+
+func handleHealth(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }
 
 // Run serves WebSocket connections until the context is canceled or serving fails.
