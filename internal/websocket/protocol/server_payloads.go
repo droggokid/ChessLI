@@ -9,9 +9,8 @@ type GameCreatedPayload struct {
 	Color  Color           `json:"color"`
 }
 
-type GameJoinedPayload struct {
-	GameID identity.GameID `json:"gameId"`
-	Color  Color           `json:"color"`
+type ConnectionReadyPayload struct {
+	ProfileID identity.ProfileID `json:"profileId"`
 }
 
 type GameStatePayload struct {

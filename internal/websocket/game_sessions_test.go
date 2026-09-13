@@ -25,14 +25,15 @@ func TestGameSessionsRegistrationLifecycle(t *testing.T) {
 		t.Fatalf("conflicting Add() error = %v, want %v", err, protocol.ErrSessionAlreadyInGame)
 	}
 
-	gameID, exists := registry.GameID(session)
-	if !exists || gameID != "game-1" {
-		t.Fatalf("GameID() = (%q, %v), want (%q, true)", gameID, exists, "game-1")
+	if !registry.IsConnected("game-1", "player") {
+		t.Fatal("IsConnected() = false, want registered session")
 	}
 
-	registry.Remove(session)
-	if gameID, exists = registry.GameID(session); exists || gameID != "" {
-		t.Fatalf("GameID() after Remove = (%q, %v), want empty and false", gameID, exists)
+	if gameID := registry.Remove(session); gameID != "game-1" {
+		t.Fatalf("Remove() game ID = %q, want game-1", gameID)
+	}
+	if registry.IsConnected("game-1", "player") {
+		t.Fatal("IsConnected() = true after Remove")
 	}
 	if len(registry.byGame) != 0 {
 		t.Fatalf("byGame size after Remove = %d, want 0", len(registry.byGame))
@@ -44,20 +45,20 @@ func TestGameSessionsReservationPreventsConflictingLifecycle(t *testing.T) {
 
 	registry := NewGameSessions()
 	session := newQueuedSession("player")
-	if err := registry.Queue(session); err != nil {
-		t.Fatalf("Queue() error = %v", err)
+	if err := registry.Hold(session); err != nil {
+		t.Fatalf("Hold() error = %v", err)
 	}
-	if err := registry.Reserve(session); !errors.Is(err, protocol.ErrSessionAlreadyInGame) {
-		t.Fatalf("Reserve() error = %v, want %v", err, protocol.ErrSessionAlreadyInGame)
+	if err := registry.Hold(session); !errors.Is(err, protocol.ErrSessionAlreadyInGame) {
+		t.Fatalf("Hold() error = %v, want %v", err, protocol.ErrSessionAlreadyInGame)
 	}
-	if _, exists := registry.GameID(session); exists {
-		t.Fatal("GameID() reports queued session as in-game")
+	if registry.IsConnected("game", "player") {
+		t.Fatal("IsConnected() reports held session as in-game")
 	}
 	if err := registry.Add("game", session); err != nil {
 		t.Fatalf("Add() queued session error = %v", err)
 	}
-	if gameID, exists := registry.GameID(session); !exists || gameID != "game" {
-		t.Fatalf("GameID() = (%q, %v), want (game, true)", gameID, exists)
+	if !registry.IsConnected("game", "player") {
+		t.Fatal("IsConnected() = false after Add")
 	}
 }
 
@@ -83,6 +84,20 @@ func TestGameSessionsIsConnected(t *testing.T) {
 	registry.Remove(session)
 	if registry.IsConnected("game", "player") {
 		t.Fatal("IsConnected() = true after Remove, want false")
+	}
+}
+
+func TestGameSessionsRejectsDuplicateProfileInGame(t *testing.T) {
+	t.Parallel()
+
+	registry := NewGameSessions()
+	if err := registry.Add("game", newQueuedSession("player")); err != nil {
+		t.Fatalf("Add() first session error = %v", err)
+	}
+
+	err := registry.Add("game", newQueuedSession("player"))
+	if !errors.Is(err, protocol.ErrSessionAlreadyInGame) {
+		t.Fatalf("Add() duplicate profile error = %v, want %v", err, protocol.ErrSessionAlreadyInGame)
 	}
 }
 
@@ -213,8 +228,8 @@ func TestSessionSend(t *testing.T) {
 
 func newQueuedSession(profileID identity.ProfileID) *Session {
 	session := &Session{
-		profileID: profileID,
-		outgoing:  make(chan protocol.ServerEnvelope, 8),
+		profile:  identity.Profile{ID: profileID},
+		outgoing: make(chan protocol.ServerEnvelope, 8),
 	}
 	session.runState.Store(uint32(sessionRunning))
 	return session

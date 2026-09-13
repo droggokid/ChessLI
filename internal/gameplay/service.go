@@ -15,8 +15,9 @@ import (
 // Service is the application boundary offered to transports and other clients.
 // Implementations must support concurrent calls.
 type Service interface {
-	CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (CreateResult, error)
-	JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (JoinResult, error)
+	CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (GameAssignment, error)
+	JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (GameAssignment, error)
+	ResumeGame(context.Context, ResumeGameCommand) (GameSnapshot, error)
 	EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error)
 	MakeMove(ctx context.Context, command MoveCommand) (GameSnapshot, error)
 	GameState(ctx context.Context, gameID identity.GameID) (GameSnapshot, error)
@@ -68,20 +69,20 @@ func (s *GameService) notifyGameExpired(state GameSnapshot) {
 }
 
 // CreatePrivateGame creates a private game using the requested time control and color preference.
-func (s *GameService) CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (CreateResult, error) {
+func (s *GameService) CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (GameAssignment, error) {
 	if err := ctx.Err(); err != nil {
-		return CreateResult{}, err
+		return GameAssignment{}, err
 	}
 	if err := validateProfileID(command.ProfileID); err != nil {
-		return CreateResult{}, err
+		return GameAssignment{}, err
 	}
 	if err := validateTimeControl(command.Initial, command.Increment); err != nil {
-		return CreateResult{}, err
+		return GameAssignment{}, err
 	}
 
 	creatorColor, err := s.handleColorPreference(command.ColorPreference)
 	if err != nil {
-		return CreateResult{}, err
+		return GameAssignment{}, err
 	}
 
 	whiteProfileID, blackProfileID := assignPrivateColors(command.ProfileID, creatorColor)
@@ -92,30 +93,49 @@ func (s *GameService) CreatePrivateGame(ctx context.Context, command CreatePriva
 	s.games[gameID] = game
 	s.mu.Unlock()
 
-	return CreateResult{GameID: gameID, Color: creatorColor}, nil
+	return GameAssignment{GameID: gameID, Color: creatorColor}, nil
 }
 
 // JoinPrivateGame seats a profile in the open position of a private game.
-func (s *GameService) JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (JoinResult, error) {
+func (s *GameService) JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (GameAssignment, error) {
 	if err := ctx.Err(); err != nil {
-		return JoinResult{}, err
+		return GameAssignment{}, err
 	}
 	if err := validateProfileID(command.ProfileID); err != nil {
-		return JoinResult{}, err
+		return GameAssignment{}, err
 	}
 
 	game, err := s.gameByID(command.GameID)
 	if err != nil {
-		return JoinResult{}, err
+		return GameAssignment{}, err
 	}
 
 	color, err := game.joinPrivate(command)
 	if err != nil {
-		return JoinResult{}, err
+		return GameAssignment{}, err
 	}
 
 	game.scheduleExpiration(s.notifyGameExpired)
-	return JoinResult{GameID: game.id, Color: color}, nil
+	return GameAssignment{GameID: game.id, Color: color}, nil
+}
+
+// ResumeGame reconnects player to disconnected game
+func (s *GameService) ResumeGame(ctx context.Context, command ResumeGameCommand) (GameSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return GameSnapshot{}, err
+	}
+
+	if err := validateProfileID(command.ProfileID); err != nil {
+		return GameSnapshot{}, err
+	}
+
+	game, err := s.gameByID(command.GameID)
+	if err != nil {
+		return GameSnapshot{}, err
+	}
+	defer game.notifyExpiration(s.notifyGameExpired)
+
+	return game.resume(command.ProfileID)
 }
 
 // EnterMatchmaking queues a profile or matches it with a compatible opponent.
@@ -364,7 +384,7 @@ func (s *GameService) removeWaitingPlayerOnCancel(player *waitingPlayer) {
 
 // createMatchLocked creates and stores a game for two matched players.
 // The caller must hold s.mu.
-func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (MatchResult, MatchResult, *game, error) {
+func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (GameAssignment, GameAssignment, *game, error) {
 	waitingColor := s.pickColor()
 	currentColor := waitingColor.Other()
 
@@ -374,7 +394,7 @@ func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (MatchR
 		waitingColor,
 	)
 	if err != nil {
-		return MatchResult{}, MatchResult{}, nil, err
+		return GameAssignment{}, GameAssignment{}, nil, err
 	}
 
 	gameID := identity.NewGameID()
@@ -382,8 +402,8 @@ func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (MatchR
 	game := newGame(gameID, whiteProfileID, blackProfileID, timeControl.initial, timeControl.increment)
 	s.games[gameID] = game
 
-	return MatchResult{GameID: gameID, Color: waitingColor},
-		MatchResult{GameID: gameID, Color: currentColor},
+	return GameAssignment{GameID: gameID, Color: waitingColor},
+		GameAssignment{GameID: gameID, Color: currentColor},
 		game,
 		nil
 }

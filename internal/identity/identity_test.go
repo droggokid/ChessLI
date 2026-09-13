@@ -1,6 +1,10 @@
 package identity
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/google/uuid"
+)
 
 func TestNewIdentifiers(t *testing.T) {
 	t.Parallel()
@@ -30,4 +34,21 @@ func TestNewIdentifiers(t *testing.T) {
 			t.Fatalf("NewGameID() returned duplicate identifier %q", first)
 		}
 	})
+}
+
+func TestParseProfile(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.NewString()
+	profile, err := ParseProfile(id)
+	if err != nil {
+		t.Fatalf("ParseProfile() error = %v", err)
+	}
+	if profile.ID != ProfileID(id) {
+		t.Fatalf("ParseProfile() ID = %q, want %q", profile.ID, id)
+	}
+
+	if _, err := ParseProfile("not-a-uuid"); err == nil {
+		t.Fatal("ParseProfile() accepted an invalid profile ID")
+	}
 }

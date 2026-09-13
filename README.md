@@ -17,7 +17,9 @@ Open two more terminals and connect both players:
 websocat ws://localhost:8080/ws
 ```
 
-Each connection should receive a `connection.ready` message.
+Each connection receives a `connection.ready` `profileId`; reconnect with it as
+`?profileId=PROFILE_ID`, then send `game.resume`. It is placeholder identity,
+not authentication.
 
 In the first player terminal, create a game as White:
 
@@ -36,6 +38,9 @@ Both players should receive a `game.initial` message with version `0`.
 Each `white` and `black` player object contains `profileId`, `color`,
 `connected`, `remainingMilliseconds`, and the player's preferred `notation`.
 Notation is currently fixed to `uci` until player preferences are configurable.
+When a player disconnects or resumes, the opponent receives an unsolicited
+`game.state` with the corresponding `connected` value updated. The server also
+uses native WebSocket ping/pong to detect unresponsive connections.
 
 In the first player terminal, play `e2e4`:
 

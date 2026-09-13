@@ -12,6 +12,7 @@ const (
 	ClientOfferDraw        ClientMessageType = "draw.offer"
 	ClientAcceptDraw       ClientMessageType = "draw.accept"
 	ClientDeclineDraw      ClientMessageType = "draw.decline"
+	ClientResumeGame       ClientMessageType = "game.resume"
 )
 
 // ServerMessageType is the message from server to clients
@@ -24,6 +25,7 @@ const (
 	ServerMatchmakingEntered ServerMessageType = "matchmaking.entered"
 	ServerMatchFound         ServerMessageType = "matchmaking.found"
 	ServerGameInitial        ServerMessageType = "game.initial"
+	ServerGameResumed        ServerMessageType = "game.resumed"
 	ServerGameState          ServerMessageType = "game.state"
 	ServerError              ServerMessageType = "error"
 )

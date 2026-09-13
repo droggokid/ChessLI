@@ -42,6 +42,9 @@ func (h *Handler) Handle(ctx context.Context, client *Session, raw json.RawMessa
 	case protocol.ClientJoinGame:
 		return h.handleJoinGame(ctx, client, message)
 
+	case protocol.ClientResumeGame:
+		return h.handleResumeGame(ctx, client, message)
+
 	case protocol.ClientMakeMove:
 		return h.handleMakeMove(ctx, client, message)
 
@@ -55,10 +58,10 @@ func (h *Handler) Handle(ctx context.Context, client *Session, raw json.RawMessa
 		return h.handleOfferDraw(ctx, client, message)
 
 	case protocol.ClientAcceptDraw:
-		return h.handleAcceptDraw(ctx, client, message)
+		return h.handleDrawResponse(ctx, client, message, h.gameService.AcceptDraw)
 
 	case protocol.ClientDeclineDraw:
-		return h.handleDeclineDraw(ctx, client, message)
+		return h.handleDrawResponse(ctx, client, message, h.gameService.DeclineDraw)
 
 	default:
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorUnknownType, fmt.Sprintf("unknown message type %q", message.Type))
@@ -81,11 +84,11 @@ func (h *Handler) handleCreateGame(ctx context.Context, client *Session, message
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid time control preset")
 	}
 
-	if err = h.gameSessions.Reserve(client); err != nil {
+	if err = h.gameSessions.Hold(client); err != nil {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
 
-	command := gameplay.NewCreatePrivateCommand(client.profileID, initial, increment, colorPreference)
+	command := gameplay.CreatePrivateCommand{ProfileID: client.profile.ID, Initial: initial, Increment: increment, ColorPreference: colorPreference}
 
 	result, err := h.gameService.CreatePrivateGame(ctx, command)
 	if err != nil {
@@ -119,11 +122,11 @@ func (h *Handler) handleJoinGame(ctx context.Context, client *Session, message p
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "gameId is required")
 	}
 
-	if err = h.gameSessions.Reserve(client); err != nil {
+	if err = h.gameSessions.Hold(client); err != nil {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
 
-	command := gameplay.NewJoinPrivateCommand(client.profileID, request.GameID)
+	command := gameplay.JoinPrivateCommand{ProfileID: client.profile.ID, GameID: request.GameID}
 
 	result, err := h.gameService.JoinPrivateGame(ctx, command)
 	if err != nil {
@@ -138,7 +141,7 @@ func (h *Handler) handleJoinGame(ctx context.Context, client *Session, message p
 	envelope := protocol.ServerEnvelope{
 		Type:      protocol.ServerGameJoined,
 		RequestID: message.RequestID,
-		Payload: protocol.GameJoinedPayload{
+		Payload: protocol.GameCreatedPayload{
 			GameID: result.GameID,
 			Color:  color,
 		},
@@ -155,6 +158,62 @@ func (h *Handler) handleJoinGame(ctx context.Context, client *Session, message p
 	return h.gameSessions.Broadcast(ctx, result.GameID, client, h.initialState(state))
 }
 
+func (h *Handler) handleResumeGame(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
+	request, err := protocol.DecodePayload[protocol.ResumeGamePayload](message)
+	if err != nil || request.GameID == "" {
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid game.resume payload")
+	}
+
+	if err = h.gameSessions.Hold(client); err != nil {
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
+	}
+
+	state, err := h.gameService.ResumeGame(ctx, gameplay.ResumeGameCommand{
+		GameID:    request.GameID,
+		ProfileID: client.profile.ID,
+	})
+	if err != nil {
+		return h.releaseAndSendApplicationError(ctx, client, message.RequestID, err)
+	}
+
+	var color protocol.Color
+	switch client.profile.ID {
+	case state.WhiteProfileID:
+		color = protocol.ColorWhite
+	case state.BlackProfileID:
+		color = protocol.ColorBlack
+	default:
+		h.gameSessions.Release(client)
+		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInternal, "internal server error")
+	}
+
+	if err = h.gameSessions.Add(state.GameID, client); err != nil {
+		h.gameSessions.Release(client)
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
+	}
+
+	if err = client.Send(ctx, protocol.ServerEnvelope{
+		Type:      protocol.ServerGameResumed,
+		RequestID: message.RequestID,
+		Payload: protocol.GameCreatedPayload{
+			GameID: state.GameID,
+			Color:  color,
+		},
+	}); err != nil {
+		return err
+	}
+
+	if err = client.Send(ctx, h.initialState(state)); err != nil {
+		return err
+	}
+
+	h.gameSessions.BroadcastPeers(ctx, state.GameID, client, protocol.ServerEnvelope{
+		Type:    protocol.ServerGameState,
+		Payload: h.gameStatePayload(state),
+	})
+	return nil
+}
+
 func (h *Handler) handleMatchmaking(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
 	request, err := protocol.DecodePayload[protocol.EnterMatchmakingPayload](message)
 	if err != nil {
@@ -166,11 +225,11 @@ func (h *Handler) handleMatchmaking(ctx context.Context, client *Session, messag
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid time control preset")
 	}
 
-	if err = h.gameSessions.Queue(client); err != nil {
+	if err = h.gameSessions.Hold(client); err != nil {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
 
-	command := gameplay.NewEnterMatchmakingCommand(client.profileID, initial, increment)
+	command := gameplay.NewEnterMatchmakingCommand(client.profile.ID, initial, increment)
 
 	ticket, err := h.gameService.EnterMatchmaking(ctx, command)
 	if err != nil {
@@ -194,7 +253,7 @@ func (h *Handler) handleMatchmaking(ctx context.Context, client *Session, messag
 }
 
 func (h *Handler) awaitMatch(ctx context.Context, client *Session, requestID string, ticket gameplay.MatchTicket) {
-	var result gameplay.MatchResult
+	var result gameplay.GameAssignment
 
 	select {
 	case <-ctx.Done():
@@ -229,7 +288,7 @@ func (h *Handler) awaitMatch(ctx context.Context, client *Session, requestID str
 	envelope := protocol.ServerEnvelope{
 		Type:      protocol.ServerMatchFound,
 		RequestID: requestID,
-		Payload: protocol.MatchFoundPayload{
+		Payload: protocol.GameCreatedPayload{
 			GameID: result.GameID,
 			Color:  color,
 		},
@@ -276,7 +335,7 @@ func (h *Handler) handleMakeMove(ctx context.Context, client *Session, message p
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "unsupported move notation")
 	}
 
-	command := gameplay.NewMoveCommand(request.GameID, client.profileID, request.Move, moveNotation, *request.ExpectedVersion)
+	command := gameplay.MoveCommand{GameID: request.GameID, ProfileID: client.profile.ID, Move: request.Move, Notation: moveNotation, ExpectedVersion: *request.ExpectedVersion}
 
 	state, err := h.gameService.MakeMove(ctx, command)
 	if err != nil {
@@ -292,7 +351,7 @@ func (h *Handler) handleResign(ctx context.Context, client *Session, message pro
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid resign payload")
 	}
 
-	command := gameplay.NewResignCommand(request.GameID, client.profileID)
+	command := gameplay.ResignCommand{GameID: request.GameID, ProfileID: client.profile.ID}
 
 	state, err := h.gameService.Resign(ctx, command)
 	if err != nil {
@@ -308,20 +367,12 @@ func (h *Handler) handleOfferDraw(ctx context.Context, client *Session, message 
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid draw.offer payload")
 	}
 
-	state, err := h.gameService.OfferDraw(ctx, gameplay.NewOfferDrawCommand(request.GameID, client.profileID))
+	state, err := h.gameService.OfferDraw(ctx, gameplay.OfferDrawCommand{GameID: request.GameID, ProfileID: client.profile.ID})
 	if err != nil {
 		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
 
 	return h.broadcastGameState(ctx, client, message.RequestID, state)
-}
-
-func (h *Handler) handleAcceptDraw(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
-	return h.handleDrawResponse(ctx, client, message, h.gameService.AcceptDraw)
-}
-
-func (h *Handler) handleDeclineDraw(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
-	return h.handleDrawResponse(ctx, client, message, h.gameService.DeclineDraw)
 }
 
 func (h *Handler) handleDrawResponse(
@@ -336,7 +387,7 @@ func (h *Handler) handleDrawResponse(
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid draw response payload")
 	}
 
-	command := gameplay.NewDrawOfferResponseCommand(request.GameID, client.profileID, request.OfferID)
+	command := gameplay.DrawOfferResponseCommand{GameID: request.GameID, ProfileID: client.profile.ID, OfferID: request.OfferID}
 
 	state, err := respond(ctx, command)
 	if err != nil {

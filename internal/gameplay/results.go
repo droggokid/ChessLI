@@ -6,21 +6,11 @@ import (
 	"github.com/corentings/chess/v2"
 )
 
-type CreateResult struct {
-	GameID identity.GameID
-	Color  chess.Color
-}
-
-type JoinResult struct {
-	GameID identity.GameID
-	Color  chess.Color
-}
-
-type MatchResult struct {
+type GameAssignment struct {
 	GameID identity.GameID
 	Color  chess.Color
 }
 
 type MatchTicket struct {
-	Result <-chan MatchResult
+	Result <-chan GameAssignment
 }

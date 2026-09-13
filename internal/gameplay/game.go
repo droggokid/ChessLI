@@ -201,3 +201,17 @@ func (g *game) resign(command ResignCommand) (GameSnapshot, error) {
 
 	return g.snapshotLocked(now), nil
 }
+
+func (g *game) resume(profileID identity.ProfileID) (GameSnapshot, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	now := g.now()
+	g.expireLocked(now)
+
+	if _, err := colorFromProfileID(profileID, g.whiteProfileID, g.blackProfileID); err != nil {
+		return GameSnapshot{}, err
+	}
+
+	return g.snapshotLocked(now), nil
+}

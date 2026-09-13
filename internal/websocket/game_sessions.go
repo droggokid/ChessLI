@@ -13,42 +13,21 @@ type GameSessions struct {
 	mu sync.RWMutex
 
 	byGame    map[identity.GameID]map[*Session]struct{}
-	bySession map[*Session]sessionRegistration
+	bySession map[*Session]identity.GameID
 	changed   map[identity.GameID]chan struct{}
-}
-
-type sessionState uint8
-
-const (
-	sessionPending sessionState = iota
-	sessionInGame
-)
-
-type sessionRegistration struct {
-	state  sessionState
-	gameID identity.GameID
 }
 
 // NewGameSessions returns an empty registry of sessions grouped by game.
 func NewGameSessions() *GameSessions {
 	return &GameSessions{
 		byGame:    make(map[identity.GameID]map[*Session]struct{}),
-		bySession: make(map[*Session]sessionRegistration),
+		bySession: make(map[*Session]identity.GameID),
 		changed:   make(map[identity.GameID]chan struct{}),
 	}
 }
 
-// Reserve holds an idle session while a private game operation is committed.
-func (g *GameSessions) Reserve(session *Session) error {
-	return g.hold(session)
-}
-
-// Queue marks an idle session as waiting for matchmaking.
-func (g *GameSessions) Queue(session *Session) error {
-	return g.hold(session)
-}
-
-func (g *GameSessions) hold(session *Session) error {
+// Hold marks an idle session as unavailable while a game operation is in progress.
+func (g *GameSessions) Hold(session *Session) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -56,7 +35,7 @@ func (g *GameSessions) hold(session *Session) error {
 		return protocol.ErrSessionAlreadyInGame
 	}
 
-	g.bySession[session] = sessionRegistration{state: sessionPending}
+	g.bySession[session] = ""
 	return nil
 }
 
@@ -65,8 +44,8 @@ func (g *GameSessions) Release(session *Session) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	registration, exists := g.bySession[session]
-	if exists && registration.state != sessionInGame {
+	gameID, exists := g.bySession[session]
+	if exists && gameID == "" {
 		delete(g.bySession, session)
 	}
 }
@@ -75,11 +54,11 @@ func (g *GameSessions) Release(session *Session) {
 func (g *GameSessions) Add(gameID identity.GameID, session *Session) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if current, exists := g.bySession[session]; exists {
-		if current.state == sessionInGame && current.gameID == gameID {
+	if currentGameID, exists := g.bySession[session]; exists {
+		if currentGameID == gameID {
 			return nil
 		}
-		if current.state == sessionInGame {
+		if currentGameID != "" {
 			return protocol.ErrSessionAlreadyInGame
 		}
 	}
@@ -87,30 +66,34 @@ func (g *GameSessions) Add(gameID identity.GameID, session *Session) error {
 	if g.byGame[gameID] == nil {
 		g.byGame[gameID] = make(map[*Session]struct{})
 	}
+	for registered := range g.byGame[gameID] {
+		if registered != session && registered.profile.ID == session.profile.ID {
+			return protocol.ErrSessionAlreadyInGame
+		}
+	}
 
 	g.byGame[gameID][session] = struct{}{}
-	g.bySession[session] = sessionRegistration{state: sessionInGame, gameID: gameID}
+	g.bySession[session] = gameID
 	g.signalChangedLocked(gameID)
 
 	return nil
 }
 
-// Remove unregisters a session from its game.
-func (g *GameSessions) Remove(session *Session) {
+// Remove unregisters a session from its game and returns that game's ID.
+func (g *GameSessions) Remove(session *Session) identity.GameID {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	registration, exists := g.bySession[session]
+	gameID, exists := g.bySession[session]
 	if !exists {
-		return
+		return ""
 	}
 
 	delete(g.bySession, session)
-	if registration.state != sessionInGame {
-		return
+	if gameID == "" {
+		return ""
 	}
 
-	gameID := registration.gameID
 	sessions := g.byGame[gameID]
 	delete(sessions, session)
 	g.signalChangedLocked(gameID)
@@ -118,6 +101,8 @@ func (g *GameSessions) Remove(session *Session) {
 	if len(sessions) == 0 {
 		delete(g.byGame, gameID)
 	}
+
+	return gameID
 }
 
 // Broadcast sends a message to the source and the other sessions in a game.
@@ -156,17 +141,27 @@ func (g *GameSessions) Broadcast(ctx context.Context, gameID identity.GameID, so
 	return nil
 }
 
-// GameID returns the game currently associated with a session.
-func (g *GameSessions) GameID(session *Session) (identity.GameID, bool) {
+// BroadcastPeers sends a message to every game session except source.
+func (g *GameSessions) BroadcastPeers(ctx context.Context, gameID identity.GameID, source *Session, message protocol.ServerEnvelope) {
 	g.mu.RLock()
-	defer g.mu.RUnlock()
 
-	registration, exists := g.bySession[session]
-	if !exists || registration.state != sessionInGame {
-		return "", false
+	registered := g.byGame[gameID]
+	sessions := make([]*Session, 0, len(registered))
+	for session := range registered {
+		sessions = append(sessions, session)
 	}
 
-	return registration.gameID, true
+	g.mu.RUnlock()
+
+	for _, session := range sessions {
+		if session == source {
+			continue
+		}
+
+		if err := session.Send(ctx, message); err != nil {
+			slog.Warn("broadcast to game session", "game_id", gameID, "error", err)
+		}
+	}
 }
 
 // WaitForPlayers waits until count sessions have registered with a game.
@@ -209,7 +204,7 @@ func (g *GameSessions) IsConnected(
 	defer g.mu.RUnlock()
 
 	for session := range g.byGame[gameID] {
-		if session.profileID == profileID {
+		if session.profile.ID == profileID {
 			return true
 		}
 	}

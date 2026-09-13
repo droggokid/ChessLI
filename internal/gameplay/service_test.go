@@ -91,6 +91,35 @@ func TestGameServicePrivateGameLifecycle(t *testing.T) {
 	}
 }
 
+func TestGameServiceResumeGame(t *testing.T) {
+	t.Parallel()
+
+	service := NewGameService()
+	game := newReadyGame()
+	service.games[game.id] = game
+
+	for _, profileID := range []identity.ProfileID{"white", "black"} {
+		state, err := service.ResumeGame(context.Background(), ResumeGameCommand{
+			GameID:    game.id,
+			ProfileID: profileID,
+		})
+		if err != nil {
+			t.Fatalf("ResumeGame(%q) error = %v", profileID, err)
+		}
+		if state.GameID != game.id {
+			t.Fatalf("ResumeGame(%q) game ID = %q, want %q", profileID, state.GameID, game.id)
+		}
+	}
+
+	_, err := service.ResumeGame(context.Background(), ResumeGameCommand{
+		GameID:    game.id,
+		ProfileID: "spectator",
+	})
+	if !errors.Is(err, ErrNotParticipant) {
+		t.Fatalf("ResumeGame() spectator error = %v, want %v", err, ErrNotParticipant)
+	}
+}
+
 func TestGameServiceAutomaticallyExpiresPrivateGame(t *testing.T) {
 	t.Parallel()
 
@@ -137,23 +166,23 @@ func TestGameServiceNotifiesTimeoutDetectedByCommandsOrState(t *testing.T) {
 		act  func(*GameService, identity.GameID) error
 	}{
 		{name: "move", act: func(s *GameService, id identity.GameID) error {
-			_, err := s.MakeMove(context.Background(), NewMoveCommand(id, "white", "e2e4", MoveNotationUCI, 0))
+			_, err := s.MakeMove(context.Background(), MoveCommand{GameID: id, ProfileID: "white", Move: "e2e4", Notation: MoveNotationUCI})
 			return err
 		}},
 		{name: "resign", act: func(s *GameService, id identity.GameID) error {
-			_, err := s.Resign(context.Background(), NewResignCommand(id, "white"))
+			_, err := s.Resign(context.Background(), ResignCommand{GameID: id, ProfileID: "white"})
 			return err
 		}},
 		{name: "offer draw", act: func(s *GameService, id identity.GameID) error {
-			_, err := s.OfferDraw(context.Background(), NewOfferDrawCommand(id, "white"))
+			_, err := s.OfferDraw(context.Background(), OfferDrawCommand{GameID: id, ProfileID: "white"})
 			return err
 		}},
 		{name: "accept draw", act: func(s *GameService, id identity.GameID) error {
-			_, err := s.AcceptDraw(context.Background(), NewDrawOfferResponseCommand(id, "black", "offer"))
+			_, err := s.AcceptDraw(context.Background(), DrawOfferResponseCommand{GameID: id, ProfileID: "black", OfferID: "offer"})
 			return err
 		}},
 		{name: "decline draw", act: func(s *GameService, id identity.GameID) error {
-			_, err := s.DeclineDraw(context.Background(), NewDrawOfferResponseCommand(id, "black", "offer"))
+			_, err := s.DeclineDraw(context.Background(), DrawOfferResponseCommand{GameID: id, ProfileID: "black", OfferID: "offer"})
 			return err
 		}},
 		{name: "state", act: func(s *GameService, id identity.GameID) error {
@@ -203,18 +232,18 @@ func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
 		{
 			name: "resign",
 			act: func(service *GameService, game *game) error {
-				_, err := service.Resign(context.Background(), NewResignCommand(game.id, "white"))
+				_, err := service.Resign(context.Background(), ResignCommand{GameID: game.id, ProfileID: "white"})
 				return err
 			},
 		},
 		{
 			name: "accept draw",
 			act: func(service *GameService, game *game) error {
-				state, err := service.OfferDraw(context.Background(), NewOfferDrawCommand(game.id, "white"))
+				state, err := service.OfferDraw(context.Background(), OfferDrawCommand{GameID: game.id, ProfileID: "white"})
 				if err != nil {
 					return err
 				}
-				_, err = service.AcceptDraw(context.Background(), NewDrawOfferResponseCommand(game.id, "black", state.PendingDrawOffer.OfferID))
+				_, err = service.AcceptDraw(context.Background(), DrawOfferResponseCommand{GameID: game.id, ProfileID: "black", OfferID: state.PendingDrawOffer.OfferID})
 				return err
 			},
 		},
@@ -484,7 +513,7 @@ func TestAssignMatchmakingColorsRejectsInvalidColor(t *testing.T) {
 	}
 }
 
-func assertNoMatch(t *testing.T, result <-chan MatchResult) {
+func assertNoMatch(t *testing.T, result <-chan GameAssignment) {
 	t.Helper()
 
 	select {
@@ -494,7 +523,7 @@ func assertNoMatch(t *testing.T, result <-chan MatchResult) {
 	}
 }
 
-func receiveMatch(t *testing.T, result <-chan MatchResult) MatchResult {
+func receiveMatch(t *testing.T, result <-chan GameAssignment) GameAssignment {
 	t.Helper()
 
 	select {
@@ -505,6 +534,6 @@ func receiveMatch(t *testing.T, result <-chan MatchResult) MatchResult {
 		return match
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for match result")
-		return MatchResult{}
+		return GameAssignment{}
 	}
 }

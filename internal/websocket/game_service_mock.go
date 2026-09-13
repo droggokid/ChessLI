@@ -58,10 +58,10 @@ func (mr *MockGameServiceMockRecorder) AcceptDraw(arg0, arg1 any) *gomock.Call {
 }
 
 // CreatePrivateGame mocks base method.
-func (m *MockGameService) CreatePrivateGame(ctx context.Context, command gameplay.CreatePrivateCommand) (gameplay.CreateResult, error) {
+func (m *MockGameService) CreatePrivateGame(ctx context.Context, command gameplay.CreatePrivateCommand) (gameplay.GameAssignment, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreatePrivateGame", ctx, command)
-	ret0, _ := ret[0].(gameplay.CreateResult)
+	ret0, _ := ret[0].(gameplay.GameAssignment)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -118,10 +118,10 @@ func (mr *MockGameServiceMockRecorder) GameState(ctx, gameID any) *gomock.Call {
 }
 
 // JoinPrivateGame mocks base method.
-func (m *MockGameService) JoinPrivateGame(ctx context.Context, command gameplay.JoinPrivateCommand) (gameplay.JoinResult, error) {
+func (m *MockGameService) JoinPrivateGame(ctx context.Context, command gameplay.JoinPrivateCommand) (gameplay.GameAssignment, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "JoinPrivateGame", ctx, command)
-	ret0, _ := ret[0].(gameplay.JoinResult)
+	ret0, _ := ret[0].(gameplay.GameAssignment)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -175,4 +175,19 @@ func (m *MockGameService) Resign(arg0 context.Context, arg1 gameplay.ResignComma
 func (mr *MockGameServiceMockRecorder) Resign(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resign", reflect.TypeOf((*MockGameService)(nil).Resign), arg0, arg1)
+}
+
+// ResumeGame mocks base method.
+func (m *MockGameService) ResumeGame(arg0 context.Context, arg1 gameplay.ResumeGameCommand) (gameplay.GameSnapshot, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResumeGame", arg0, arg1)
+	ret0, _ := ret[0].(gameplay.GameSnapshot)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResumeGame indicates an expected call of ResumeGame.
+func (mr *MockGameServiceMockRecorder) ResumeGame(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResumeGame", reflect.TypeOf((*MockGameService)(nil).ResumeGame), arg0, arg1)
 }
