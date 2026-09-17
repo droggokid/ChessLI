@@ -398,11 +398,16 @@ func (h *Handler) handleDrawResponse(
 }
 
 func (h *Handler) broadcastGameState(ctx context.Context, client *Session, requestID string, state gameplay.GameSnapshot) error {
-	return h.gameSessions.Broadcast(ctx, state.GameID, client, protocol.ServerEnvelope{
+	err := h.gameSessions.Broadcast(ctx, state.GameID, client, protocol.ServerEnvelope{
 		Type:      protocol.ServerGameState,
 		RequestID: requestID,
 		Payload:   h.gameStatePayload(state),
 	})
+	if state.Outcome != chess.NoOutcome {
+		h.gameSessions.RemoveGame(state.GameID)
+	}
+
+	return err
 }
 
 func (h *Handler) completeGameAdmission(ctx context.Context, client *Session, requestID string, gameID identity.GameID, serviceColor chess.Color) (protocol.Color, error) {

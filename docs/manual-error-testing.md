@@ -16,10 +16,12 @@ websocat ws://localhost:8080/ws
 ```
 
 Each WebSocket connection receives a `connection.ready` payload containing a
-profile ID and may participate in only one game. Reuse that ID as the
+profile ID and may participate in only one active game. Reuse that ID as the
 `profileId` query parameter when reconnecting to resume as the same placeholder
-player. This is development-only identity, not authentication. Open a fresh
-connection or restart the server when a scenario requires a clean game.
+player. This is development-only identity, not authentication. Once a game's
+final state is queued for delivery, its live connections can start or join
+another game. Open a fresh connection or restart the server when a scenario
+requires a clean game.
 
 The expected-error examples below show the `payload` portion of the server's
 `error` envelope.

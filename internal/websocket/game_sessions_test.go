@@ -101,6 +101,27 @@ func TestGameSessionsRejectsDuplicateProfileInGame(t *testing.T) {
 	}
 }
 
+func TestGameSessionsRemoveGameReleasesAllSessions(t *testing.T) {
+	t.Parallel()
+
+	registry := NewGameSessions()
+	white := newQueuedSession("white")
+	black := newQueuedSession("black")
+	for _, session := range []*Session{white, black} {
+		if err := registry.Add("game", session); err != nil {
+			t.Fatalf("Add() error = %v", err)
+		}
+	}
+
+	registry.RemoveGame("game")
+
+	for _, session := range []*Session{white, black} {
+		if err := registry.Hold(session); err != nil {
+			t.Fatalf("Hold() after RemoveGame() error = %v", err)
+		}
+	}
+}
+
 func TestGameSessionsBroadcastPreservesOnlySourceRequestID(t *testing.T) {
 	t.Parallel()
 

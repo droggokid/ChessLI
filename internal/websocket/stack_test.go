@@ -153,6 +153,39 @@ func TestWebSocketStackBroadcastsDisconnectAndResumeState(t *testing.T) {
 	assertStackConnected(t, connected, true, true)
 }
 
+func TestWebSocketStackReusesSessionsAfterGameEnds(t *testing.T) {
+	server, endpoint := startStackServer(t)
+	defer shutdownStackServer(t, server)
+
+	white, black, gameID, _ := startStackGame(t, endpoint)
+	defer white.CloseNow()
+	defer black.CloseNow()
+
+	writeStackEnvelope(t, white, protocol.ClientEnvelope{
+		Type:      protocol.ClientResign,
+		RequestID: "resign",
+		Payload:   json.RawMessage(`{"gameId":"` + string(gameID) + `"}`),
+	})
+	readStackEnvelope(t, white, protocol.ServerGameState)
+	readStackEnvelope(t, black, protocol.ServerGameState)
+
+	writeStackEnvelope(t, white, protocol.ClientEnvelope{
+		Type:      protocol.ClientCreateGame,
+		RequestID: "create-again",
+		Payload:   json.RawMessage(`{"color":"white","timeControl":"1+0"}`),
+	})
+	created := readStackEnvelope(t, white, protocol.ServerGameCreated)
+	var createdPayload protocol.GameCreatedPayload
+	decodeStackPayload(t, created, &createdPayload)
+
+	writeStackEnvelope(t, black, protocol.ClientEnvelope{
+		Type:      protocol.ClientJoinGame,
+		RequestID: "join-again",
+		Payload:   json.RawMessage(`{"gameId":"` + string(createdPayload.GameID) + `"}`),
+	})
+	readStackEnvelope(t, black, protocol.ServerGameJoined)
+}
+
 func TestWebSocketStackHeartbeatRemovesUnresponsiveSession(t *testing.T) {
 	server, endpoint := startStackServerWithHeartbeat(t, 100*time.Millisecond, 100*time.Millisecond)
 	defer shutdownStackServer(t, server)

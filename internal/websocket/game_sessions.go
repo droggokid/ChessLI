@@ -105,6 +105,18 @@ func (g *GameSessions) Remove(session *Session) identity.GameID {
 	return gameID
 }
 
+// RemoveGame unregisters every session from gameID.
+func (g *GameSessions) RemoveGame(gameID identity.GameID) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	for session := range g.byGame[gameID] {
+		delete(g.bySession, session)
+	}
+	delete(g.byGame, gameID)
+	g.signalChangedLocked(gameID)
+}
+
 // Broadcast sends a message to the source and the other sessions in a game.
 // Source delivery is required; peer delivery is best effort without a request ID.
 func (g *GameSessions) Broadcast(ctx context.Context, gameID identity.GameID, source *Session, message protocol.ServerEnvelope) error {

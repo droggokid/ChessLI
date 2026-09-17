@@ -90,6 +90,8 @@ includes an `outcome` with the result and reason. The currently reachable
 reasons are `checkmate`, `stalemate`, `timeout`, `fivefold_repetition`,
 `seventy_five_move_rule`, `insufficient_material`, `resignation`, and
 `draw_agreement`. Threefold and fifty-move claims are not implemented yet.
+After the final state is queued for delivery, both live connections are free to
+create, join, or match into another game.
 
 Clocks are authoritative on the server. When the active player's time reaches
 zero, the server automatically increments the state version and broadcasts a
