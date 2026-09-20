@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
@@ -36,19 +37,24 @@ type HandlerFunc func(
 // Session exchanges JSON messages over a WebSocket connection.
 // Send is safe for concurrent use; Run may be called only once.
 type Session struct {
-	profileID identity.ProfileID
-	conn      *coderws.Conn
-	runState  atomic.Uint32
+	profile  identity.Profile
+	conn     *coderws.Conn
+	runState atomic.Uint32
 
 	outgoing chan protocol.ServerEnvelope
+
+	heartbeatInterval time.Duration
+	heartbeatTimeout  time.Duration
 }
 
-// NewSession creates a Session for conn.
-func NewSession(conn *coderws.Conn) *Session {
+// NewSession creates a Session for profile and conn.
+func NewSession(profile identity.Profile, conn *coderws.Conn) *Session {
 	return &Session{
-		profileID: identity.NewProfileID(),
-		conn:      conn,
-		outgoing:  make(chan protocol.ServerEnvelope, outgoingBufferSize),
+		profile:           profile,
+		conn:              conn,
+		outgoing:          make(chan protocol.ServerEnvelope, outgoingBufferSize),
+		heartbeatInterval: heartbeatInterval,
+		heartbeatTimeout:  heartbeatTimeout,
 	}
 }
 
@@ -65,7 +71,7 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 
 	go func() {
 		errCh <- c.readLoop(ctx, handleMessage)
@@ -75,14 +81,38 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 		errCh <- c.writeLoop(ctx)
 	}()
 
+	go func() {
+		errCh <- c.heartbeatLoop(ctx)
+	}()
+
 	firstError := <-errCh
 	c.runState.Store(uint32(sessionStopped))
 	cancel()
 
 	_ = c.conn.CloseNow()
 	<-errCh
+	<-errCh
 
 	return firstError
+}
+
+func (c *Session) heartbeatLoop(ctx context.Context) error {
+	ticker := time.NewTicker(c.heartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, c.heartbeatTimeout)
+			err := c.conn.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				return fmt.Errorf("ping websocket: %w", err)
+			}
+		}
+	}
 }
 
 func (c *Session) readLoop(ctx context.Context, handleMessage HandlerFunc) error {

@@ -6,14 +6,15 @@ import (
 	"errors"
 	"testing"
 
+	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
 )
 
 func TestNewSessionInitializesSession(t *testing.T) {
 	t.Parallel()
 
-	session := NewSession(nil)
-	if session.profileID == "" {
+	session := NewSession(identity.NewProfile(), nil)
+	if session.profile.ID == "" {
 		t.Fatal("NewSession() returned an empty profile ID")
 	}
 	if session.outgoing == nil || cap(session.outgoing) != outgoingBufferSize {
@@ -27,7 +28,7 @@ func TestNewSessionInitializesSession(t *testing.T) {
 func TestSessionRunRejectsMissingHandler(t *testing.T) {
 	t.Parallel()
 
-	err := NewSession(nil).Run(context.Background(), nil)
+	err := NewSession(identity.NewProfile(), nil).Run(context.Background(), nil)
 	if !errors.Is(err, errMessageHandlerRequired) {
 		t.Fatalf("Run() error = %v, want %v", err, errMessageHandlerRequired)
 	}
@@ -37,7 +38,7 @@ func TestSessionRunRejectsReusedSession(t *testing.T) {
 	t.Parallel()
 
 	for _, state := range []sessionRunState{sessionRunning, sessionStopped} {
-		session := NewSession(nil)
+		session := NewSession(identity.NewProfile(), nil)
 		session.runState.Store(uint32(state))
 
 		err := session.Run(context.Background(), func(context.Context, *Session, json.RawMessage) error {

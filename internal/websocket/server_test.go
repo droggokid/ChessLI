@@ -9,6 +9,7 @@ import (
 	"ChessLI/internal/websocket/protocol"
 
 	coderws "github.com/coder/websocket"
+	"github.com/corentings/chess/v2"
 )
 
 func TestNewServerWiresDependencies(t *testing.T) {
@@ -50,6 +51,30 @@ func TestServerBroadcastGameState(t *testing.T) {
 	}
 	if payload.GameID != "game" || payload.Version != 1 || payload.FEN != "fen" {
 		t.Fatalf("broadcast payload = %+v, want authoritative state", payload)
+	}
+}
+
+func TestServerBroadcastTerminalStateReleasesSessions(t *testing.T) {
+	t.Parallel()
+
+	server := NewServer("127.0.0.1:0", nil)
+	white := newQueuedSession("white")
+	black := newQueuedSession("black")
+	for _, client := range []*Session{white, black} {
+		if err := server.gameSessions.Add("game", client); err != nil {
+			t.Fatalf("GameSessions.Add() error = %v", err)
+		}
+	}
+
+	server.BroadcastGameState(gameplay.GameSnapshot{
+		GameID:  "game",
+		Outcome: chess.WhiteWon,
+	})
+
+	for _, client := range []*Session{white, black} {
+		if err := server.gameSessions.Hold(client); err != nil {
+			t.Fatalf("Hold() after terminal broadcast error = %v", err)
+		}
 	}
 }
 

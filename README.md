@@ -11,13 +11,18 @@ Start the server from the repository root:
 make run
 ```
 
+`GET /healthz` and `GET /readyz` return `200 OK`. `readyz` is currently a
+placeholder; add dependency checks only when the server gains dependencies.
+
 Open two more terminals and connect both players:
 
 ```sh
 websocat ws://localhost:8080/ws
 ```
 
-Each connection should receive a `connection.ready` message.
+Each connection receives a `connection.ready` `profileId`; reconnect with it as
+`?profileId=PROFILE_ID`, then send `game.resume`. It is placeholder identity,
+not authentication.
 
 In the first player terminal, create a game as White:
 
@@ -36,6 +41,9 @@ Both players should receive a `game.initial` message with version `0`.
 Each `white` and `black` player object contains `profileId`, `color`,
 `connected`, `remainingMilliseconds`, and the player's preferred `notation`.
 Notation is currently fixed to `uci` until player preferences are configurable.
+When a player disconnects or resumes, the opponent receives an unsolicited
+`game.state` with the corresponding `connected` value updated. The server also
+uses native WebSocket ping/pong to detect unresponsive connections.
 
 In the first player terminal, play `e2e4`:
 
@@ -82,6 +90,8 @@ includes an `outcome` with the result and reason. The currently reachable
 reasons are `checkmate`, `stalemate`, `timeout`, `fivefold_repetition`,
 `seventy_five_move_rule`, `insufficient_material`, `resignation`, and
 `draw_agreement`. Threefold and fifty-move claims are not implemented yet.
+After the final state is queued for delivery, both live connections are free to
+create, join, or match into another game.
 
 Clocks are authoritative on the server. When the active player's time reaches
 zero, the server automatically increments the state version and broadcasts a

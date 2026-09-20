@@ -13,13 +13,12 @@ type JoinGamePayload struct {
 	GameID identity.GameID `json:"gameId"`
 }
 
-type EnterMatchmakingPayload struct {
-	TimeControl TimeControlPreset `json:"timeControl"`
+type ResumeGamePayload struct {
+	GameID identity.GameID `json:"gameId"`
 }
 
-type MatchFoundPayload struct {
-	GameID identity.GameID `json:"gameId"`
-	Color  Color           `json:"color"`
+type EnterMatchmakingPayload struct {
+	TimeControl TimeControlPreset `json:"timeControl"`
 }
 
 type MoveNotation string

@@ -37,8 +37,7 @@ func (g *game) snapshotLocked(now time.Time) GameSnapshot {
 	whiteRemaining, blackRemaining := g.clock.remaining(now, g.engine.Position().Turn())
 	var pendingDrawOffer *DrawOffer
 	if g.drawOffers.pending != nil {
-		offer := *g.drawOffers.pending
-		pendingDrawOffer = &offer
+		pendingDrawOffer = new(*g.drawOffers.pending)
 	}
 
 	return GameSnapshot{

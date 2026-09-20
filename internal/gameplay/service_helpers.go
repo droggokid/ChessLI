@@ -11,7 +11,7 @@ import (
 
 type waitingPlayer struct {
 	command     EnterMatchmakingCommand
-	result      chan MatchResult
+	result      chan GameAssignment
 	done        <-chan struct{}
 	stopCleanup func() bool
 }
@@ -25,7 +25,7 @@ type timeControlKey struct {
 func newWaitingPlayer(ctx context.Context, command EnterMatchmakingCommand) *waitingPlayer {
 	return &waitingPlayer{
 		command: command,
-		result:  make(chan MatchResult, 1),
+		result:  make(chan GameAssignment, 1),
 		done:    ctx.Done(),
 	}
 }
@@ -95,7 +95,7 @@ func stopWaitingPlayerCleanup(player *waitingPlayer) {
 	player.stopCleanup = nil
 }
 
-func deliverMatchResult(resultChannel chan MatchResult, result MatchResult) {
+func deliverMatchResult(resultChannel chan GameAssignment, result GameAssignment) {
 	resultChannel <- result
 	close(resultChannel)
 }

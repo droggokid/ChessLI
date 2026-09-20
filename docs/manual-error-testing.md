@@ -15,8 +15,12 @@ Open a terminal for each required client:
 websocat ws://localhost:8080/ws
 ```
 
-Each WebSocket connection receives its own profile ID and may participate in
-only one game. Open a fresh connection or restart the server when a scenario
+Each WebSocket connection receives a `connection.ready` payload containing a
+profile ID and may participate in only one active game. Reuse that ID as the
+`profileId` query parameter when reconnecting to resume as the same placeholder
+player. This is development-only identity, not authentication. Once a game's
+final state is queued for delivery, its live connections can start or join
+another game. Open a fresh connection or restart the server when a scenario
 requires a clean game.
 
 The expected-error examples below show the `payload` portion of the server's
@@ -41,6 +45,9 @@ When a scenario requires an active game, join from client B:
 The resulting `game.initial` and subsequent `game.state` messages contain
 `white` and `black` objects with `profileId`, `color`, `connected`,
 `remainingMilliseconds`, and `notation`. Notation is currently always `uci`.
+When a player disconnects or resumes, the other player receives an unsolicited
+`game.state` reflecting the changed `connected` value. Native WebSocket
+ping/pong also closes unresponsive connections through that same flow.
 
 ## Reachable gameplay errors
 
@@ -287,6 +294,18 @@ Expected error:
 
 ```json
 {"code":"invalid_message","message":"gameId is required"}
+```
+
+### Invalid resume payload
+
+```json
+{"type":"game.resume","requestId":"error-resume","payload":{}}
+```
+
+Expected error:
+
+```json
+{"code":"invalid_message","message":"invalid game.resume payload"}
 ```
 
 ### Missing move

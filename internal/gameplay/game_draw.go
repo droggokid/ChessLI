@@ -12,9 +12,7 @@ const drawOfferCooldown = 2 * time.Minute
 
 type DrawOffer struct {
 	OfferID   identity.DrawOfferID
-	GameID    identity.GameID
 	OfferedBy identity.ProfileID
-	CreatedAt time.Time
 }
 
 type drawOfferState struct {
@@ -40,9 +38,7 @@ func (g *game) offerDraw(command OfferDrawCommand) (GameSnapshot, error) {
 
 	offer := DrawOffer{
 		OfferID:   identity.NewDrawOfferID(),
-		GameID:    g.id,
 		OfferedBy: command.ProfileID,
-		CreatedAt: now,
 	}
 	g.drawOffers.pending = &offer
 	g.drawOffers.lastOfferedAt[command.ProfileID] = now

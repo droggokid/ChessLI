@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"ChessLI/internal/identity"
 	"context"
 	"errors"
 	"fmt"
@@ -14,10 +15,13 @@ import (
 
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/corentings/chess/v2"
 )
 
 const (
-	maxMessageSize = 64 * 1024
+	maxMessageSize    = 64 * 1024
+	heartbeatInterval = 30 * time.Second
+	heartbeatTimeout  = 10 * time.Second
 )
 
 // Server accepts and manages WebSocket client connections.
@@ -31,6 +35,9 @@ type Server struct {
 	connectionCtx     context.Context
 	cancelConnections context.CancelFunc
 	connections       sync.WaitGroup
+
+	heartbeatInterval time.Duration
+	heartbeatTimeout  time.Duration
 }
 
 // NewServer creates a WebSocket server configured to listen on address.
@@ -44,9 +51,13 @@ func NewServer(address string, gameService gameplay.Service) *Server {
 		messageHandler:    NewHandler(gameService, sessions),
 		gameSessions:      sessions,
 		cancelConnections: cancelConnections,
+		heartbeatInterval: heartbeatInterval,
+		heartbeatTimeout:  heartbeatTimeout,
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", handleHealth)
+	mux.HandleFunc("GET /readyz", handleHealth)
 	mux.HandleFunc("GET /ws", server.handleConnection)
 
 	server.httpServer = &http.Server{
@@ -58,6 +69,10 @@ func NewServer(address string, gameService gameplay.Service) *Server {
 	server.httpServer.RegisterOnShutdown(server.cancelConnections)
 
 	return server
+}
+
+func handleHealth(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }
 
 // Run serves WebSocket connections until the context is canceled or serving fails.
@@ -115,6 +130,16 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 	s.connections.Add(1)
 	defer s.connections.Done()
 
+	profile := identity.NewProfile()
+	if rawProfileID := r.URL.Query().Get("profileId"); rawProfileID != "" {
+		var err error
+		profile, err = identity.ParseProfile(rawProfileID)
+		if err != nil {
+			http.Error(w, "invalid profile ID", http.StatusBadRequest)
+			return
+		}
+	}
+
 	conn, err := coderws.Accept(w, r, nil)
 	if err != nil {
 		slog.Error("accept websocket connection", "error", err)
@@ -122,14 +147,21 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(maxMessageSize)
 
-	if err = wsjson.Write(r.Context(), conn, protocol.ServerEnvelope{Type: protocol.ServerConnectionReady}); err != nil {
+	if err = wsjson.Write(r.Context(), conn, protocol.ServerEnvelope{
+		Type: protocol.ServerConnectionReady,
+		Payload: protocol.ConnectionReadyPayload{
+			ProfileID: profile.ID,
+		},
+	}); err != nil {
 		slog.Error("send connection ack", "error", err)
 		_ = conn.CloseNow()
 		return
 	}
 
-	client := NewSession(conn)
-	defer s.gameSessions.Remove(client)
+	client := NewSession(profile, conn)
+	client.heartbeatInterval = s.heartbeatInterval
+	client.heartbeatTimeout = s.heartbeatTimeout
+	defer s.removeSession(client)
 
 	if err = client.Run(s.connectionCtx, s.messageHandler.Handle); err != nil {
 		if isExpectedClose(err) {
@@ -144,6 +176,20 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) removeSession(client *Session) {
+	gameID := s.gameSessions.Remove(client)
+	if gameID == "" {
+		return
+	}
+
+	state, err := s.messageHandler.gameService.GameState(s.connectionCtx, gameID)
+	if err != nil {
+		slog.Warn("fetch disconnected game state", "game_id", gameID, "error", err)
+		return
+	}
+	s.BroadcastGameState(state)
+}
+
 // BroadcastGameState sends an unsolicited authoritative state to every session in the game.
 func (s *Server) BroadcastGameState(state gameplay.GameSnapshot) {
 	envelope := protocol.ServerEnvelope{
@@ -153,6 +199,9 @@ func (s *Server) BroadcastGameState(state gameplay.GameSnapshot) {
 
 	if err := s.gameSessions.Broadcast(s.connectionCtx, state.GameID, nil, envelope); err != nil {
 		slog.Warn("broadcast automatic game state", "game_id", state.GameID, "error", err)
+	}
+	if state.Outcome != chess.NoOutcome {
+		s.gameSessions.RemoveGame(state.GameID)
 	}
 }
 

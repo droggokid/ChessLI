@@ -5,15 +5,31 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"ChessLI/internal/gameplay"
+	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
 
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
+
+func TestServerHealthEndpoints(t *testing.T) {
+	server := NewServer("", gameplay.NewGameService())
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want %d", path, response.Code, http.StatusOK)
+			}
+		})
+	}
+}
 
 func TestWebSocketStackMalformedJSONThenGameFlow(t *testing.T) {
 	server, url := startStackServer(t)
@@ -21,7 +37,12 @@ func TestWebSocketStackMalformedJSONThenGameFlow(t *testing.T) {
 
 	white := dialStackClient(t, url)
 	defer white.CloseNow()
-	readStackEnvelope(t, white, protocol.ServerConnectionReady)
+	ready := readStackEnvelope(t, white, protocol.ServerConnectionReady)
+	var readyPayload protocol.ConnectionReadyPayload
+	decodeStackPayload(t, ready, &readyPayload)
+	if readyPayload.ProfileID == "" {
+		t.Fatal("connection.ready returned an empty profile ID")
+	}
 
 	if err := white.Write(context.Background(), coderws.MessageText, []byte(`{"type":`)); err != nil {
 		t.Fatalf("Write(malformed JSON) error = %v", err)
@@ -85,9 +106,108 @@ func TestWebSocketStackShutdownClosesConnection(t *testing.T) {
 	}
 }
 
+func TestWebSocketStackReusesProfileFromQuery(t *testing.T) {
+	server, endpoint := startStackServer(t)
+	defer shutdownStackServer(t, server)
+
+	first := dialStackClient(t, endpoint)
+	defer first.CloseNow()
+	ready := readStackEnvelope(t, first, protocol.ServerConnectionReady)
+	var firstPayload protocol.ConnectionReadyPayload
+	decodeStackPayload(t, ready, &firstPayload)
+
+	second := dialStackClient(t, endpoint+"?profileId="+string(firstPayload.ProfileID))
+	defer second.CloseNow()
+	ready = readStackEnvelope(t, second, protocol.ServerConnectionReady)
+	var secondPayload protocol.ConnectionReadyPayload
+	decodeStackPayload(t, ready, &secondPayload)
+	if secondPayload.ProfileID != firstPayload.ProfileID {
+		t.Fatalf("reconnected profile ID = %q, want %q", secondPayload.ProfileID, firstPayload.ProfileID)
+	}
+}
+
+func TestWebSocketStackBroadcastsDisconnectAndResumeState(t *testing.T) {
+	server, endpoint := startStackServer(t)
+	defer shutdownStackServer(t, server)
+
+	white, black, gameID, blackProfileID := startStackGame(t, endpoint)
+	defer white.CloseNow()
+	defer black.CloseNow()
+
+	_ = black.CloseNow()
+	disconnected := readStackEnvelope(t, white, protocol.ServerGameState)
+	assertStackConnected(t, disconnected, true, false)
+
+	reconnected := dialStackClient(t, endpoint+"?profileId="+string(blackProfileID))
+	defer reconnected.CloseNow()
+	readStackEnvelope(t, reconnected, protocol.ServerConnectionReady)
+	writeStackEnvelope(t, reconnected, protocol.ClientEnvelope{
+		Type:      protocol.ClientResumeGame,
+		RequestID: "resume",
+		Payload:   json.RawMessage(`{"gameId":"` + string(gameID) + `"}`),
+	})
+	readStackEnvelope(t, reconnected, protocol.ServerGameResumed)
+	readStackEnvelope(t, reconnected, protocol.ServerGameInitial)
+
+	connected := readStackEnvelope(t, white, protocol.ServerGameState)
+	assertStackConnected(t, connected, true, true)
+}
+
+func TestWebSocketStackReusesSessionsAfterGameEnds(t *testing.T) {
+	server, endpoint := startStackServer(t)
+	defer shutdownStackServer(t, server)
+
+	white, black, gameID, _ := startStackGame(t, endpoint)
+	defer white.CloseNow()
+	defer black.CloseNow()
+
+	writeStackEnvelope(t, white, protocol.ClientEnvelope{
+		Type:      protocol.ClientResign,
+		RequestID: "resign",
+		Payload:   json.RawMessage(`{"gameId":"` + string(gameID) + `"}`),
+	})
+	readStackEnvelope(t, white, protocol.ServerGameState)
+	readStackEnvelope(t, black, protocol.ServerGameState)
+
+	writeStackEnvelope(t, white, protocol.ClientEnvelope{
+		Type:      protocol.ClientCreateGame,
+		RequestID: "create-again",
+		Payload:   json.RawMessage(`{"color":"white","timeControl":"1+0"}`),
+	})
+	created := readStackEnvelope(t, white, protocol.ServerGameCreated)
+	var createdPayload protocol.GameCreatedPayload
+	decodeStackPayload(t, created, &createdPayload)
+
+	writeStackEnvelope(t, black, protocol.ClientEnvelope{
+		Type:      protocol.ClientJoinGame,
+		RequestID: "join-again",
+		Payload:   json.RawMessage(`{"gameId":"` + string(createdPayload.GameID) + `"}`),
+	})
+	readStackEnvelope(t, black, protocol.ServerGameJoined)
+}
+
+func TestWebSocketStackHeartbeatRemovesUnresponsiveSession(t *testing.T) {
+	server, endpoint := startStackServerWithHeartbeat(t, 100*time.Millisecond, 100*time.Millisecond)
+	defer shutdownStackServer(t, server)
+
+	white, black, _, _ := startStackGame(t, endpoint)
+	defer white.CloseNow()
+	defer black.CloseNow()
+
+	disconnected := readStackEnvelope(t, white, protocol.ServerGameState)
+	assertStackConnected(t, disconnected, true, false)
+}
+
 func startStackServer(t *testing.T) (*Server, string) {
 	t.Helper()
+	return startStackServerWithHeartbeat(t, heartbeatInterval, heartbeatTimeout)
+}
+
+func startStackServerWithHeartbeat(t *testing.T, interval, timeout time.Duration) (*Server, string) {
+	t.Helper()
 	server := NewServer("", gameplay.NewGameService())
+	server.heartbeatInterval = interval
+	server.heartbeatTimeout = timeout
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen() error = %v", err)
@@ -95,6 +215,36 @@ func startStackServer(t *testing.T) (*Server, string) {
 	t.Cleanup(func() { _ = listener.Close() })
 	go func() { _ = server.httpServer.Serve(listener) }()
 	return server, "ws://" + listener.Addr().String() + "/ws"
+}
+
+func startStackGame(t *testing.T, endpoint string) (*coderws.Conn, *coderws.Conn, identity.GameID, identity.ProfileID) {
+	t.Helper()
+
+	white := dialStackClient(t, endpoint)
+	readStackEnvelope(t, white, protocol.ServerConnectionReady)
+	writeStackEnvelope(t, white, protocol.ClientEnvelope{
+		Type:      protocol.ClientCreateGame,
+		RequestID: "create",
+		Payload:   json.RawMessage(`{"color":"white","timeControl":"1+0"}`),
+	})
+	created := readStackEnvelope(t, white, protocol.ServerGameCreated)
+	var createdPayload protocol.GameCreatedPayload
+	decodeStackPayload(t, created, &createdPayload)
+
+	black := dialStackClient(t, endpoint)
+	ready := readStackEnvelope(t, black, protocol.ServerConnectionReady)
+	var readyPayload protocol.ConnectionReadyPayload
+	decodeStackPayload(t, ready, &readyPayload)
+	writeStackEnvelope(t, black, protocol.ClientEnvelope{
+		Type:      protocol.ClientJoinGame,
+		RequestID: "join",
+		Payload:   json.RawMessage(`{"gameId":"` + string(createdPayload.GameID) + `"}`),
+	})
+	readStackEnvelope(t, black, protocol.ServerGameJoined)
+	readStackEnvelope(t, black, protocol.ServerGameInitial)
+	readStackEnvelope(t, white, protocol.ServerGameInitial)
+
+	return white, black, createdPayload.GameID, readyPayload.ProfileID
 }
 
 func shutdownStackServer(t *testing.T, server *Server) {
@@ -166,7 +316,14 @@ func assertStackState(t *testing.T, message protocol.ServerEnvelope, version uin
 	if payload.Version != version || payload.LastMove != lastMove {
 		t.Fatalf("state = (version %d, last move %q), want (%d, %q)", payload.Version, payload.LastMove, version, lastMove)
 	}
-	if payload.White == nil || payload.Black == nil || payload.White.Connected != connected || payload.Black.Connected != connected {
-		t.Fatalf("connected players = (%+v, %+v), want %v", payload.White, payload.Black, connected)
+	assertStackConnected(t, message, connected, connected)
+}
+
+func assertStackConnected(t *testing.T, message protocol.ServerEnvelope, white, black bool) {
+	t.Helper()
+	var payload protocol.GameStatePayload
+	decodeStackPayload(t, message, &payload)
+	if payload.White == nil || payload.Black == nil || payload.White.Connected != white || payload.Black.Connected != black {
+		t.Fatalf("connected players = (%+v, %+v), want (%v, %v)", payload.White, payload.Black, white, black)
 	}
 }
