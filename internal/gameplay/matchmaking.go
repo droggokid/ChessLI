@@ -30,27 +30,6 @@ func newWaitingPlayer(ctx context.Context, command EnterMatchmakingCommand) *wai
 	}
 }
 
-func validateTimeControl(initial, increment time.Duration) error {
-	if initial <= 0 || increment < 0 {
-		return ErrInvalidTimeControl
-	}
-	return nil
-}
-
-func validateProfileID(profileID identity.ProfileID) error {
-	if profileID == "" {
-		return ErrInvalidProfileID
-	}
-	return nil
-}
-
-func assignPrivateColors(profileID identity.ProfileID, creatorColor chess.Color) (identity.ProfileID, identity.ProfileID) {
-	if creatorColor == chess.White {
-		return profileID, ""
-	}
-	return "", profileID
-}
-
 func assignMatchmakingColors(waitingProfileID identity.ProfileID, currentProfileID identity.ProfileID, waitingColor chess.Color) (identity.ProfileID, identity.ProfileID, error) {
 	switch waitingColor {
 	case chess.White:
@@ -59,17 +38,6 @@ func assignMatchmakingColors(waitingProfileID identity.ProfileID, currentProfile
 		return currentProfileID, waitingProfileID, nil
 	default:
 		return "", "", ErrInvalidColorPreference
-	}
-}
-
-func colorFromProfileID(profileID, whiteProfileID, blackProfileID identity.ProfileID) (chess.Color, error) {
-	switch profileID {
-	case whiteProfileID:
-		return chess.White, nil
-	case blackProfileID:
-		return chess.Black, nil
-	default:
-		return chess.NoColor, ErrNotParticipant
 	}
 }
 

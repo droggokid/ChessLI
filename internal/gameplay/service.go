@@ -32,9 +32,10 @@ type GameService struct {
 	// mu guards service state. Helpers ending in Locked require callers to hold it and do not lock it.
 	mu             sync.RWMutex
 	waitingPlayers map[timeControlKey]*waitingPlayer
-	games          map[identity.GameID]*game
-	pickColor      func() chess.Color
-	onGameExpired  func(GameSnapshot)
+	// TODO: Persist completed games for player history and analysis.
+	games         map[identity.GameID]*game
+	pickColor     func() chess.Color
+	onGameExpired func(GameSnapshot)
 }
 
 // NewGameService returns an empty, in-memory gameplay service.

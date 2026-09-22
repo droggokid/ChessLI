@@ -280,6 +280,7 @@ func TestHandlerResumeGameRegistersAndInitializes(t *testing.T) {
 		FEN:            "fen",
 		WhiteProfileID: "player",
 		BlackProfileID: "peer",
+		Outcome:        chess.NoOutcome,
 	}
 	service := NewMockGameService(gomock.NewController(t))
 	service.EXPECT().ResumeGame(gomock.Any(), gameplay.ResumeGameCommand{
@@ -304,6 +305,47 @@ func TestHandlerResumeGameRegistersAndInitializes(t *testing.T) {
 	}
 	if !registry.IsConnected("game", "player") {
 		t.Fatal("client was not registered to game")
+	}
+}
+
+func TestHandlerResumeFinishedGameDoesNotRegisterSession(t *testing.T) {
+	t.Parallel()
+
+	state := gameplay.GameSnapshot{
+		GameID:         "game",
+		FEN:            "fen",
+		WhiteProfileID: "player",
+		BlackProfileID: "peer",
+		Outcome:        chess.WhiteWon,
+	}
+	service := NewMockGameService(gomock.NewController(t))
+	service.EXPECT().ResumeGame(gomock.Any(), gameplay.ResumeGameCommand{
+		GameID:    "game",
+		ProfileID: "player",
+	}).Return(state, nil)
+	registry := NewGameSessions()
+	client := newQueuedSession("player")
+
+	if err := NewHandler(service, registry).Handle(context.Background(), client, json.RawMessage(`{"type":"game.resume","requestId":"request","payload":{"gameId":"game"}}`)); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	if message := receiveEnvelope(t, client); message.Type != protocol.ServerGameResumed {
+		t.Fatalf("first envelope = %+v, want game.resumed", message)
+	}
+	initial := receiveEnvelope(t, client)
+	if initial.Type != protocol.ServerGameInitial {
+		t.Fatalf("second envelope = %+v, want game.initial", initial)
+	}
+	payload, ok := initial.Payload.(protocol.GameStatePayload)
+	if !ok || payload.White == nil || payload.Black == nil || payload.White.Connected || payload.Black.Connected {
+		t.Fatalf("finished initial state = %+v, want both players disconnected", initial)
+	}
+	if registry.IsConnected("game", "player") {
+		t.Fatal("finished game registered the session")
+	}
+	if err := registry.Hold(client); err != nil {
+		t.Fatalf("Hold() after finished resume error = %v", err)
 	}
 }
 
@@ -417,12 +459,42 @@ func TestAwaitMatchRegistersAndInitializesSession(t *testing.T) {
 		if initial.Type != protocol.ServerGameInitial || !ok {
 			t.Fatalf("%s initial envelope = %+v, want game.initial", name, initial)
 		}
-		if payload.White == nil || payload.Black == nil || !payload.White.Connected || !payload.Black.Connected {
-			t.Fatalf("%s connected players = (%+v, %+v), want both connected", name, payload.White, payload.Black)
+		if payload.White == nil || payload.Black == nil {
+			t.Fatalf("%s player state = (%+v, %+v), want both players", name, payload.White, payload.Black)
+		}
+		if session.profile.ID == "white" && !payload.White.Connected {
+			t.Fatalf("%s white player was not connected", name)
+		}
+		if session.profile.ID == "black" && !payload.Black.Connected {
+			t.Fatalf("%s black player was not connected", name)
 		}
 		if !registry.IsConnected("game", session.profile.ID) {
 			t.Fatalf("%s was not registered to game", name)
 		}
+	}
+}
+
+func TestAwaitMatchInitializesSurvivingSession(t *testing.T) {
+	t.Parallel()
+
+	state := gameplay.GameSnapshot{GameID: "game", WhiteProfileID: "player", BlackProfileID: "peer"}
+	service := NewMockGameService(gomock.NewController(t))
+	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(state, nil)
+	registry := NewGameSessions()
+	client := newQueuedSession("player")
+	if err := registry.Hold(client); err != nil {
+		t.Fatalf("Hold() error = %v", err)
+	}
+
+	NewHandler(service, registry).awaitMatch(context.Background(), client, "request", gameplay.MatchTicket{
+		Result: matchResults(gameplay.GameAssignment{GameID: "game", Color: chess.White}),
+	})
+
+	if message := receiveEnvelope(t, client); message.Type != protocol.ServerMatchFound {
+		t.Fatalf("first envelope = %+v, want matchmaking.found", message)
+	}
+	if message := receiveEnvelope(t, client); message.Type != protocol.ServerGameInitial {
+		t.Fatalf("second envelope = %+v, want game.initial", message)
 	}
 }
 

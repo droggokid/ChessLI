@@ -92,6 +92,8 @@ reasons are `checkmate`, `stalemate`, `timeout`, `fivefold_repetition`,
 `draw_agreement`. Threefold and fifty-move claims are not implemented yet.
 After the final state is queued for delivery, both live connections are free to
 create, join, or match into another game.
+A former participant can use `game.resume` to load a finished game's final
+state. That view is read-only and does not mark either player connected.
 
 Clocks are authoritative on the server. When the active player's time reaches
 zero, the server automatically increments the state version and broadcasts a

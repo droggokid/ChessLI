@@ -145,6 +145,17 @@ func (g *game) validateReadyLocked() error {
 	return nil
 }
 
+func colorFromProfileID(profileID, whiteProfileID, blackProfileID identity.ProfileID) (chess.Color, error) {
+	switch profileID {
+	case whiteProfileID:
+		return chess.White, nil
+	case blackProfileID:
+		return chess.Black, nil
+	default:
+		return chess.NoColor, ErrNotParticipant
+	}
+}
+
 // joinPrivate assigns a profile to the unoccupied color in a private game.
 func (g *game) joinPrivate(command JoinPrivateCommand) (chess.Color, error) {
 	g.mu.Lock()

@@ -23,6 +23,10 @@ final state is queued for delivery, its live connections can start or join
 another game. Open a fresh connection or restart the server when a scenario
 requires a clean game.
 
+A former participant can use `game.resume` to load a finished game's final
+read-only state. This does not occupy a game session or mark either player
+connected.
+
 The expected-error examples below show the `payload` portion of the server's
 `error` envelope.
 

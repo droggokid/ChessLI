@@ -14,7 +14,6 @@ type GameSessions struct {
 
 	byGame    map[identity.GameID]map[*Session]struct{}
 	bySession map[*Session]identity.GameID
-	changed   map[identity.GameID]chan struct{}
 }
 
 // NewGameSessions returns an empty registry of sessions grouped by game.
@@ -22,7 +21,6 @@ func NewGameSessions() *GameSessions {
 	return &GameSessions{
 		byGame:    make(map[identity.GameID]map[*Session]struct{}),
 		bySession: make(map[*Session]identity.GameID),
-		changed:   make(map[identity.GameID]chan struct{}),
 	}
 }
 
@@ -54,6 +52,10 @@ func (g *GameSessions) Release(session *Session) {
 func (g *GameSessions) Add(gameID identity.GameID, session *Session) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if sessionRunState(session.runState.Load()) != sessionRunning {
+		return protocol.ErrSessionNotRunning
+	}
+
 	if currentGameID, exists := g.bySession[session]; exists {
 		if currentGameID == gameID {
 			return nil
@@ -74,7 +76,6 @@ func (g *GameSessions) Add(gameID identity.GameID, session *Session) error {
 
 	g.byGame[gameID][session] = struct{}{}
 	g.bySession[session] = gameID
-	g.signalChangedLocked(gameID)
 
 	return nil
 }
@@ -96,7 +97,6 @@ func (g *GameSessions) Remove(session *Session) identity.GameID {
 
 	sessions := g.byGame[gameID]
 	delete(sessions, session)
-	g.signalChangedLocked(gameID)
 
 	if len(sessions) == 0 {
 		delete(g.byGame, gameID)
@@ -114,7 +114,6 @@ func (g *GameSessions) RemoveGame(gameID identity.GameID) {
 		delete(g.bySession, session)
 	}
 	delete(g.byGame, gameID)
-	g.signalChangedLocked(gameID)
 }
 
 // Broadcast sends a message to the source and the other sessions in a game.
@@ -173,37 +172,6 @@ func (g *GameSessions) BroadcastPeers(ctx context.Context, gameID identity.GameI
 		if err := session.Send(ctx, message); err != nil {
 			slog.Warn("broadcast to game session", "game_id", gameID, "error", err)
 		}
-	}
-}
-
-// WaitForPlayers waits until count sessions have registered with a game.
-func (g *GameSessions) WaitForPlayers(ctx context.Context, gameID identity.GameID, count int) error {
-	for {
-		g.mu.Lock()
-		if len(g.byGame[gameID]) >= count {
-			g.mu.Unlock()
-			return nil
-		}
-
-		changed := g.changed[gameID]
-		if changed == nil {
-			changed = make(chan struct{})
-			g.changed[gameID] = changed
-		}
-		g.mu.Unlock()
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-changed:
-		}
-	}
-}
-
-func (g *GameSessions) signalChangedLocked(gameID identity.GameID) {
-	if changed := g.changed[gameID]; changed != nil {
-		close(changed)
-		delete(g.changed, gameID)
 	}
 }
 

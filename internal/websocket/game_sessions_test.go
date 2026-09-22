@@ -101,6 +101,19 @@ func TestGameSessionsRejectsDuplicateProfileInGame(t *testing.T) {
 	}
 }
 
+func TestGameSessionsRejectsStoppedSession(t *testing.T) {
+	t.Parallel()
+
+	registry := NewGameSessions()
+	session := newQueuedSession("player")
+	session.runState.Store(uint32(sessionStopped))
+
+	err := registry.Add("game", session)
+	if !errors.Is(err, protocol.ErrSessionNotRunning) {
+		t.Fatalf("Add() error = %v, want %v", err, protocol.ErrSessionNotRunning)
+	}
+}
+
 func TestGameSessionsRemoveGameReleasesAllSessions(t *testing.T) {
 	t.Parallel()
 
@@ -160,14 +173,13 @@ func TestGameSessionsBroadcastReturnsSourceFailure(t *testing.T) {
 	registry := NewGameSessions()
 	source := newQueuedSession("source")
 	peer := newQueuedSession("peer")
-	source.outgoing = make(chan protocol.ServerEnvelope)
-	source.runState.Store(uint32(sessionStopped))
 	if err := registry.Add("game", source); err != nil {
 		t.Fatalf("Add(source) error = %v", err)
 	}
 	if err := registry.Add("game", peer); err != nil {
 		t.Fatalf("Add(peer) error = %v", err)
 	}
+	source.runState.Store(uint32(sessionStopped))
 
 	err := registry.Broadcast(context.Background(), "game", source, protocol.ServerEnvelope{})
 	if !errors.Is(err, protocol.ErrSessionNotRunning) {

@@ -186,6 +186,42 @@ func TestWebSocketStackReusesSessionsAfterGameEnds(t *testing.T) {
 	readStackEnvelope(t, black, protocol.ServerGameJoined)
 }
 
+func TestWebSocketStackResumesFinishedGameWithoutOccupyingSession(t *testing.T) {
+	server, endpoint := startStackServer(t)
+	defer shutdownStackServer(t, server)
+
+	white, black, gameID, blackProfileID := startStackGame(t, endpoint)
+	defer white.CloseNow()
+	defer black.CloseNow()
+
+	_ = black.CloseNow()
+	readStackEnvelope(t, white, protocol.ServerGameState)
+	writeStackEnvelope(t, white, protocol.ClientEnvelope{
+		Type:      protocol.ClientResign,
+		RequestID: "resign",
+		Payload:   json.RawMessage(`{"gameId":"` + string(gameID) + `"}`),
+	})
+	readStackEnvelope(t, white, protocol.ServerGameState)
+
+	reconnected := dialStackClient(t, endpoint+"?profileId="+string(blackProfileID))
+	defer reconnected.CloseNow()
+	readStackEnvelope(t, reconnected, protocol.ServerConnectionReady)
+	writeStackEnvelope(t, reconnected, protocol.ClientEnvelope{
+		Type:      protocol.ClientResumeGame,
+		RequestID: "resume",
+		Payload:   json.RawMessage(`{"gameId":"` + string(gameID) + `"}`),
+	})
+	readStackEnvelope(t, reconnected, protocol.ServerGameResumed)
+	readStackEnvelope(t, reconnected, protocol.ServerGameInitial)
+
+	writeStackEnvelope(t, reconnected, protocol.ClientEnvelope{
+		Type:      protocol.ClientEnterMatchmaking,
+		RequestID: "match",
+		Payload:   json.RawMessage(`{"timeControl":"1+0"}`),
+	})
+	readStackEnvelope(t, reconnected, protocol.ServerMatchmakingEntered)
+}
+
 func TestWebSocketStackHeartbeatRemovesUnresponsiveSession(t *testing.T) {
 	server, endpoint := startStackServerWithHeartbeat(t, 100*time.Millisecond, 100*time.Millisecond)
 	defer shutdownStackServer(t, server)
