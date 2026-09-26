@@ -2,6 +2,9 @@
 # Created by https://www.toptal.com/developers/gitignore/api/visualstudiocode,goland,go,git,cmake
 # Edit at https://www.toptal.com/developers/gitignore?templates=visualstudiocode,goland,go,git,cmake
 
+# Local environment configuration
+.env
+
 ### CMake ###
 CMakeLists.txt.user
 CMakeCache.txt
