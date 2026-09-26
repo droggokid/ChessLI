@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/websocket/protocol"
 
 	coderws "github.com/coder/websocket"
-	"github.com/corentings/chess/v2"
 )
 
 func TestNewServerWiresDependencies(t *testing.T) {
@@ -68,7 +68,7 @@ func TestServerBroadcastTerminalStateReleasesSessions(t *testing.T) {
 
 	server.BroadcastGameState(gameplay.GameSnapshot{
 		GameID:  "game",
-		Outcome: chess.WhiteWon,
+		Outcome: game.OutcomeWhiteWin,
 	})
 
 	for _, client := range []*Session{white, black} {

@@ -23,11 +23,19 @@ VALUES (
 );
 
 -- name: CreateCompletedGameMoves :exec
-INSERT INTO completed_game_moves (game_id, ply, uci)
+INSERT INTO completed_game_moves (
+    game_id,
+    ply,
+    uci,
+    white_remaining_ms,
+    black_remaining_ms
+)
 SELECT
     sqlc.arg(game_id),
     moves.ply::INTEGER,
-    moves.uci
+    moves.uci,
+    (sqlc.arg(white_remaining_ms)::BIGINT[])[moves.ply::INTEGER],
+    (sqlc.arg(black_remaining_ms)::BIGINT[])[moves.ply::INTEGER]
 FROM unnest(sqlc.arg(uci_moves)::TEXT[]) WITH ORDINALITY AS moves(uci, ply);
 
 -- name: ListCompletedGamesByProfileID :many
@@ -62,7 +70,7 @@ FROM completed_games
 WHERE id = $1;
 
 -- name: ListCompletedGameMovesByGameID :many
-SELECT ply, uci
+SELECT ply, uci, white_remaining_ms, black_remaining_ms
 FROM completed_game_moves
 WHERE game_id = $1
 ORDER BY ply;

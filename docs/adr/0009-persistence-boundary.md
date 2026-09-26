@@ -1,6 +1,6 @@
 # ADR 0009: Persistence Boundary
 
-Status: Proposed
+Status: Accepted
 
 ## Decision
 
@@ -15,9 +15,15 @@ control, terminal outcome, termination reason, final position, and move history.
 Derive player matchup history from those records; do not store a duplicate
 matchup-history table.
 
-Do not introduce a generic repository. When an application consumer needs one,
-define a narrow, consumer-owned interface such as a completed-game store or
-profile store. Keep generated `sqlc` types inside the storage implementation.
+Do not introduce a generic repository. Each concrete persistence adapter owns
+one narrow interface as its mock seam and public storage contract, such as a
+profile store or completed-game store. Keep generated `sqlc` types and query
+objects inside the adapter; do not embed generated queries.
+
+Keep the adapter interface and its generated GoMock mock in the adapter
+package. Regenerate the mock from a colocated `go:generate` directive whenever
+the interface changes. Adapter APIs use domain identifiers and models; UUID and
+`sqlc` values are mapped at the adapter boundary.
 
 ## Rationale
 
@@ -33,3 +39,5 @@ dynamic SQL and is unnecessary here.
 - Reliable retry and active-game recovery are later, separate decisions.
 - Friendship semantics and preference fields are deferred until their product
   requirements are defined.
+- Persistence interfaces and their generated mocks change together; query and
+  driver types remain implementation details.

@@ -7,8 +7,9 @@ package sqlc
 
 import (
 	"context"
+	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
 const createCompletedGame = `-- name: CreateCompletedGame :exec
@@ -37,15 +38,15 @@ VALUES (
 `
 
 type CreateCompletedGameParams struct {
-	ID             pgtype.UUID
-	WhiteProfileID pgtype.UUID
-	BlackProfileID pgtype.UUID
+	ID             uuid.UUID
+	WhiteProfileID uuid.UUID
+	BlackProfileID uuid.UUID
 	InitialTimeMs  int64
 	IncrementMs    int64
 	Outcome        string
 	Termination    string
 	FinalFen       string
-	CompletedAt    pgtype.Timestamptz
+	CompletedAt    time.Time
 }
 
 func (q *Queries) CreateCompletedGame(ctx context.Context, arg CreateCompletedGameParams) error {
@@ -64,21 +65,36 @@ func (q *Queries) CreateCompletedGame(ctx context.Context, arg CreateCompletedGa
 }
 
 const createCompletedGameMoves = `-- name: CreateCompletedGameMoves :exec
-INSERT INTO completed_game_moves (game_id, ply, uci)
+INSERT INTO completed_game_moves (
+    game_id,
+    ply,
+    uci,
+    white_remaining_ms,
+    black_remaining_ms
+)
 SELECT
     $1,
     moves.ply::INTEGER,
-    moves.uci
-FROM unnest($2::TEXT[]) WITH ORDINALITY AS moves(uci, ply)
+    moves.uci,
+    ($2::BIGINT[])[moves.ply::INTEGER],
+    ($3::BIGINT[])[moves.ply::INTEGER]
+FROM unnest($4::TEXT[]) WITH ORDINALITY AS moves(uci, ply)
 `
 
 type CreateCompletedGameMovesParams struct {
-	GameID   pgtype.UUID
-	UciMoves []string
+	GameID           uuid.UUID
+	WhiteRemainingMs []int64
+	BlackRemainingMs []int64
+	UciMoves         []string
 }
 
 func (q *Queries) CreateCompletedGameMoves(ctx context.Context, arg CreateCompletedGameMovesParams) error {
-	_, err := q.db.Exec(ctx, createCompletedGameMoves, arg.GameID, arg.UciMoves)
+	_, err := q.db.Exec(ctx, createCompletedGameMoves,
+		arg.GameID,
+		arg.WhiteRemainingMs,
+		arg.BlackRemainingMs,
+		arg.UciMoves,
+	)
 	return err
 }
 
@@ -97,7 +113,7 @@ FROM completed_games
 WHERE id = $1
 `
 
-func (q *Queries) GetCompletedGameByID(ctx context.Context, id pgtype.UUID) (CompletedGame, error) {
+func (q *Queries) GetCompletedGameByID(ctx context.Context, id uuid.UUID) (CompletedGame, error) {
 	row := q.db.QueryRow(ctx, getCompletedGameByID, id)
 	var i CompletedGame
 	err := row.Scan(
@@ -115,18 +131,20 @@ func (q *Queries) GetCompletedGameByID(ctx context.Context, id pgtype.UUID) (Com
 }
 
 const listCompletedGameMovesByGameID = `-- name: ListCompletedGameMovesByGameID :many
-SELECT ply, uci
+SELECT ply, uci, white_remaining_ms, black_remaining_ms
 FROM completed_game_moves
 WHERE game_id = $1
 ORDER BY ply
 `
 
 type ListCompletedGameMovesByGameIDRow struct {
-	Ply int32
-	Uci string
+	Ply              int32
+	Uci              string
+	WhiteRemainingMs int64
+	BlackRemainingMs int64
 }
 
-func (q *Queries) ListCompletedGameMovesByGameID(ctx context.Context, gameID pgtype.UUID) ([]ListCompletedGameMovesByGameIDRow, error) {
+func (q *Queries) ListCompletedGameMovesByGameID(ctx context.Context, gameID uuid.UUID) ([]ListCompletedGameMovesByGameIDRow, error) {
 	rows, err := q.db.Query(ctx, listCompletedGameMovesByGameID, gameID)
 	if err != nil {
 		return nil, err
@@ -135,7 +153,12 @@ func (q *Queries) ListCompletedGameMovesByGameID(ctx context.Context, gameID pgt
 	var items []ListCompletedGameMovesByGameIDRow
 	for rows.Next() {
 		var i ListCompletedGameMovesByGameIDRow
-		if err := rows.Scan(&i.Ply, &i.Uci); err != nil {
+		if err := rows.Scan(
+			&i.Ply,
+			&i.Uci,
+			&i.WhiteRemainingMs,
+			&i.BlackRemainingMs,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -165,20 +188,20 @@ OFFSET $2
 `
 
 type ListCompletedGamesByProfileIDParams struct {
-	ProfileID  pgtype.UUID
+	ProfileID  uuid.UUID
 	PageOffset int32
 	PageSize   int32
 }
 
 type ListCompletedGamesByProfileIDRow struct {
-	ID             pgtype.UUID
-	WhiteProfileID pgtype.UUID
-	BlackProfileID pgtype.UUID
+	ID             uuid.UUID
+	WhiteProfileID uuid.UUID
+	BlackProfileID uuid.UUID
 	InitialTimeMs  int64
 	IncrementMs    int64
 	Outcome        string
 	Termination    string
-	CompletedAt    pgtype.Timestamptz
+	CompletedAt    time.Time
 }
 
 func (q *Queries) ListCompletedGamesByProfileID(ctx context.Context, arg ListCompletedGamesByProfileIDParams) ([]ListCompletedGamesByProfileIDRow, error) {

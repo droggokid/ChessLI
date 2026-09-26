@@ -10,7 +10,7 @@ in-memory ownership of live games.
 - PostgreSQL, migrations, and `sqlc` generation.
 - Durable profile rows keyed by the existing `ProfileID`.
 - Immutable completed-game records with players, time control, outcome,
-  termination reason, final FEN, and move history.
+  termination reason, final FEN, and move history with post-move clock balances.
 - Queries to save a completed game, list a profile's games, and load one game.
 
 ## Out of Scope

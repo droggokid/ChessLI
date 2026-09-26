@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
@@ -13,6 +14,12 @@ import (
 	"github.com/corentings/chess/v2"
 	"go.uber.org/mock/gomock"
 )
+
+type MockGameService = gameplay.MockGameService
+
+func NewMockGameService(ctrl *gomock.Controller) *MockGameService {
+	return gameplay.NewMockGameService(ctrl)
+}
 
 func TestHandlerProtocolErrors(t *testing.T) {
 	t.Parallel()
@@ -115,7 +122,7 @@ func TestHandlerGameActionsBroadcastState(t *testing.T) {
 			name: "resign",
 			raw:  json.RawMessage(`{"type":"game.resign","requestId":"request","payload":{"gameId":"game"}}`),
 			expect: func(service *MockGameService) gameplay.GameSnapshot {
-				state := gameplay.GameSnapshot{GameID: "game", Outcome: chess.BlackWon, Termination: gameplay.TerminationResignation}
+				state := gameplay.GameSnapshot{GameID: "game", Outcome: game.OutcomeBlackWin, Termination: game.TerminationResignation}
 				service.EXPECT().Resign(gomock.Any(), gameplay.ResignCommand{GameID: "game", ProfileID: "white"}).Return(state, nil)
 				return state
 			},
@@ -133,7 +140,7 @@ func TestHandlerGameActionsBroadcastState(t *testing.T) {
 			name: "accept draw",
 			raw:  json.RawMessage(`{"type":"draw.accept","requestId":"request","payload":{"gameId":"game","offerId":"offer"}}`),
 			expect: func(service *MockGameService) gameplay.GameSnapshot {
-				state := gameplay.GameSnapshot{GameID: "game", Outcome: chess.Draw, Termination: gameplay.TerminationDrawAgreement, Version: 1}
+				state := gameplay.GameSnapshot{GameID: "game", Outcome: game.OutcomeDraw, Termination: game.TerminationDrawAgreement, Version: 1}
 				service.EXPECT().AcceptDraw(gomock.Any(), gameplay.DrawOfferResponseCommand{GameID: "game", ProfileID: "white", OfferID: "offer"}).Return(state, nil)
 				return state
 			},
@@ -248,7 +255,7 @@ func TestHandlerJoinGameMapsRegistersAndInitializes(t *testing.T) {
 		FEN:            "fen",
 		WhiteProfileID: "peer",
 		BlackProfileID: "player",
-		Outcome:        chess.NoOutcome,
+		Outcome:        game.OutcomeNone,
 	}, nil)
 	registry := NewGameSessions()
 	handler := NewHandler(service, registry)
@@ -280,7 +287,7 @@ func TestHandlerResumeGameRegistersAndInitializes(t *testing.T) {
 		FEN:            "fen",
 		WhiteProfileID: "player",
 		BlackProfileID: "peer",
-		Outcome:        chess.NoOutcome,
+		Outcome:        game.OutcomeNone,
 	}
 	service := NewMockGameService(gomock.NewController(t))
 	service.EXPECT().ResumeGame(gomock.Any(), gameplay.ResumeGameCommand{
@@ -316,7 +323,7 @@ func TestHandlerResumeFinishedGameDoesNotRegisterSession(t *testing.T) {
 		FEN:            "fen",
 		WhiteProfileID: "player",
 		BlackProfileID: "peer",
-		Outcome:        chess.WhiteWon,
+		Outcome:        game.OutcomeWhiteWin,
 	}
 	service := NewMockGameService(gomock.NewController(t))
 	service.EXPECT().ResumeGame(gomock.Any(), gameplay.ResumeGameCommand{
@@ -368,7 +375,7 @@ func TestHandlerMakeMoveBroadcastsAuthoritativeResult(t *testing.T) {
 		WhiteRemaining: 9 * time.Minute,
 		BlackRemaining: 8 * time.Minute,
 		LastMoveSAN:    "e4",
-		Outcome:        chess.NoOutcome,
+		Outcome:        game.OutcomeNone,
 	}, nil)
 	registry := NewGameSessions()
 	handler := NewHandler(service, registry)
@@ -420,7 +427,7 @@ func TestAwaitMatchRegistersAndInitializesSession(t *testing.T) {
 		FEN:            "fen",
 		WhiteProfileID: "white",
 		BlackProfileID: "black",
-		Outcome:        chess.NoOutcome,
+		Outcome:        game.OutcomeNone,
 	}
 	service := NewMockGameService(gomock.NewController(t))
 	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(state, nil).Times(2)

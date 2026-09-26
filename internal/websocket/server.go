@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/websocket/protocol"
 
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/corentings/chess/v2"
 )
 
 const (
@@ -200,7 +200,7 @@ func (s *Server) BroadcastGameState(state gameplay.GameSnapshot) {
 	if err := s.gameSessions.Broadcast(s.connectionCtx, state.GameID, nil, envelope); err != nil {
 		slog.Warn("broadcast automatic game state", "game_id", state.GameID, "error", err)
 	}
-	if state.Outcome != chess.NoOutcome {
+	if state.Outcome != game.OutcomeNone {
 		s.gameSessions.RemoveGame(state.GameID)
 	}
 }

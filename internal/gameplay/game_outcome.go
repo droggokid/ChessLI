@@ -3,52 +3,54 @@ package gameplay
 import (
 	"time"
 
+	domain "ChessLI/internal/game"
+
 	"github.com/corentings/chess/v2"
 )
 
-type TerminationReason uint8
+type TerminationReason = domain.Termination
 
 const (
-	TerminationNone TerminationReason = iota
-	TerminationCheckmate
-	TerminationStalemate
-	TerminationResignation
-	TerminationTimeout
-	TerminationDrawAgreement
-	TerminationThreefoldRepetition
-	TerminationFivefoldRepetition
-	TerminationFiftyMoveRule
-	TerminationSeventyFiveMoveRule
-	TerminationInsufficientMaterial
+	TerminationNone                 = domain.TerminationNone
+	TerminationCheckmate            = domain.TerminationCheckmate
+	TerminationStalemate            = domain.TerminationStalemate
+	TerminationResignation          = domain.TerminationResignation
+	TerminationTimeout              = domain.TerminationTimeout
+	TerminationDrawAgreement        = domain.TerminationDrawAgreement
+	TerminationThreefoldRepetition  = domain.TerminationThreefoldRepetition
+	TerminationFivefoldRepetition   = domain.TerminationFivefoldRepetition
+	TerminationFiftyMoveRule        = domain.TerminationFiftyMoveRule
+	TerminationSeventyFiveMoveRule  = domain.TerminationSeventyFiveMoveRule
+	TerminationInsufficientMaterial = domain.TerminationInsufficientMaterial
 )
 
-func terminationReason(method chess.Method) TerminationReason {
+func terminationReason(method chess.Method) domain.Termination {
 	switch method {
 	case chess.Checkmate:
-		return TerminationCheckmate
+		return domain.TerminationCheckmate
 	case chess.Stalemate:
-		return TerminationStalemate
+		return domain.TerminationStalemate
 	case chess.Resignation:
-		return TerminationResignation
+		return domain.TerminationResignation
 	case chess.DrawOffer:
-		return TerminationDrawAgreement
+		return domain.TerminationDrawAgreement
 	case chess.ThreefoldRepetition:
-		return TerminationThreefoldRepetition
+		return domain.TerminationThreefoldRepetition
 	case chess.FivefoldRepetition:
-		return TerminationFivefoldRepetition
+		return domain.TerminationFivefoldRepetition
 	case chess.FiftyMoveRule:
-		return TerminationFiftyMoveRule
+		return domain.TerminationFiftyMoveRule
 	case chess.SeventyFiveMoveRule:
-		return TerminationSeventyFiveMoveRule
+		return domain.TerminationSeventyFiveMoveRule
 	case chess.InsufficientMaterial:
-		return TerminationInsufficientMaterial
+		return domain.TerminationInsufficientMaterial
 	default:
-		return TerminationNone
+		return domain.TerminationNone
 	}
 }
 
 func (g *game) syncOutcomeFromEngineLocked() {
-	g.outcome = g.engine.Outcome()
+	g.outcome = outcomeFromEngine(g.engine.Outcome())
 	g.termination = terminationReason(g.engine.Method())
 }
 
@@ -62,8 +64,8 @@ func (g *game) expireLocked(now time.Time) bool {
 
 	winner := loser.Other()
 	if !g.hasMatingMaterialLocked(winner) {
-		g.outcome = chess.Draw
-		g.termination = TerminationTimeout
+		g.outcome = domain.OutcomeDraw
+		g.termination = domain.TerminationTimeout
 		g.version++
 		g.clearPendingDrawOfferLocked()
 		return true
@@ -71,14 +73,14 @@ func (g *game) expireLocked(now time.Time) bool {
 
 	switch loser {
 	case chess.White:
-		g.outcome = chess.BlackWon
+		g.outcome = domain.OutcomeBlackWin
 	case chess.Black:
-		g.outcome = chess.WhiteWon
+		g.outcome = domain.OutcomeWhiteWin
 	default:
 		return false
 	}
 
-	g.termination = TerminationTimeout
+	g.termination = domain.TerminationTimeout
 	g.version++
 	g.clearPendingDrawOfferLocked()
 
@@ -96,4 +98,19 @@ func (g *game) hasMatingMaterialLocked(color chess.Color) bool {
 	}
 
 	return false
+}
+
+func outcomeFromEngine(outcome chess.Outcome) domain.Outcome {
+	switch outcome {
+	case chess.WhiteWon:
+		return domain.OutcomeWhiteWin
+	case chess.BlackWon:
+		return domain.OutcomeBlackWin
+	case chess.Draw:
+		return domain.OutcomeDraw
+	case chess.UnknownOutcome:
+		return domain.OutcomeUnknown
+	default:
+		return domain.OutcomeNone
+	}
 }

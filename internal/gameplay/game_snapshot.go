@@ -3,9 +3,8 @@ package gameplay
 import (
 	"time"
 
+	domain "ChessLI/internal/game"
 	"ChessLI/internal/identity"
-
-	"github.com/corentings/chess/v2"
 )
 
 type GameSnapshot struct {
@@ -17,8 +16,8 @@ type GameSnapshot struct {
 	WhiteRemaining   time.Duration
 	BlackRemaining   time.Duration
 	LastMoveSAN      string
-	Outcome          chess.Outcome
-	Termination      TerminationReason
+	Outcome          domain.Outcome
+	Termination      domain.Termination
 	PendingDrawOffer *DrawOffer
 }
 

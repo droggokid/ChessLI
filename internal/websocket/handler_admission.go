@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
@@ -110,7 +111,7 @@ func (h *Handler) handleResumeGame(ctx context.Context, client *Session, message
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInternal, "internal server error")
 	}
 
-	active := state.Outcome == chess.NoOutcome
+	active := state.Outcome == game.OutcomeNone
 	if active {
 		if err = h.gameSessions.Add(state.GameID, client); err != nil {
 			h.gameSessions.Release(client)

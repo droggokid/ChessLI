@@ -22,7 +22,7 @@ the composition root and may wire core and transport implementations together.
 The intended direction is:
 
 ```text
-cmd -> websocket -> gameplay -> identity
+cmd -> websocket -> gameplay -> game -> identity
                  \-> identity
 ```
 
@@ -32,11 +32,11 @@ the domain layering and must not become back doors for transport state.
 
 ### Constraints
 
-- `internal/gameplay` and `internal/identity` must not import WebSocket, HTTP,
+- `internal/gameplay`, `internal/game`, and `internal/identity` must not import WebSocket, HTTP,
   database, or framework-specific packages.
-- Transport packages may depend on gameplay and identity packages; gameplay
-  and identity packages must not depend on transport packages.
-- Conversion between wire and gameplay representations happens in the
+- Transport packages may depend on gameplay, game, and identity packages;
+  gameplay, game, and identity packages must not depend on transport packages.
+- Conversion between wire and gameplay or game representations happens in the
   WebSocket boundary.
 - Avoid generic packages such as `utils`, `helpers`, or `common`.
 - A new package must represent a meaningful responsibility or boundary.

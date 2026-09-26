@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/websocket/protocol"
 
@@ -111,23 +112,23 @@ func TestMapOutcome(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		outcome     chess.Outcome
-		termination gameplay.TerminationReason
+		outcome     game.Outcome
+		termination game.Termination
 		want        *protocol.GameOutcome
 	}{
-		{name: "in progress", outcome: chess.NoOutcome},
-		{name: "unknown", outcome: chess.UnknownOutcome},
-		{name: "white checkmate", outcome: chess.WhiteWon, termination: gameplay.TerminationCheckmate, want: &protocol.GameOutcome{Result: protocol.ResultWhiteWin, Reason: protocol.GameOverCheckmate}},
-		{name: "black resignation", outcome: chess.BlackWon, termination: gameplay.TerminationResignation, want: &protocol.GameOutcome{Result: protocol.ResultBlackWin, Reason: protocol.GameOverResignation}},
-		{name: "timeout", outcome: chess.WhiteWon, termination: gameplay.TerminationTimeout, want: &protocol.GameOutcome{Result: protocol.ResultWhiteWin, Reason: protocol.GameOverTimeout}},
-		{name: "draw agreement", outcome: chess.Draw, termination: gameplay.TerminationDrawAgreement, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverAgreement}},
-		{name: "stalemate", outcome: chess.Draw, termination: gameplay.TerminationStalemate, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverStalemate}},
-		{name: "threefold repetition", outcome: chess.Draw, termination: gameplay.TerminationThreefoldRepetition, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverThreefoldRepetition}},
-		{name: "fivefold repetition", outcome: chess.Draw, termination: gameplay.TerminationFivefoldRepetition, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverFivefoldRepetition}},
-		{name: "fifty-move rule", outcome: chess.Draw, termination: gameplay.TerminationFiftyMoveRule, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverFiftyMoveRule}},
-		{name: "seventy-five move", outcome: chess.Draw, termination: gameplay.TerminationSeventyFiveMoveRule, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverSeventyFiveMoveRule}},
-		{name: "insufficient material", outcome: chess.Draw, termination: gameplay.TerminationInsufficientMaterial, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverInsufficientMaterial}},
-		{name: "missing termination", outcome: chess.Draw, termination: gameplay.TerminationNone},
+		{name: "in progress", outcome: game.OutcomeNone},
+		{name: "unknown", outcome: game.OutcomeUnknown},
+		{name: "white checkmate", outcome: game.OutcomeWhiteWin, termination: game.TerminationCheckmate, want: &protocol.GameOutcome{Result: protocol.ResultWhiteWin, Reason: protocol.GameOverCheckmate}},
+		{name: "black resignation", outcome: game.OutcomeBlackWin, termination: game.TerminationResignation, want: &protocol.GameOutcome{Result: protocol.ResultBlackWin, Reason: protocol.GameOverResignation}},
+		{name: "timeout", outcome: game.OutcomeWhiteWin, termination: game.TerminationTimeout, want: &protocol.GameOutcome{Result: protocol.ResultWhiteWin, Reason: protocol.GameOverTimeout}},
+		{name: "draw agreement", outcome: game.OutcomeDraw, termination: game.TerminationDrawAgreement, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverAgreement}},
+		{name: "stalemate", outcome: game.OutcomeDraw, termination: game.TerminationStalemate, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverStalemate}},
+		{name: "threefold repetition", outcome: game.OutcomeDraw, termination: game.TerminationThreefoldRepetition, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverThreefoldRepetition}},
+		{name: "fivefold repetition", outcome: game.OutcomeDraw, termination: game.TerminationFivefoldRepetition, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverFivefoldRepetition}},
+		{name: "fifty-move rule", outcome: game.OutcomeDraw, termination: game.TerminationFiftyMoveRule, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverFiftyMoveRule}},
+		{name: "seventy-five move", outcome: game.OutcomeDraw, termination: game.TerminationSeventyFiveMoveRule, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverSeventyFiveMoveRule}},
+		{name: "insufficient material", outcome: game.OutcomeDraw, termination: game.TerminationInsufficientMaterial, want: &protocol.GameOutcome{Result: protocol.ResultDraw, Reason: protocol.GameOverInsufficientMaterial}},
+		{name: "missing termination", outcome: game.OutcomeDraw, termination: game.TerminationNone},
 	}
 
 	for _, tt := range tests {
@@ -151,7 +152,7 @@ func TestGameStatePayload(t *testing.T) {
 		Version:        3,
 		WhiteProfileID: "white",
 		LastMoveSAN:    "Qh4#",
-		Outcome:        chess.BlackWon,
+		Outcome:        game.OutcomeBlackWin,
 		Termination:    gameplay.TerminationCheckmate,
 		PendingDrawOffer: &gameplay.DrawOffer{
 			OfferID:   "offer",

@@ -3,10 +3,9 @@ package websocket
 import (
 	"context"
 
+	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/websocket/protocol"
-
-	"github.com/corentings/chess/v2"
 )
 
 func (h *Handler) handleMakeMove(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
@@ -73,7 +72,7 @@ func (h *Handler) handleDrawResponse(ctx context.Context, client *Session, messa
 
 func (h *Handler) broadcastGameState(ctx context.Context, client *Session, requestID string, state gameplay.GameSnapshot) error {
 	err := h.gameSessions.Broadcast(ctx, state.GameID, client, protocol.ServerEnvelope{Type: protocol.ServerGameState, RequestID: requestID, Payload: h.gameStatePayload(state)})
-	if state.Outcome != chess.NoOutcome {
+	if state.Outcome != game.OutcomeNone {
 		h.gameSessions.RemoveGame(state.GameID)
 	}
 	return err

@@ -10,7 +10,7 @@ import (
 	"github.com/corentings/chess/v2"
 )
 
-//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -destination=../websocket/game_service_mock.go -package=websocket -mock_names=Service=MockGameService ChessLI/internal/gameplay Service
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -destination=../gameplay/service_mock.go -package=gameplay -mock_names=Service=MockGameService ChessLI/internal/gameplay Service
 
 // Service is the application boundary offered to transports and other clients.
 // Implementations must support concurrent calls.

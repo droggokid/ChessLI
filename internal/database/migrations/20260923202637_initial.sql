@@ -1,8 +1,8 @@
 -- +goose Up
 CREATE TABLE profiles (
     id UUID PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,
-    email TEXT NOT NULL UNIQUE,
+    username TEXT NOT NULL,
+    email TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -47,6 +47,8 @@ CREATE TABLE completed_game_moves (
     game_id UUID NOT NULL REFERENCES completed_games (id) ON DELETE CASCADE,
     ply INTEGER NOT NULL CHECK (ply > 0),
     uci TEXT NOT NULL CHECK (CHAR_LENGTH(uci) BETWEEN 4 AND 5),
+    white_remaining_ms BIGINT NOT NULL CHECK (white_remaining_ms >= 0),
+    black_remaining_ms BIGINT NOT NULL CHECK (black_remaining_ms >= 0),
     PRIMARY KEY (game_id, ply)
 );
 

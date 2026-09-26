@@ -7,8 +7,9 @@ package sqlc
 
 import (
 	"context"
+	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
 const createProfile = `-- name: CreateProfile :one
@@ -22,17 +23,17 @@ RETURNING id, username, email, created_at
 `
 
 type CreateProfileParams struct {
-	ID           pgtype.UUID
+	ID           uuid.UUID
 	Username     string
 	Email        string
 	PasswordHash string
 }
 
 type CreateProfileRow struct {
-	ID        pgtype.UUID
+	ID        uuid.UUID
 	Username  string
 	Email     string
-	CreatedAt pgtype.Timestamptz
+	CreatedAt time.Time
 }
 
 func (q *Queries) CreateProfile(ctx context.Context, arg CreateProfileParams) (CreateProfileRow, error) {
@@ -55,11 +56,11 @@ func (q *Queries) CreateProfile(ctx context.Context, arg CreateProfileParams) (C
 const getProfileByEmailForLogin = `-- name: GetProfileByEmailForLogin :one
 SELECT id, password_hash
 FROM profiles
-WHERE email = $1
+WHERE LOWER(email) = LOWER($1)
 `
 
 type GetProfileByEmailForLoginRow struct {
-	ID           pgtype.UUID
+	ID           uuid.UUID
 	PasswordHash string
 }
 
@@ -77,13 +78,13 @@ WHERE id = $1
 `
 
 type GetProfileByIDRow struct {
-	ID        pgtype.UUID
+	ID        uuid.UUID
 	Username  string
 	Email     string
-	CreatedAt pgtype.Timestamptz
+	CreatedAt time.Time
 }
 
-func (q *Queries) GetProfileByID(ctx context.Context, id pgtype.UUID) (GetProfileByIDRow, error) {
+func (q *Queries) GetProfileByID(ctx context.Context, id uuid.UUID) (GetProfileByIDRow, error) {
 	row := q.db.QueryRow(ctx, getProfileByID, id)
 	var i GetProfileByIDRow
 	err := row.Scan(
@@ -103,13 +104,13 @@ ORDER BY id
 `
 
 type GetProfilesByIDsRow struct {
-	ID        pgtype.UUID
+	ID        uuid.UUID
 	Username  string
 	Email     string
-	CreatedAt pgtype.Timestamptz
+	CreatedAt time.Time
 }
 
-func (q *Queries) GetProfilesByIDs(ctx context.Context, ids []pgtype.UUID) ([]GetProfilesByIDsRow, error) {
+func (q *Queries) GetProfilesByIDs(ctx context.Context, ids []uuid.UUID) ([]GetProfilesByIDsRow, error) {
 	rows, err := q.db.Query(ctx, getProfilesByIDs, ids)
 	if err != nil {
 		return nil, err

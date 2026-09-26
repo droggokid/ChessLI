@@ -5,31 +5,35 @@
 package sqlc
 
 import (
-	"github.com/jackc/pgx/v5/pgtype"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 type CompletedGame struct {
-	ID             pgtype.UUID
-	WhiteProfileID pgtype.UUID
-	BlackProfileID pgtype.UUID
+	ID             uuid.UUID
+	WhiteProfileID uuid.UUID
+	BlackProfileID uuid.UUID
 	InitialTimeMs  int64
 	IncrementMs    int64
 	Outcome        string
 	Termination    string
 	FinalFen       string
-	CompletedAt    pgtype.Timestamptz
+	CompletedAt    time.Time
 }
 
 type CompletedGameMove struct {
-	GameID pgtype.UUID
-	Ply    int32
-	Uci    string
+	GameID           uuid.UUID
+	Ply              int32
+	Uci              string
+	WhiteRemainingMs int64
+	BlackRemainingMs int64
 }
 
 type Profile struct {
-	ID           pgtype.UUID
+	ID           uuid.UUID
 	Username     string
 	Email        string
 	PasswordHash string
-	CreatedAt    pgtype.Timestamptz
+	CreatedAt    time.Time
 }

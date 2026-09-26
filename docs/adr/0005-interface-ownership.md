@@ -23,6 +23,10 @@ publish an unnecessary mirror interface.
 Prefer concrete types. When one consumer needs a narrow capability, define the
 smallest useful interface in, or as close as practical to, that consumer.
 
+Persistence adapters are an exception: each concrete adapter owns one narrow
+interface as its mock seam and public storage contract. The interface must not
+expose database-driver or generated-query types.
+
 An intentional application service port may be owned by the application
 package. `gameplay.Service` is ChessLI's application port: it defines the
 gameplay use cases offered to WebSocket and future transports, while
@@ -31,6 +35,8 @@ gameplay use cases offered to WebSocket and future transports, while
 ### Constraints
 
 - Do not create an interface solely because a struct exists.
+- A persistence adapter may own exactly one interface; keep it limited to the
+  operations the adapter intentionally provides.
 - Consumer-specific interfaces are owned by the package that consumes the
   behavior.
 - An application-owned service interface must represent an intentional layer
@@ -45,8 +51,10 @@ gameplay use cases offered to WebSocket and future transports, while
 - Avoid service interfaces that combine unrelated operations.
 - Constructors return concrete types unless callers need an abstraction at
   construction time.
-- Keep generated mocks near the consumer that uses the test seam, even when the
-  application owns the interface.
+- Do not embed generated query objects in a persistence adapter; keep them as
+  an unexported implementation detail.
+- Keep generated mocks beside the interface they implement; regenerate them
+  from a colocated `go:generate` directive when that interface changes.
 
 ### Invariants
 

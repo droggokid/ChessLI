@@ -21,4 +21,4 @@ ORDER BY id;
 -- name: GetProfileByEmailForLogin :one
 SELECT id, password_hash
 FROM profiles
-WHERE email = $1;
+WHERE LOWER(email) = LOWER(sqlc.arg(email));
