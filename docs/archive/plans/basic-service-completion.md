@@ -1,7 +1,7 @@
 # Basic Service Completion Plan
 
 Status: Historical. The completed lifecycle work remains documented here;
-persistence moved to [Persistence Foundation Plan](persistence-foundation.md).
+persistence moved to [Persistence Foundation Plan](../../plans/persistence-foundation.md).
 
 ChessLI already finishes games through checkmate, stalemate, timeout,
 resignation, draw agreement, and engine-detected automatic draws. The remaining

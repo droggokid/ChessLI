@@ -153,7 +153,7 @@ func TestGameStatePayload(t *testing.T) {
 		WhiteProfileID: "white",
 		LastMoveSAN:    "Qh4#",
 		Outcome:        game.OutcomeBlackWin,
-		Termination:    gameplay.TerminationCheckmate,
+		Termination:    game.TerminationCheckmate,
 		PendingDrawOffer: &gameplay.DrawOffer{
 			OfferID:   "offer",
 			OfferedBy: "white",

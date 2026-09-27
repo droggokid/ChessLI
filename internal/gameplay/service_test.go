@@ -150,8 +150,8 @@ func TestGameServiceAutomaticallyExpiresPrivateGame(t *testing.T) {
 
 	select {
 	case state := <-expired:
-		if state.Outcome != domain.OutcomeBlackWin || state.Termination != TerminationTimeout {
-			t.Fatalf("expired state = (%v, %v), want (%v, %v)", state.Outcome, state.Termination, domain.OutcomeBlackWin, TerminationTimeout)
+		if state.Outcome != domain.OutcomeBlackWin || state.Termination != domain.TerminationTimeout {
+			t.Fatalf("expired state = (%v, %v), want (%v, %v)", state.Outcome, state.Termination, domain.OutcomeBlackWin, domain.TerminationTimeout)
 		}
 		if state.Version != 1 || state.WhiteRemaining != 0 {
 			t.Fatalf("expired state version/time = (%d, %v), want (1, 0)", state.Version, state.WhiteRemaining)
@@ -209,10 +209,10 @@ func TestGameServiceNotifiesTimeoutDetectedByCommandsOrState(t *testing.T) {
 
 			select {
 			case state := <-expired:
-				if state.Termination != TerminationTimeout {
+				if state.Termination != domain.TerminationTimeout {
 					t.Fatalf("expiration termination = %v, want timeout", state.Termination)
 				}
-			default:
+			case <-time.After(time.Second):
 				t.Fatal("timeout did not notify")
 			}
 			_ = tt.act(service, game.id)

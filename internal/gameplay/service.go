@@ -36,6 +36,8 @@ type GameService struct {
 	games         map[identity.GameID]*game
 	pickColor     func() chess.Color
 	onGameExpired func(GameSnapshot)
+	notifications sync.WaitGroup
+	closed        bool
 }
 
 // NewGameService returns an empty, in-memory gameplay service.
@@ -53,7 +55,7 @@ func NewGameService() *GameService {
 }
 
 // SetGameExpiredHandler sets the handler called asynchronously when a game clock expires.
-// The handler may be called concurrently.
+// The handler may be called concurrently and must return. Close waits for it.
 func (s *GameService) SetGameExpiredHandler(handler func(GameSnapshot)) {
 	s.mu.Lock()
 	s.onGameExpired = handler
@@ -61,12 +63,18 @@ func (s *GameService) SetGameExpiredHandler(handler func(GameSnapshot)) {
 }
 
 func (s *GameService) notifyGameExpired(state GameSnapshot) {
-	s.mu.RLock()
+	s.mu.Lock()
 	handler := s.onGameExpired
-	s.mu.RUnlock()
-	if handler != nil {
-		handler(state)
+	if handler == nil || s.closed {
+		s.mu.Unlock()
+		return
 	}
+	s.notifications.Add(1)
+	s.mu.Unlock()
+	go func() {
+		defer s.notifications.Done()
+		handler(state)
+	}()
 }
 
 // CreatePrivateGame creates a private game using the requested time control and color preference.
@@ -295,18 +303,21 @@ func (s *GameService) DeclineDraw(ctx context.Context, command DrawOfferResponse
 	return game.declineDraw(command)
 }
 
-// Close stops every pending game expiration timer.
+// Close stops pending expiration timers and waits for notification handlers.
+// Call it after application operations have stopped, never from a notification handler.
 func (s *GameService) Close() {
-	s.mu.RLock()
+	s.mu.Lock()
+	s.closed = true
 	games := make([]*game, 0, len(s.games))
 	for _, game := range s.games {
 		games = append(games, game)
 	}
-	s.mu.RUnlock()
+	s.mu.Unlock()
 
 	for _, game := range games {
 		game.stopExpiration()
 	}
+	s.notifications.Wait()
 }
 
 func (s *GameService) gameByID(id identity.GameID) (*game, error) {

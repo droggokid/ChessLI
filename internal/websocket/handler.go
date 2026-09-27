@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/websocket/protocol"
@@ -14,6 +15,9 @@ const sessionUnavailableMessage = "session is already in a game or matchmaking"
 // Handler decodes and dispatches WebSocket messages.
 // It is safe for concurrent use when its Service is.
 type Handler struct {
+	// ponytail: serialize in-memory transport work through queue acceptance;
+	// use per-game dispatch locks if throughput requires concurrent games.
+	dispatchMu   sync.Mutex
 	gameService  gameplay.Service
 	gameSessions *GameSessions
 }
@@ -29,6 +33,8 @@ func (h *Handler) Handle(ctx context.Context, client *Session, raw json.RawMessa
 	if err := json.Unmarshal(raw, &message); err != nil {
 		return h.sendError(ctx, client, "", protocol.ErrorInvalidMessage, "message must be valid JSON")
 	}
+	h.dispatchMu.Lock()
+	defer h.dispatchMu.Unlock()
 
 	switch message.Type {
 	case protocol.ClientCreateGame:

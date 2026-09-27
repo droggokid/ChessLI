@@ -12,8 +12,8 @@ import (
 func TestGameRepositoryRejectsInvalidGameID(t *testing.T) {
 	repository := &GameRepository{}
 
-	if _, err := repository.GetByID(context.Background(), identity.GameID("invalid")); err == nil {
-		t.Fatal("GetByID() error = nil, want invalid game ID error")
+	if _, err := repository.GetGameByID(context.Background(), identity.GameID("invalid")); err == nil {
+		t.Fatal("GetGameByID() error = nil, want invalid game ID error")
 	}
 }
 

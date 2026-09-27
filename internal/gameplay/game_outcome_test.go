@@ -1,6 +1,7 @@
 package gameplay
 
 import (
+	domain "ChessLI/internal/game"
 	"testing"
 
 	"github.com/corentings/chess/v2"
@@ -12,18 +13,18 @@ func TestTerminationReason(t *testing.T) {
 	tests := []struct {
 		name   string
 		method chess.Method
-		want   TerminationReason
+		want   domain.Termination
 	}{
-		{name: "none", method: chess.NoMethod, want: TerminationNone},
-		{name: "checkmate", method: chess.Checkmate, want: TerminationCheckmate},
-		{name: "stalemate", method: chess.Stalemate, want: TerminationStalemate},
-		{name: "resignation", method: chess.Resignation, want: TerminationResignation},
-		{name: "draw agreement", method: chess.DrawOffer, want: TerminationDrawAgreement},
-		{name: "threefold repetition", method: chess.ThreefoldRepetition, want: TerminationThreefoldRepetition},
-		{name: "fivefold repetition", method: chess.FivefoldRepetition, want: TerminationFivefoldRepetition},
-		{name: "fifty-move rule", method: chess.FiftyMoveRule, want: TerminationFiftyMoveRule},
-		{name: "seventy-five-move rule", method: chess.SeventyFiveMoveRule, want: TerminationSeventyFiveMoveRule},
-		{name: "insufficient material", method: chess.InsufficientMaterial, want: TerminationInsufficientMaterial},
+		{name: "none", method: chess.NoMethod, want: domain.TerminationNone},
+		{name: "checkmate", method: chess.Checkmate, want: domain.TerminationCheckmate},
+		{name: "stalemate", method: chess.Stalemate, want: domain.TerminationStalemate},
+		{name: "resignation", method: chess.Resignation, want: domain.TerminationResignation},
+		{name: "draw agreement", method: chess.DrawOffer, want: domain.TerminationDrawAgreement},
+		{name: "threefold repetition", method: chess.ThreefoldRepetition, want: domain.TerminationThreefoldRepetition},
+		{name: "fivefold repetition", method: chess.FivefoldRepetition, want: domain.TerminationFivefoldRepetition},
+		{name: "fifty-move rule", method: chess.FiftyMoveRule, want: domain.TerminationFiftyMoveRule},
+		{name: "seventy-five-move rule", method: chess.SeventyFiveMoveRule, want: domain.TerminationSeventyFiveMoveRule},
+		{name: "insufficient material", method: chess.InsufficientMaterial, want: domain.TerminationInsufficientMaterial},
 	}
 
 	for _, tt := range tests {

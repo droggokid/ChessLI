@@ -8,22 +8,6 @@ import (
 	"github.com/corentings/chess/v2"
 )
 
-type TerminationReason = domain.Termination
-
-const (
-	TerminationNone                 = domain.TerminationNone
-	TerminationCheckmate            = domain.TerminationCheckmate
-	TerminationStalemate            = domain.TerminationStalemate
-	TerminationResignation          = domain.TerminationResignation
-	TerminationTimeout              = domain.TerminationTimeout
-	TerminationDrawAgreement        = domain.TerminationDrawAgreement
-	TerminationThreefoldRepetition  = domain.TerminationThreefoldRepetition
-	TerminationFivefoldRepetition   = domain.TerminationFivefoldRepetition
-	TerminationFiftyMoveRule        = domain.TerminationFiftyMoveRule
-	TerminationSeventyFiveMoveRule  = domain.TerminationSeventyFiveMoveRule
-	TerminationInsufficientMaterial = domain.TerminationInsufficientMaterial
-)
-
 func terminationReason(method chess.Method) domain.Termination {
 	switch method {
 	case chess.Checkmate:

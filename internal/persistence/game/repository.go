@@ -57,7 +57,7 @@ func (r *GameRepository) CreateGame(ctx context.Context, game domain.Game) error
 	})
 }
 
-// CreateMoves stores moves for a game already created with Create.
+// CreateMoves stores moves for a game already created with CreateGame.
 // ponytail: writes are separate until persistence wiring supplies a transaction-capable dependency.
 func (r *GameRepository) CreateMoves(ctx context.Context, gameID identity.GameID, moves []domain.Move) error {
 	id, err := parseGameID(gameID)

@@ -66,7 +66,7 @@ func TestGameDrawOfferLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcceptDraw() error = %v", err)
 	}
-	if accepted.Version != 1 || accepted.Outcome != domain.OutcomeDraw || accepted.Termination != TerminationDrawAgreement || accepted.PendingDrawOffer != nil {
+	if accepted.Version != 1 || accepted.Outcome != domain.OutcomeDraw || accepted.Termination != domain.TerminationDrawAgreement || accepted.PendingDrawOffer != nil {
 		t.Fatalf("AcceptDraw() state = %+v, want finished draw at version 1", accepted)
 	}
 }

@@ -202,8 +202,8 @@ func TestGameRejectsMoveAfterCheckmate(t *testing.T) {
 			if result.Outcome != domain.OutcomeBlackWin {
 				t.Fatalf("final outcome = %v, want %v", result.Outcome, domain.OutcomeBlackWin)
 			}
-			if result.Termination != TerminationCheckmate {
-				t.Fatalf("final termination = %v, want %v", result.Termination, TerminationCheckmate)
+			if result.Termination != domain.TerminationCheckmate {
+				t.Fatalf("final termination = %v, want %v", result.Termination, domain.TerminationCheckmate)
 			}
 		}
 	}
@@ -286,8 +286,8 @@ func TestGameSnapshotAdjudicatesTimeout(t *testing.T) {
 	if snapshot.Outcome != domain.OutcomeBlackWin {
 		t.Fatalf("Outcome = %v, want %v", snapshot.Outcome, domain.OutcomeBlackWin)
 	}
-	if snapshot.Termination != TerminationTimeout {
-		t.Fatalf("Termination = %v, want %v", snapshot.Termination, TerminationTimeout)
+	if snapshot.Termination != domain.TerminationTimeout {
+		t.Fatalf("Termination = %v, want %v", snapshot.Termination, domain.TerminationTimeout)
 	}
 	if snapshot.Version != 1 {
 		t.Fatalf("Version = %d, want 1", snapshot.Version)
@@ -316,8 +316,8 @@ func TestGameTimeoutIsDrawWhenOpponentHasBareKing(t *testing.T) {
 
 	now = now.Add(time.Second)
 	snapshot := game.snapshot()
-	if snapshot.Outcome != domain.OutcomeDraw || snapshot.Termination != TerminationTimeout {
-		t.Fatalf("timeout state = (%v, %v), want (%v, %v)", snapshot.Outcome, snapshot.Termination, domain.OutcomeDraw, TerminationTimeout)
+	if snapshot.Outcome != domain.OutcomeDraw || snapshot.Termination != domain.TerminationTimeout {
+		t.Fatalf("timeout state = (%v, %v), want (%v, %v)", snapshot.Outcome, snapshot.Termination, domain.OutcomeDraw, domain.TerminationTimeout)
 	}
 }
 
@@ -346,8 +346,8 @@ func TestGameMoveReturnsTimeoutStateWithoutApplyingMove(t *testing.T) {
 	if snapshot.FEN != startingFEN || snapshot.LastMoveSAN != "" {
 		t.Fatalf("timed-out move changed position: FEN=%q lastMove=%q", snapshot.FEN, snapshot.LastMoveSAN)
 	}
-	if snapshot.Outcome != domain.OutcomeBlackWin || snapshot.Termination != TerminationTimeout {
-		t.Fatalf("timeout state = (%v, %v), want (%v, %v)", snapshot.Outcome, snapshot.Termination, domain.OutcomeBlackWin, TerminationTimeout)
+	if snapshot.Outcome != domain.OutcomeBlackWin || snapshot.Termination != domain.TerminationTimeout {
+		t.Fatalf("timeout state = (%v, %v), want (%v, %v)", snapshot.Outcome, snapshot.Termination, domain.OutcomeBlackWin, domain.TerminationTimeout)
 	}
 }
 

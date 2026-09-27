@@ -24,6 +24,22 @@ network or that the peer received it.
 session's writer loop. Confirmed delivery requires a separate protocol-level
 acknowledgement.
 
+The WebSocket handler serializes commands, admission, disconnect publication,
+and expiration publication through outgoing queue acceptance. This prevents
+stale active snapshots following a terminal state and registration after
+terminal membership cleanup. Gameplay expiration callbacks are asynchronous
+so they cannot re-enter a transport operation holding that dispatch lock.
+
+The current implementation uses one dispatch mutex for the in-memory service.
+This deliberately limits parallelism across games; replace it with per-game
+dispatch if throughput requires it. Do not put database or network I/O inside
+this critical section.
+
+A source send failure is returned after peer delivery is attempted. Peer
+enqueues for a committed action are independent of the source request's
+cancellation, always clear its request ID, and remain finite and non-blocking.
+Matchmaking admission publishes presence to already registered peers.
+
 ### Constraints
 
 - `Send` returns `protocol.ErrSessionNotRunning` when it observes that the

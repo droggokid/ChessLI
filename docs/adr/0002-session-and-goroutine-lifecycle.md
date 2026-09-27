@@ -24,6 +24,11 @@ and, when required by its lifecycle contract, waiting for it to finish.
 The WebSocket session owns its read and write loops. The server owns active
 connection lifetimes. Gameplay owns matchmaking cancellation callbacks and
 game expiration timers.
+Gameplay also owns asynchronous expiration-notification handlers. Service
+operations never wait for those handlers; `GameService.Close` stops new
+notifications, stops timers, and joins handlers already started. Close is
+called after application operations stop and must not be called from a
+notification handler.
 
 Long-running concurrent work terminates through context cancellation, an
 explicitly owned shutdown signal, or completion of owned input. Asynchronous

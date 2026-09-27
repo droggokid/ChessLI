@@ -42,6 +42,10 @@ its cancel function as part of explicit lifecycle management.
 - Canceling an operation eventually releases resources and goroutines owned by
   that operation.
 - Request cancellation does not accidentally cancel unrelated component work.
+- Finite, non-blocking peer enqueues after a committed action use
+  `context.WithoutCancel` so the acting player's cancellation does not suppress
+  another player's state. This detached context is neither stored nor used
+  for network I/O; session-owned contexts still govern socket writes.
 - Long-lived components do not retain request-scoped context values after the
   request lifetime.
 

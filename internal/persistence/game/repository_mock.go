@@ -42,18 +42,18 @@ func (m *MockGameRepository) EXPECT() *MockGameRepositoryMockRecorder {
 	return m.recorder
 }
 
-// Create mocks base method.
-func (m *MockGameRepository) Create(ctx context.Context, arg1 game.Game) error {
+// CreateGame mocks base method.
+func (m *MockGameRepository) CreateGame(ctx context.Context, arg1 game.Game) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", ctx, arg1)
+	ret := m.ctrl.Call(m, "CreateGame", ctx, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// Create indicates an expected call of Create.
-func (mr *MockGameRepositoryMockRecorder) Create(ctx, arg1 any) *gomock.Call {
+// CreateGame indicates an expected call of CreateGame.
+func (mr *MockGameRepositoryMockRecorder) CreateGame(ctx, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockGameRepository)(nil).Create), ctx, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateGame", reflect.TypeOf((*MockGameRepository)(nil).CreateGame), ctx, arg1)
 }
 
 // CreateMoves mocks base method.
@@ -70,34 +70,34 @@ func (mr *MockGameRepositoryMockRecorder) CreateMoves(ctx, gameID, moves any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateMoves", reflect.TypeOf((*MockGameRepository)(nil).CreateMoves), ctx, gameID, moves)
 }
 
-// GetByID mocks base method.
-func (m *MockGameRepository) GetByID(ctx context.Context, gameID identity.GameID) (game.Game, error) {
+// GetGameByID mocks base method.
+func (m *MockGameRepository) GetGameByID(ctx context.Context, gameID identity.GameID) (game.Game, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetByID", ctx, gameID)
+	ret := m.ctrl.Call(m, "GetGameByID", ctx, gameID)
 	ret0, _ := ret[0].(game.Game)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetByID indicates an expected call of GetByID.
-func (mr *MockGameRepositoryMockRecorder) GetByID(ctx, gameID any) *gomock.Call {
+// GetGameByID indicates an expected call of GetGameByID.
+func (mr *MockGameRepositoryMockRecorder) GetGameByID(ctx, gameID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockGameRepository)(nil).GetByID), ctx, gameID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGameByID", reflect.TypeOf((*MockGameRepository)(nil).GetGameByID), ctx, gameID)
 }
 
-// ListByProfileID mocks base method.
-func (m *MockGameRepository) ListByProfileID(ctx context.Context, profileID identity.ProfileID, pageOffset, pageSize int32) ([]game.Summary, error) {
+// ListGamesByProfileID mocks base method.
+func (m *MockGameRepository) ListGamesByProfileID(ctx context.Context, profileID identity.ProfileID, pageOffset, pageSize int32) ([]game.Summary, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListByProfileID", ctx, profileID, pageOffset, pageSize)
+	ret := m.ctrl.Call(m, "ListGamesByProfileID", ctx, profileID, pageOffset, pageSize)
 	ret0, _ := ret[0].([]game.Summary)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ListByProfileID indicates an expected call of ListByProfileID.
-func (mr *MockGameRepositoryMockRecorder) ListByProfileID(ctx, profileID, pageOffset, pageSize any) *gomock.Call {
+// ListGamesByProfileID indicates an expected call of ListGamesByProfileID.
+func (mr *MockGameRepositoryMockRecorder) ListGamesByProfileID(ctx, profileID, pageOffset, pageSize any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByProfileID", reflect.TypeOf((*MockGameRepository)(nil).ListByProfileID), ctx, profileID, pageOffset, pageSize)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListGamesByProfileID", reflect.TypeOf((*MockGameRepository)(nil).ListGamesByProfileID), ctx, profileID, pageOffset, pageSize)
 }
 
 // ListMovesByGameID mocks base method.

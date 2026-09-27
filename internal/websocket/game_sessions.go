@@ -117,43 +117,23 @@ func (g *GameSessions) RemoveGame(gameID identity.GameID) {
 }
 
 // Broadcast sends a message to the source and the other sessions in a game.
-// Source delivery is required; peer delivery is best effort without a request ID.
+// Returns the source send error after independently attempting peer delivery.
 func (g *GameSessions) Broadcast(ctx context.Context, gameID identity.GameID, source *Session, message protocol.ServerEnvelope) error {
-	g.mu.RLock()
-
-	registered := g.byGame[gameID]
-	sessions := make([]*Session, 0, len(registered))
-
-	for session := range registered {
-		sessions = append(sessions, session)
-	}
-
-	g.mu.RUnlock()
-
+	var sourceErr error
+	peerCtx := ctx
 	if source != nil {
-		if err := source.Send(ctx, message); err != nil {
-			return err
-		}
+		sourceErr = source.Send(ctx, message)
+		// Peer enqueues are finite, non-blocking effects of the committed action.
+		// They must survive cancellation of the acting player's operation.
+		peerCtx = context.WithoutCancel(ctx)
 	}
-
-	for _, session := range sessions {
-		if session == source {
-			continue
-		}
-
-		outgoing := message
-		outgoing.RequestID = ""
-
-		if err := session.Send(ctx, outgoing); err != nil {
-			slog.Warn("broadcast to game session", "game_id", gameID, "error", err)
-		}
-	}
-
-	return nil
+	g.BroadcastPeers(peerCtx, gameID, source, message)
+	return sourceErr
 }
 
 // BroadcastPeers sends a message to every game session except source.
 func (g *GameSessions) BroadcastPeers(ctx context.Context, gameID identity.GameID, source *Session, message protocol.ServerEnvelope) {
+	message.RequestID = ""
 	g.mu.RLock()
 
 	registered := g.byGame[gameID]
