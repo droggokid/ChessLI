@@ -43,7 +43,7 @@ func (m *MockGameRepository) EXPECT() *MockGameRepositoryMockRecorder {
 }
 
 // CreateGame mocks base method.
-func (m *MockGameRepository) CreateGame(ctx context.Context, arg1 game.Game) error {
+func (m *MockGameRepository) CreateGame(ctx context.Context, arg1 game.CompletedGame) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateGame", ctx, arg1)
 	ret0, _ := ret[0].(error)
@@ -71,10 +71,10 @@ func (mr *MockGameRepositoryMockRecorder) CreateMoves(ctx, gameID, moves any) *g
 }
 
 // GetGameByID mocks base method.
-func (m *MockGameRepository) GetGameByID(ctx context.Context, gameID identity.GameID) (game.Game, error) {
+func (m *MockGameRepository) GetGameByID(ctx context.Context, gameID identity.GameID) (game.CompletedGame, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetGameByID", ctx, gameID)
-	ret0, _ := ret[0].(game.Game)
+	ret0, _ := ret[0].(game.CompletedGame)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

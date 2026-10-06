@@ -15,9 +15,9 @@ import (
 //go:generate go run go.uber.org/mock/mockgen@v0.6.0 -destination=repository_mock.go -package=game -mock_names=Repository=MockGameRepository ChessLI/internal/persistence/game Repository
 
 type Repository interface {
-	CreateGame(ctx context.Context, game domain.Game) error
+	CreateGame(ctx context.Context, game domain.CompletedGame) error
 	CreateMoves(ctx context.Context, gameID identity.GameID, moves []domain.Move) error
-	GetGameByID(ctx context.Context, gameID identity.GameID) (domain.Game, error)
+	GetGameByID(ctx context.Context, gameID identity.GameID) (domain.CompletedGame, error)
 	ListGamesByProfileID(ctx context.Context, profileID identity.ProfileID, pageOffset, pageSize int32) ([]domain.Summary, error)
 	ListMovesByGameID(ctx context.Context, gameID identity.GameID) ([]domain.Move, error)
 }
@@ -26,11 +26,13 @@ type GameRepository struct {
 	queries *sqlc.Queries
 }
 
+// NewGameRepository returns a game repository backed by queries.
 func NewGameRepository(queries sqlc.Queries) *GameRepository {
 	return &GameRepository{queries: &queries}
 }
 
-func (r *GameRepository) CreateGame(ctx context.Context, game domain.Game) error {
+// CreateGame stores a completed game without its moves.
+func (r *GameRepository) CreateGame(ctx context.Context, game domain.CompletedGame) error {
 	id, err := parseGameID(game.ID)
 	if err != nil {
 		return err
@@ -57,7 +59,7 @@ func (r *GameRepository) CreateGame(ctx context.Context, game domain.Game) error
 	})
 }
 
-// CreateMoves stores moves for a game already created with CreateGame.
+// CreateMoves stores moves for an existing game; plies must start at one and be consecutive.
 // ponytail: writes are separate until persistence wiring supplies a transaction-capable dependency.
 func (r *GameRepository) CreateMoves(ctx context.Context, gameID identity.GameID, moves []domain.Move) error {
 	id, err := parseGameID(gameID)
@@ -85,19 +87,21 @@ func (r *GameRepository) CreateMoves(ctx context.Context, gameID identity.GameID
 	})
 }
 
-func (r *GameRepository) GetGameByID(ctx context.Context, gameID identity.GameID) (domain.Game, error) {
+// GetGameByID returns a completed game by ID, without its moves.
+func (r *GameRepository) GetGameByID(ctx context.Context, gameID identity.GameID) (domain.CompletedGame, error) {
 	id, err := parseGameID(gameID)
 	if err != nil {
-		return domain.Game{}, err
+		return domain.CompletedGame{}, err
 	}
 
 	row, err := r.queries.GetCompletedGameByID(ctx, id)
 	if err != nil {
-		return domain.Game{}, err
+		return domain.CompletedGame{}, err
 	}
 	return gameFromRow(row), nil
 }
 
+// ListGamesByProfileID returns a page of completed games, newest first.
 func (r *GameRepository) ListGamesByProfileID(ctx context.Context, profileID identity.ProfileID, pageOffset, pageSize int32) ([]domain.Summary, error) {
 	id, err := parseProfileID(profileID)
 	if err != nil {
@@ -129,6 +133,7 @@ func (r *GameRepository) ListGamesByProfileID(ctx context.Context, profileID ide
 	return games, nil
 }
 
+// ListMovesByGameID returns a game's moves in ascending ply order.
 func (r *GameRepository) ListMovesByGameID(ctx context.Context, gameID identity.GameID) ([]domain.Move, error) {
 	id, err := parseGameID(gameID)
 	if err != nil {
@@ -152,8 +157,8 @@ func (r *GameRepository) ListMovesByGameID(ctx context.Context, gameID identity.
 	return moves, nil
 }
 
-func gameFromRow(row sqlc.CompletedGame) domain.Game {
-	return domain.Game{
+func gameFromRow(row sqlc.CompletedGame) domain.CompletedGame {
+	return domain.CompletedGame{
 		ID:             identity.GameID(row.ID.String()),
 		WhiteProfileID: identity.ProfileID(row.WhiteProfileID.String()),
 		BlackProfileID: identity.ProfileID(row.BlackProfileID.String()),

@@ -9,7 +9,7 @@ import (
 
 var ErrMissingPayload = errors.New("message payload is missing")
 
-// DecodePayload decodes a client message payload into T and rejects unknown fields.
+// DecodePayload decodes a payload into T, rejecting missing or null payloads and unknown fields.
 func DecodePayload[T any](message ClientEnvelope) (T, error) {
 	var payload T
 

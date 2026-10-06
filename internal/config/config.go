@@ -19,7 +19,7 @@ type Config struct {
 	ServerAddress string
 }
 
-// Load reads and validates the application/server configuration from environment variables.
+// Load reads environment configuration, applying defaults and validating the log format.
 func Load() (Config, error) {
 	logFormat, err := parseLogFormat(os.Getenv(logFormatEnvironment))
 	if err != nil {

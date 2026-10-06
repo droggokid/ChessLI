@@ -80,7 +80,7 @@ func (g *GameSessions) Add(gameID identity.GameID, session *Session) error {
 	return nil
 }
 
-// Remove unregisters a session from its game and returns that game's ID.
+// Remove clears a session's registration and returns its game ID, or an empty ID if none.
 func (g *GameSessions) Remove(session *Session) identity.GameID {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -117,7 +117,7 @@ func (g *GameSessions) RemoveGame(gameID identity.GameID) {
 }
 
 // Broadcast sends a message to the source and the other sessions in a game.
-// Returns the source send error after independently attempting peer delivery.
+// It returns the source send error after independently attempting peer delivery.
 func (g *GameSessions) Broadcast(ctx context.Context, gameID identity.GameID, source *Session, message protocol.ServerEnvelope) error {
 	var sourceErr error
 	peerCtx := ctx
@@ -131,7 +131,8 @@ func (g *GameSessions) Broadcast(ctx context.Context, gameID identity.GameID, so
 	return sourceErr
 }
 
-// BroadcastPeers sends a message to every game session except source.
+// BroadcastPeers queues a message without a request ID for every game session except source.
+// Delivery errors are logged.
 func (g *GameSessions) BroadcastPeers(ctx context.Context, gameID identity.GameID, source *Session, message protocol.ServerEnvelope) {
 	message.RequestID = ""
 	g.mu.RLock()
@@ -155,7 +156,7 @@ func (g *GameSessions) BroadcastPeers(ctx context.Context, gameID identity.GameI
 	}
 }
 
-// IsConnected reports whether a profile has an active session registered to the game.
+// IsConnected reports whether a profile has a session registered to the game.
 func (g *GameSessions) IsConnected(
 	gameID identity.GameID,
 	profileID identity.ProfileID,

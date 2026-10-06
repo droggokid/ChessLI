@@ -32,12 +32,11 @@ type GameService struct {
 	// mu guards service state. Helpers ending in Locked require callers to hold it and do not lock it.
 	mu             sync.RWMutex
 	waitingPlayers map[timeControlKey]*waitingPlayer
-	// TODO: Persist completed games for player history and analysis.
-	games         map[identity.GameID]*game
-	pickColor     func() chess.Color
-	onGameExpired func(GameSnapshot)
-	notifications sync.WaitGroup
-	closed        bool
+	games          map[identity.GameID]*game
+	pickColor      func() chess.Color
+	onGameExpired  func(GameSnapshot)
+	notifications  sync.WaitGroup
+	closed         bool
 }
 
 // NewGameService returns an empty, in-memory gameplay service.
@@ -128,7 +127,7 @@ func (s *GameService) JoinPrivateGame(ctx context.Context, command JoinPrivateCo
 	return GameAssignment{GameID: game.id, Color: color}, nil
 }
 
-// ResumeGame reconnects player to disconnected game
+// ResumeGame returns the current game state for a participant.
 func (s *GameService) ResumeGame(ctx context.Context, command ResumeGameCommand) (GameSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return GameSnapshot{}, err
@@ -193,6 +192,83 @@ func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchma
 	deliverMatchResult(waiting.result, waitingResult)
 	deliverMatchResult(player.result, currentResult)
 	return MatchTicket{Result: player.result}, nil
+}
+
+// findOpponentLocked matches player within its time-control pool or queues it.
+// The caller must hold s.mu.
+func (s *GameService) findOpponentLocked(player *waitingPlayer) (opponent *waitingPlayer, queued bool, err error) {
+	s.removeCanceledPlayersLocked()
+
+	for _, waiting := range s.waitingPlayers {
+		if waiting.command.ProfileID == player.command.ProfileID {
+			return nil, false, ErrAlreadyQueued
+		}
+	}
+
+	key := player.command.timeControl
+	waiting, exists := s.waitingPlayers[key]
+	if !exists {
+		s.waitingPlayers[key] = player
+		return nil, true, nil
+	}
+
+	delete(s.waitingPlayers, key)
+	stopWaitingPlayerCleanup(waiting)
+	return waiting, false, nil
+}
+
+// removeCanceledPlayersLocked removes canceled players from every pool.
+// The caller must hold s.mu.
+func (s *GameService) removeCanceledPlayersLocked() {
+	for key, waiting := range s.waitingPlayers {
+		if !playerCanceled(waiting.done) {
+			continue
+		}
+
+		delete(s.waitingPlayers, key)
+		stopWaitingPlayerCleanup(waiting)
+		close(waiting.result)
+	}
+}
+
+func (s *GameService) removeWaitingPlayerOnCancel(player *waitingPlayer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := player.command.timeControl
+	if s.waitingPlayers[key] != player {
+		return
+	}
+
+	delete(s.waitingPlayers, key)
+	player.stopCleanup = nil
+	close(player.result)
+}
+
+// createMatchLocked creates and stores a game for two matched players.
+// The caller must hold s.mu.
+func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (GameAssignment, GameAssignment, *game, error) {
+	waitingColor := s.pickColor()
+	currentColor := waitingColor.Other()
+
+	whiteProfileID, blackProfileID, err := assignMatchmakingColors(
+		waiting.command.ProfileID,
+		current.command.ProfileID,
+		waitingColor,
+	)
+	if err != nil {
+		return GameAssignment{}, GameAssignment{}, nil, err
+	}
+
+	gameID := identity.NewGameID()
+	timeControl := current.command.timeControl
+	game := newGame(gameID, whiteProfileID, blackProfileID, timeControl.initial, timeControl.increment)
+	s.games[gameID] = game
+
+	return GameAssignment{GameID: gameID, Color: waitingColor},
+		GameAssignment{GameID: gameID, Color: currentColor},
+		game,
+		nil
 }
 
 // MakeMove applies a move to the identified game on behalf of a profile.
@@ -341,81 +417,4 @@ func (s *GameService) handleColorPreference(preference ColorPreference) (chess.C
 	default:
 		return chess.NoColor, ErrInvalidColorPreference
 	}
-}
-
-// findOpponentLocked matches player within its time-control pool or queues it.
-// The caller must hold s.mu.
-func (s *GameService) findOpponentLocked(player *waitingPlayer) (opponent *waitingPlayer, queued bool, err error) {
-	s.removeCanceledPlayersLocked()
-
-	for _, waiting := range s.waitingPlayers {
-		if waiting.command.ProfileID == player.command.ProfileID {
-			return nil, false, ErrAlreadyQueued
-		}
-	}
-
-	key := player.command.timeControl
-	waiting, exists := s.waitingPlayers[key]
-	if !exists {
-		s.waitingPlayers[key] = player
-		return nil, true, nil
-	}
-
-	delete(s.waitingPlayers, key)
-	stopWaitingPlayerCleanup(waiting)
-	return waiting, false, nil
-}
-
-// removeCanceledPlayersLocked removes canceled players from every pool.
-// The caller must hold s.mu.
-func (s *GameService) removeCanceledPlayersLocked() {
-	for key, waiting := range s.waitingPlayers {
-		if !playerCanceled(waiting.done) {
-			continue
-		}
-
-		delete(s.waitingPlayers, key)
-		stopWaitingPlayerCleanup(waiting)
-		close(waiting.result)
-	}
-}
-
-func (s *GameService) removeWaitingPlayerOnCancel(player *waitingPlayer) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	key := player.command.timeControl
-	if s.waitingPlayers[key] != player {
-		return
-	}
-
-	delete(s.waitingPlayers, key)
-	player.stopCleanup = nil
-	close(player.result)
-}
-
-// createMatchLocked creates and stores a game for two matched players.
-// The caller must hold s.mu.
-func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (GameAssignment, GameAssignment, *game, error) {
-	waitingColor := s.pickColor()
-	currentColor := waitingColor.Other()
-
-	whiteProfileID, blackProfileID, err := assignMatchmakingColors(
-		waiting.command.ProfileID,
-		current.command.ProfileID,
-		waitingColor,
-	)
-	if err != nil {
-		return GameAssignment{}, GameAssignment{}, nil, err
-	}
-
-	gameID := identity.NewGameID()
-	timeControl := current.command.timeControl
-	game := newGame(gameID, whiteProfileID, blackProfileID, timeControl.initial, timeControl.increment)
-	s.games[gameID] = game
-
-	return GameAssignment{GameID: gameID, Color: waitingColor},
-		GameAssignment{GameID: gameID, Color: currentColor},
-		game,
-		nil
 }

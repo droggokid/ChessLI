@@ -10,11 +10,12 @@ type Profile struct {
 	ID ProfileID
 }
 
+// NewProfile returns a profile with a new unique ID.
 func NewProfile() Profile {
 	return Profile{ID: NewProfileID()}
 }
 
-// ParseProfile builds a profile from a previously issued profile ID.
+// ParseProfile parses a UUID into a profile with a canonical ID.
 func ParseProfile(value string) (Profile, error) {
 	id, err := uuid.Parse(value)
 	if err != nil {

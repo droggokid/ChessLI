@@ -32,7 +32,7 @@ const (
 	TerminationInsufficientMaterial Termination = "insufficient_material"
 )
 
-type Game struct {
+type CompletedGame struct {
 	ID             identity.GameID
 	WhiteProfileID identity.ProfileID
 	BlackProfileID identity.ProfileID

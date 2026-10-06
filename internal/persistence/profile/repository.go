@@ -23,12 +23,14 @@ type ProfileRepository struct {
 	queries *sqlc.Queries
 }
 
+// NewProfileRepository returns a profile repository backed by queries.
 func NewProfileRepository(queries sqlc.Queries) *ProfileRepository {
 	return &ProfileRepository{
 		queries: &queries,
 	}
 }
 
+// CreateProfile stores a new profile with the supplied password hash.
 func (r *ProfileRepository) CreateProfile(ctx context.Context, username, email, passwordHash string) (profile.Profile, error) {
 	row, err := r.queries.CreateProfile(ctx, sqlc.CreateProfileParams{
 		ID:           uuid.New(),
@@ -48,6 +50,7 @@ func (r *ProfileRepository) CreateProfile(ctx context.Context, username, email, 
 	}, nil
 }
 
+// GetProfileByID returns a profile by ID.
 func (r *ProfileRepository) GetProfileByID(ctx context.Context, id identity.ProfileID) (profile.Profile, error) {
 	profileID, err := uuid.Parse(string(id))
 	if err != nil {
@@ -67,6 +70,7 @@ func (r *ProfileRepository) GetProfileByID(ctx context.Context, id identity.Prof
 	}, nil
 }
 
+// GetProfilesByIDs returns matching profiles ordered by ID, omitting missing IDs.
 func (r *ProfileRepository) GetProfilesByIDs(ctx context.Context, ids []identity.ProfileID) ([]profile.Profile, error) {
 	profileIDs := make([]uuid.UUID, len(ids))
 	for i, id := range ids {
@@ -94,6 +98,7 @@ func (r *ProfileRepository) GetProfilesByIDs(ctx context.Context, ids []identity
 	return profiles, nil
 }
 
+// GetCredentialByEmail returns login credentials using a case-insensitive email lookup.
 func (r *ProfileRepository) GetCredentialByEmail(ctx context.Context, email string) (profile.LoginCredential, error) {
 	row, err := r.queries.GetProfileByEmailForLogin(ctx, email)
 	if err != nil {
