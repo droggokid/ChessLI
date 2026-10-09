@@ -46,9 +46,9 @@ func (c *gameClock) remaining(now time.Time, active chess.Color) (white, black t
 
 	switch active {
 	case chess.White:
-		white = clampDuration(white - elapsed)
+		white = max(white-elapsed, 0)
 	case chess.Black:
-		black = clampDuration(black - elapsed)
+		black = max(black-elapsed, 0)
 	default:
 		return white, black
 	}
@@ -133,12 +133,4 @@ func (c *gameClock) stop(now time.Time, active chess.Color) {
 
 	c.whiteRemaining, c.blackRemaining = c.remaining(now, active)
 	c.running = false
-}
-
-func clampDuration(value time.Duration) time.Duration {
-	if value < 0 {
-		return 0
-	}
-
-	return value
 }

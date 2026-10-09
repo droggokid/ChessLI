@@ -3,7 +3,7 @@ package gameplay
 import (
 	"time"
 
-	"github.com/corentings/chess/v2"
+	domain "ChessLI/internal/game"
 )
 
 // scheduleExpiration replaces the real timer for the active turn.
@@ -17,7 +17,7 @@ func (g *game) scheduleExpiration(onExpired func(GameSnapshot)) {
 	g.expirationID++
 
 	deadline, ok := g.clock.deadline(g.engine.Position().Turn())
-	if !ok || g.outcome != chess.NoOutcome {
+	if !ok || g.outcome != domain.OutcomeNone {
 		g.mu.Unlock()
 		return
 	}
@@ -39,7 +39,7 @@ func (g *game) scheduleExpiration(onExpired func(GameSnapshot)) {
 func (g *game) expireFromTimer(expirationID, expectedVersion uint64, deadline time.Time, onExpired func(GameSnapshot)) {
 	g.mu.Lock()
 
-	if g.expirationID != expirationID || g.version != expectedVersion || g.outcome != chess.NoOutcome {
+	if g.expirationID != expirationID || g.version != expectedVersion || g.outcome != domain.OutcomeNone {
 		g.mu.Unlock()
 		return
 	}
@@ -68,7 +68,7 @@ func (g *game) expireFromTimer(expirationID, expectedVersion uint64, deadline ti
 
 func (g *game) notifyExpiration(onExpired func(GameSnapshot)) {
 	g.mu.Lock()
-	if g.termination != TerminationTimeout || g.expirationNotified {
+	if g.termination != domain.TerminationTimeout || g.expirationNotified {
 		g.mu.Unlock()
 		return
 	}

@@ -3,6 +3,7 @@ package websocket
 import (
 	"time"
 
+	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
@@ -85,8 +86,8 @@ func mapMoveNotation(notation protocol.MoveNotation) (gameplay.MoveNotation, err
 	}
 }
 
-func mapGameStatus(outcome chess.Outcome) protocol.GameStatus {
-	if outcome == chess.NoOutcome {
+func mapGameStatus(outcome game.Outcome) protocol.GameStatus {
+	if outcome == game.OutcomeNone {
 		return protocol.GameStatusActive
 	}
 
@@ -106,19 +107,19 @@ func mapColorPreference(preference protocol.ColorPreference) (gameplay.ColorPref
 	}
 }
 
-func mapOutcome(outcome chess.Outcome, termination gameplay.TerminationReason) *protocol.GameOutcome {
-	if outcome == chess.NoOutcome || outcome == chess.UnknownOutcome {
+func mapOutcome(outcome game.Outcome, termination game.Termination) *protocol.GameOutcome {
+	if outcome == game.OutcomeNone || outcome == game.OutcomeUnknown {
 		return nil
 	}
 
 	var result protocol.GameResult
 
 	switch outcome {
-	case chess.WhiteWon:
+	case game.OutcomeWhiteWin:
 		result = protocol.ResultWhiteWin
-	case chess.BlackWon:
+	case game.OutcomeBlackWin:
 		result = protocol.ResultBlackWin
-	case chess.Draw:
+	case game.OutcomeDraw:
 		result = protocol.ResultDraw
 	default:
 		return nil
@@ -127,25 +128,25 @@ func mapOutcome(outcome chess.Outcome, termination gameplay.TerminationReason) *
 	var reason protocol.GameOverReason
 
 	switch termination {
-	case gameplay.TerminationCheckmate:
+	case game.TerminationCheckmate:
 		reason = protocol.GameOverCheckmate
-	case gameplay.TerminationStalemate:
+	case game.TerminationStalemate:
 		reason = protocol.GameOverStalemate
-	case gameplay.TerminationResignation:
+	case game.TerminationResignation:
 		reason = protocol.GameOverResignation
-	case gameplay.TerminationTimeout:
+	case game.TerminationTimeout:
 		reason = protocol.GameOverTimeout
-	case gameplay.TerminationDrawAgreement:
+	case game.TerminationDrawAgreement:
 		reason = protocol.GameOverAgreement
-	case gameplay.TerminationThreefoldRepetition:
+	case game.TerminationThreefoldRepetition:
 		reason = protocol.GameOverThreefoldRepetition
-	case gameplay.TerminationFivefoldRepetition:
+	case game.TerminationFivefoldRepetition:
 		reason = protocol.GameOverFivefoldRepetition
-	case gameplay.TerminationFiftyMoveRule:
+	case game.TerminationFiftyMoveRule:
 		reason = protocol.GameOverFiftyMoveRule
-	case gameplay.TerminationSeventyFiveMoveRule:
+	case game.TerminationSeventyFiveMoveRule:
 		reason = protocol.GameOverSeventyFiveMoveRule
-	case gameplay.TerminationInsufficientMaterial:
+	case game.TerminationInsufficientMaterial:
 		reason = protocol.GameOverInsufficientMaterial
 	default:
 		return nil

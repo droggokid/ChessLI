@@ -23,6 +23,20 @@ final state is queued for delivery, its live connections can start or join
 another game. Open a fresh connection or restart the server when a scenario
 requires a clean game.
 
+A former participant can use `game.resume` to load a finished game's final
+read-only state. This does not occupy a game session or mark either player
+connected.
+
+State publication and admission are ordered so a delayed operation cannot
+publish active state after a finished state or occupy a finished game.
+An acting player's stopped connection, full queue, or canceled request does
+not suppress the opponent's delivery attempt. Delivery is still best effort;
+queue acceptance does not confirm receipt.
+
+During matchmaking, an initial state may show the opponent as disconnected
+until that opponent's result is processed. An unsolicited `game.state` then
+reports the updated presence.
+
 The expected-error examples below show the `payload` portion of the server's
 `error` envelope.
 
@@ -417,18 +431,43 @@ Expected error:
 {"code":"invalid_message","message":"session is already in a game or matchmaking"}
 ```
 
+### Profile already participating or queued
+
+Keep the original connection open. Copy its `profileId` from
+`connection.ready` and open a second connection with the same identity:
+
+```sh
+websocat 'ws://localhost:8080/ws?profileId=PROFILE_ID'
+```
+
+If the original connection created or joined `GAME_ID`, send from the second:
+
+```json
+{"type":"game.join","requestId":"duplicate-profile-join","payload":{"gameId":"GAME_ID"}}
+```
+
+Expected error:
+
+```json
+{"code":"invalid_message","message":"already a participant in this game"}
+```
+
+For a separate scenario, have the original connection enter matchmaking and
+remain unmatched. Send from the second connection:
+
+```json
+{"type":"matchmaking.enter","requestId":"duplicate-profile-queue","payload":{"timeControl":"10+0"}}
+```
+
+Expected error:
+
+```json
+{"code":"invalid_message","message":"already queued for matchmaking"}
+```
+
 ## Errors that are not currently reachable through WebSocket payloads
 
-The following gameplay errors exist in `mapApplicationError`, but the current
-handlers cannot produce them:
-
-- `ErrAlreadyParticipant`: an existing session is rejected by `GameSessions`
-  before the gameplay join method is called, while a new connection receives a
-  new profile ID.
-- `ErrAlreadyQueued`: session lifecycle validation rejects a second
-  matchmaking request before the gameplay service is called.
-- The default `internal_error` mapping has no intentional client payload that
-  triggers it; it is a fallback for unexpected server errors.
-
-These entries should receive payload examples when their corresponding
-WebSocket paths become reachable.
+The default `internal_error` mapping has no intentional client payload that
+triggers it; it is a fallback for unexpected server errors.
+`ErrInvalidProfileID` is also unreachable through gameplay requests because
+the connection handshake always supplies a generated or parsed profile ID.

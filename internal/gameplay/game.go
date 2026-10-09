@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	domain "ChessLI/internal/game"
 	"ChessLI/internal/identity"
 
 	"github.com/corentings/chess/v2"
@@ -25,8 +26,8 @@ type game struct {
 	expirationID       uint64
 	expirationNotified bool
 	now                func() time.Time
-	outcome            chess.Outcome
-	termination        TerminationReason
+	outcome            domain.Outcome
+	termination        domain.Termination
 	drawOffers         drawOfferState
 }
 
@@ -41,8 +42,8 @@ func newGame(id identity.GameID, white identity.ProfileID, black identity.Profil
 		engine:         chess.NewGame(),
 		clock:          newGameClock(initialTime, increment),
 		now:            time.Now,
-		outcome:        chess.NoOutcome,
-		termination:    TerminationNone,
+		outcome:        domain.OutcomeNone,
+		termination:    domain.TerminationNone,
 		drawOffers: drawOfferState{
 			lastOfferedAt: make(map[identity.ProfileID]time.Time, 2),
 		},
@@ -96,7 +97,7 @@ func (g *game) move(command MoveCommand) (GameSnapshot, error) {
 	g.clock.completeMove(now, mover)
 	g.syncOutcomeFromEngineLocked()
 
-	if g.outcome != chess.NoOutcome {
+	if g.outcome != domain.OutcomeNone {
 		g.clock.stop(now, g.engine.Position().Turn())
 	}
 
@@ -112,7 +113,7 @@ func (g *game) validateMoveLocked(source identity.ProfileID) error {
 		return err
 	}
 
-	if g.outcome != chess.NoOutcome {
+	if g.outcome != domain.OutcomeNone {
 		return ErrGameFinished
 	}
 	if source != g.whiteProfileID && source != g.blackProfileID {
@@ -143,6 +144,17 @@ func (g *game) validateReadyLocked() error {
 	}
 
 	return nil
+}
+
+func colorFromProfileID(profileID, whiteProfileID, blackProfileID identity.ProfileID) (chess.Color, error) {
+	switch profileID {
+	case whiteProfileID:
+		return chess.White, nil
+	case blackProfileID:
+		return chess.Black, nil
+	default:
+		return chess.NoColor, ErrNotParticipant
+	}
 }
 
 // joinPrivate assigns a profile to the unoccupied color in a private game.
@@ -184,7 +196,7 @@ func (g *game) resign(command ResignCommand) (GameSnapshot, error) {
 	if err := g.validateReadyLocked(); err != nil {
 		return GameSnapshot{}, err
 	}
-	if g.expireLocked(now) || g.outcome != chess.NoOutcome {
+	if g.expireLocked(now) || g.outcome != domain.OutcomeNone {
 		return GameSnapshot{}, ErrGameFinished
 	}
 

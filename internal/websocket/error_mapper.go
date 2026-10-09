@@ -9,6 +9,8 @@ import (
 
 func mapApplicationError(err error) (protocol.ErrorCode, string) {
 	switch {
+	case errors.Is(err, protocol.ErrSessionAlreadyInGame):
+		return protocol.ErrorInvalidMessage, sessionUnavailableMessage
 	case errors.Is(err, gameplay.ErrGameNotFound):
 		return protocol.ErrorGameNotFound, "game not found"
 	case errors.Is(err, gameplay.ErrGameFull):

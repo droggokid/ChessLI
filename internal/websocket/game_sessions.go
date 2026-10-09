@@ -14,7 +14,6 @@ type GameSessions struct {
 
 	byGame    map[identity.GameID]map[*Session]struct{}
 	bySession map[*Session]identity.GameID
-	changed   map[identity.GameID]chan struct{}
 }
 
 // NewGameSessions returns an empty registry of sessions grouped by game.
@@ -22,7 +21,6 @@ func NewGameSessions() *GameSessions {
 	return &GameSessions{
 		byGame:    make(map[identity.GameID]map[*Session]struct{}),
 		bySession: make(map[*Session]identity.GameID),
-		changed:   make(map[identity.GameID]chan struct{}),
 	}
 }
 
@@ -54,6 +52,10 @@ func (g *GameSessions) Release(session *Session) {
 func (g *GameSessions) Add(gameID identity.GameID, session *Session) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if sessionRunState(session.runState.Load()) != sessionRunning {
+		return protocol.ErrSessionNotRunning
+	}
+
 	if currentGameID, exists := g.bySession[session]; exists {
 		if currentGameID == gameID {
 			return nil
@@ -74,12 +76,11 @@ func (g *GameSessions) Add(gameID identity.GameID, session *Session) error {
 
 	g.byGame[gameID][session] = struct{}{}
 	g.bySession[session] = gameID
-	g.signalChangedLocked(gameID)
 
 	return nil
 }
 
-// Remove unregisters a session from its game and returns that game's ID.
+// Remove clears a session's registration and returns its game ID, or an empty ID if none.
 func (g *GameSessions) Remove(session *Session) identity.GameID {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -96,7 +97,6 @@ func (g *GameSessions) Remove(session *Session) identity.GameID {
 
 	sessions := g.byGame[gameID]
 	delete(sessions, session)
-	g.signalChangedLocked(gameID)
 
 	if len(sessions) == 0 {
 		delete(g.byGame, gameID)
@@ -114,47 +114,27 @@ func (g *GameSessions) RemoveGame(gameID identity.GameID) {
 		delete(g.bySession, session)
 	}
 	delete(g.byGame, gameID)
-	g.signalChangedLocked(gameID)
 }
 
 // Broadcast sends a message to the source and the other sessions in a game.
-// Source delivery is required; peer delivery is best effort without a request ID.
+// It returns the source send error after independently attempting peer delivery.
 func (g *GameSessions) Broadcast(ctx context.Context, gameID identity.GameID, source *Session, message protocol.ServerEnvelope) error {
-	g.mu.RLock()
-
-	registered := g.byGame[gameID]
-	sessions := make([]*Session, 0, len(registered))
-
-	for session := range registered {
-		sessions = append(sessions, session)
-	}
-
-	g.mu.RUnlock()
-
+	var sourceErr error
+	peerCtx := ctx
 	if source != nil {
-		if err := source.Send(ctx, message); err != nil {
-			return err
-		}
+		sourceErr = source.Send(ctx, message)
+		// Peer enqueues are finite, non-blocking effects of the committed action.
+		// They must survive cancellation of the acting player's operation.
+		peerCtx = context.WithoutCancel(ctx)
 	}
-
-	for _, session := range sessions {
-		if session == source {
-			continue
-		}
-
-		outgoing := message
-		outgoing.RequestID = ""
-
-		if err := session.Send(ctx, outgoing); err != nil {
-			slog.Warn("broadcast to game session", "game_id", gameID, "error", err)
-		}
-	}
-
-	return nil
+	g.BroadcastPeers(peerCtx, gameID, source, message)
+	return sourceErr
 }
 
-// BroadcastPeers sends a message to every game session except source.
+// BroadcastPeers queues a message without a request ID for every game session except source.
+// Delivery errors are logged.
 func (g *GameSessions) BroadcastPeers(ctx context.Context, gameID identity.GameID, source *Session, message protocol.ServerEnvelope) {
+	message.RequestID = ""
 	g.mu.RLock()
 
 	registered := g.byGame[gameID]
@@ -176,38 +156,7 @@ func (g *GameSessions) BroadcastPeers(ctx context.Context, gameID identity.GameI
 	}
 }
 
-// WaitForPlayers waits until count sessions have registered with a game.
-func (g *GameSessions) WaitForPlayers(ctx context.Context, gameID identity.GameID, count int) error {
-	for {
-		g.mu.Lock()
-		if len(g.byGame[gameID]) >= count {
-			g.mu.Unlock()
-			return nil
-		}
-
-		changed := g.changed[gameID]
-		if changed == nil {
-			changed = make(chan struct{})
-			g.changed[gameID] = changed
-		}
-		g.mu.Unlock()
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-changed:
-		}
-	}
-}
-
-func (g *GameSessions) signalChangedLocked(gameID identity.GameID) {
-	if changed := g.changed[gameID]; changed != nil {
-		close(changed)
-		delete(g.changed, gameID)
-	}
-}
-
-// IsConnected reports whether a profile has an active session registered to the game.
+// IsConnected reports whether a profile has a session registered to the game.
 func (g *GameSessions) IsConnected(
 	gameID identity.GameID,
 	profileID identity.ProfileID,

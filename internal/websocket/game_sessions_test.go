@@ -101,6 +101,19 @@ func TestGameSessionsRejectsDuplicateProfileInGame(t *testing.T) {
 	}
 }
 
+func TestGameSessionsRejectsStoppedSession(t *testing.T) {
+	t.Parallel()
+
+	registry := NewGameSessions()
+	session := newQueuedSession("player")
+	session.runState.Store(uint32(sessionStopped))
+
+	err := registry.Add("game", session)
+	if !errors.Is(err, protocol.ErrSessionNotRunning) {
+		t.Fatalf("Add() error = %v, want %v", err, protocol.ErrSessionNotRunning)
+	}
+}
+
 func TestGameSessionsRemoveGameReleasesAllSessions(t *testing.T) {
 	t.Parallel()
 
@@ -154,27 +167,41 @@ func TestGameSessionsBroadcastPreservesOnlySourceRequestID(t *testing.T) {
 	}
 }
 
-func TestGameSessionsBroadcastReturnsSourceFailure(t *testing.T) {
+func TestGameSessionsBroadcastAttemptsPeersAfterSourceFailure(t *testing.T) {
 	t.Parallel()
-
-	registry := NewGameSessions()
-	source := newQueuedSession("source")
-	peer := newQueuedSession("peer")
-	source.outgoing = make(chan protocol.ServerEnvelope)
-	source.runState.Store(uint32(sessionStopped))
-	if err := registry.Add("game", source); err != nil {
-		t.Fatalf("Add(source) error = %v", err)
-	}
-	if err := registry.Add("game", peer); err != nil {
-		t.Fatalf("Add(peer) error = %v", err)
-	}
-
-	err := registry.Broadcast(context.Background(), "game", source, protocol.ServerEnvelope{})
-	if !errors.Is(err, protocol.ErrSessionNotRunning) {
-		t.Fatalf("Broadcast() error = %v, want %v", err, protocol.ErrSessionNotRunning)
-	}
-	if len(peer.outgoing) != 0 {
-		t.Fatalf("peer received %d messages after source failure, want 0", len(peer.outgoing))
+	for _, failure := range []string{"stopped", "full", "canceled"} {
+		t.Run(failure, func(t *testing.T) {
+			registry := NewGameSessions()
+			source, peer := newQueuedSession("source"), newQueuedSession("peer")
+			for _, session := range []*Session{source, peer} {
+				if err := registry.Add("game", session); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var wantErr error
+			switch failure {
+			case "stopped":
+				source.runState.Store(uint32(sessionStopped))
+				wantErr = protocol.ErrSessionNotRunning
+			case "full":
+				for len(source.outgoing) < cap(source.outgoing) {
+					source.outgoing <- protocol.ServerEnvelope{}
+				}
+				wantErr = protocol.ErrSessionQueueFull
+			case "canceled":
+				cancel()
+				wantErr = context.Canceled
+			}
+			message := protocol.ServerEnvelope{Type: protocol.ServerGameState, RequestID: "source-request"}
+			if err := registry.Broadcast(ctx, "game", source, message); !errors.Is(err, wantErr) {
+				t.Fatalf("Broadcast() error = %v, want %v", err, wantErr)
+			}
+			if got := receiveEnvelope(t, peer); got.Type != message.Type || got.RequestID != "" {
+				t.Fatalf("peer envelope = %+v, want unsolicited state", got)
+			}
+		})
 	}
 }
 

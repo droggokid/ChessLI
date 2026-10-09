@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/corentings/chess/v2"
+	domain "ChessLI/internal/game"
 )
 
 func TestGameDrawOfferLifecycle(t *testing.T) {
@@ -66,7 +66,7 @@ func TestGameDrawOfferLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcceptDraw() error = %v", err)
 	}
-	if accepted.Version != 1 || accepted.Outcome != chess.Draw || accepted.Termination != TerminationDrawAgreement || accepted.PendingDrawOffer != nil {
+	if accepted.Version != 1 || accepted.Outcome != domain.OutcomeDraw || accepted.Termination != domain.TerminationDrawAgreement || accepted.PendingDrawOffer != nil {
 		t.Fatalf("AcceptDraw() state = %+v, want finished draw at version 1", accepted)
 	}
 }

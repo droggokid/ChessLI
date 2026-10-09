@@ -92,6 +92,13 @@ reasons are `checkmate`, `stalemate`, `timeout`, `fivefold_repetition`,
 `draw_agreement`. Threefold and fifty-move claims are not implemented yet.
 After the final state is queued for delivery, both live connections are free to
 create, join, or match into another game.
+The server attempts delivery to the opponent even if the acting player's
+connection has stopped, its queue is full, or its request was canceled.
+State publication and admission are ordered so a delayed operation cannot
+publish active state after a finished state or occupy a finished game.
+Delivery remains best effort: queue acceptance does not confirm receipt.
+A former participant can use `game.resume` to load a finished game's final
+state. That view is read-only and does not mark either player connected.
 
 Clocks are authoritative on the server. When the active player's time reaches
 zero, the server automatically increments the state version and broadcasts a
@@ -111,6 +118,9 @@ terminals, enter the same matchmaking pool:
 Each player first receives `matchmaking.entered`. Once both players are queued,
 each receives `matchmaking.found` containing the shared `gameId` and that
 player's assigned `color`, followed by the authoritative `game.initial` state.
+Players are registered as their matchmaking results are processed. If the
+first initial state shows the opponent as disconnected, a subsequent
+unsolicited `game.state` reports that opponent's registration.
 
 In whichever terminal was assigned White, replace `GAME_ID` and play the first
 move:
@@ -129,6 +139,12 @@ latest `game.state` response:
 Supported matchmaking presets are `1+0`, `1+1`, `2+1`, `3+0`, `3+2`, `5+0`,
 `10+0`, `10+5`, `15+10`, and `30+0`. Players only match when they select the
 same preset.
+
+Opening another connection with the same `?profileId=PROFILE_ID` does not
+bypass gameplay checks: joining a game that already contains that profile
+returns `invalid_message` / `already a participant in this game`, and entering
+matchmaking while that profile is already queued returns `invalid_message` /
+`already queued for matchmaking`.
 
 For payloads that exercise the current error responses, see
 [Manual WebSocket Error Testing](docs/manual-error-testing.md).

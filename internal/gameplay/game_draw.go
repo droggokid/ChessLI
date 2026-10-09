@@ -3,6 +3,7 @@ package gameplay
 import (
 	"time"
 
+	domain "ChessLI/internal/game"
 	"ChessLI/internal/identity"
 
 	"github.com/corentings/chess/v2"
@@ -91,7 +92,7 @@ func (g *game) validateDrawParticipantLocked(profileID identity.ProfileID, now t
 	if err := g.validateReadyLocked(); err != nil {
 		return err
 	}
-	if g.expireLocked(now) || g.outcome != chess.NoOutcome {
+	if g.expireLocked(now) || g.outcome != domain.OutcomeNone {
 		return ErrGameFinished
 	}
 	if profileID != g.whiteProfileID && profileID != g.blackProfileID {

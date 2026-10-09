@@ -15,7 +15,6 @@ import (
 
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/corentings/chess/v2"
 )
 
 const (
@@ -177,6 +176,9 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) removeSession(client *Session) {
+	s.messageHandler.dispatchMu.Lock()
+	defer s.messageHandler.dispatchMu.Unlock()
+
 	gameID := s.gameSessions.Remove(client)
 	if gameID == "" {
 		return
@@ -187,21 +189,15 @@ func (s *Server) removeSession(client *Session) {
 		slog.Warn("fetch disconnected game state", "game_id", gameID, "error", err)
 		return
 	}
-	s.BroadcastGameState(state)
+	_ = s.messageHandler.broadcastGameState(s.connectionCtx, nil, "", state)
 }
 
 // BroadcastGameState sends an unsolicited authoritative state to every session in the game.
 func (s *Server) BroadcastGameState(state gameplay.GameSnapshot) {
-	envelope := protocol.ServerEnvelope{
-		Type:    protocol.ServerGameState,
-		Payload: s.messageHandler.gameStatePayload(state),
-	}
-
-	if err := s.gameSessions.Broadcast(s.connectionCtx, state.GameID, nil, envelope); err != nil {
+	s.messageHandler.dispatchMu.Lock()
+	defer s.messageHandler.dispatchMu.Unlock()
+	if err := s.messageHandler.broadcastGameState(s.connectionCtx, nil, "", state); err != nil {
 		slog.Warn("broadcast automatic game state", "game_id", state.GameID, "error", err)
-	}
-	if state.Outcome != chess.NoOutcome {
-		s.gameSessions.RemoveGame(state.GameID)
 	}
 }
 

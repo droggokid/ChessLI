@@ -186,6 +186,42 @@ func TestWebSocketStackReusesSessionsAfterGameEnds(t *testing.T) {
 	readStackEnvelope(t, black, protocol.ServerGameJoined)
 }
 
+func TestWebSocketStackResumesFinishedGameWithoutOccupyingSession(t *testing.T) {
+	server, endpoint := startStackServer(t)
+	defer shutdownStackServer(t, server)
+
+	white, black, gameID, blackProfileID := startStackGame(t, endpoint)
+	defer white.CloseNow()
+	defer black.CloseNow()
+
+	_ = black.CloseNow()
+	readStackEnvelope(t, white, protocol.ServerGameState)
+	writeStackEnvelope(t, white, protocol.ClientEnvelope{
+		Type:      protocol.ClientResign,
+		RequestID: "resign",
+		Payload:   json.RawMessage(`{"gameId":"` + string(gameID) + `"}`),
+	})
+	readStackEnvelope(t, white, protocol.ServerGameState)
+
+	reconnected := dialStackClient(t, endpoint+"?profileId="+string(blackProfileID))
+	defer reconnected.CloseNow()
+	readStackEnvelope(t, reconnected, protocol.ServerConnectionReady)
+	writeStackEnvelope(t, reconnected, protocol.ClientEnvelope{
+		Type:      protocol.ClientResumeGame,
+		RequestID: "resume",
+		Payload:   json.RawMessage(`{"gameId":"` + string(gameID) + `"}`),
+	})
+	readStackEnvelope(t, reconnected, protocol.ServerGameResumed)
+	readStackEnvelope(t, reconnected, protocol.ServerGameInitial)
+
+	writeStackEnvelope(t, reconnected, protocol.ClientEnvelope{
+		Type:      protocol.ClientEnterMatchmaking,
+		RequestID: "match",
+		Payload:   json.RawMessage(`{"timeControl":"1+0"}`),
+	})
+	readStackEnvelope(t, reconnected, protocol.ServerMatchmakingEntered)
+}
+
 func TestWebSocketStackHeartbeatRemovesUnresponsiveSession(t *testing.T) {
 	server, endpoint := startStackServerWithHeartbeat(t, 100*time.Millisecond, 100*time.Millisecond)
 	defer shutdownStackServer(t, server)
@@ -198,6 +234,46 @@ func TestWebSocketStackHeartbeatRemovesUnresponsiveSession(t *testing.T) {
 	assertStackConnected(t, disconnected, true, false)
 }
 
+func TestWebSocketStackMatchmakingPublishesBothPlayersPresence(t *testing.T) {
+	server, endpoint := startStackServer(t)
+	defer shutdownStackServer(t, server)
+	first, second := dialStackClient(t, endpoint), dialStackClient(t, endpoint)
+	defer first.CloseNow()
+	defer second.CloseNow()
+	clients := []*coderws.Conn{first, second}
+	for _, client := range clients {
+		readStackEnvelope(t, client, protocol.ServerConnectionReady)
+		writeStackEnvelope(t, client, protocol.ClientEnvelope{
+			Type: protocol.ClientEnterMatchmaking, RequestID: "match",
+			Payload: json.RawMessage(`{"timeControl":"1+0"}`),
+		})
+		readStackEnvelope(t, client, protocol.ServerMatchmakingEntered)
+	}
+	var gameID identity.GameID
+	for _, client := range clients {
+		matched := readStackEnvelope(t, client, protocol.ServerMatchFound)
+		var assignment protocol.GameCreatedPayload
+		decodeStackPayload(t, matched, &assignment)
+		if gameID != "" && gameID != assignment.GameID {
+			t.Fatal("players were assigned different games")
+		}
+		gameID = assignment.GameID
+		initial := readStackEnvelope(t, client, protocol.ServerGameInitial)
+		var state protocol.GameStatePayload
+		decodeStackPayload(t, initial, &state)
+		if state.White == nil || state.Black == nil {
+			t.Fatal("match has an empty seat")
+		}
+		if !state.White.Connected || !state.Black.Connected {
+			presence := readStackEnvelope(t, client, protocol.ServerGameState)
+			if presence.RequestID != "" {
+				t.Fatalf("peer presence used request ID %q", presence.RequestID)
+			}
+			assertStackConnected(t, presence, true, true)
+		}
+	}
+}
+
 func startStackServer(t *testing.T) (*Server, string) {
 	t.Helper()
 	return startStackServerWithHeartbeat(t, heartbeatInterval, heartbeatTimeout)
@@ -205,7 +281,10 @@ func startStackServer(t *testing.T) (*Server, string) {
 
 func startStackServerWithHeartbeat(t *testing.T, interval, timeout time.Duration) (*Server, string) {
 	t.Helper()
-	server := NewServer("", gameplay.NewGameService())
+	games := gameplay.NewGameService()
+	t.Cleanup(games.Close)
+	server := NewServer("", games)
+	games.SetGameExpiredHandler(server.BroadcastGameState)
 	server.heartbeatInterval = interval
 	server.heartbeatTimeout = timeout
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
