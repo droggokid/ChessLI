@@ -22,6 +22,72 @@ Wire decoding and mapping stay in `internal/websocket`; payload types live in
 `protocol/`. Persistence adapters and generated database code remain separate
 from the in-memory gameplay runtime.
 
+## Terminal client
+
+Start the server with `go run ./cmd`, then run `go run ./cmd/chessli` in two
+other terminals. The TUI connects to `ws://localhost:8080/ws` and displays its
+server-assigned profile ID separately from the mocked dashboard profile.
+To start with an existing identity, run `make run-tui PROFILE_ID=YOUR_PROFILE_UUID`
+or `go run ./cmd/chessli -profile-id YOUR_PROFILE_UUID`. Omit the ID to create a
+new identity. The server validates the UUID. This selects the connection identity;
+it does not discover or resume an existing game after restarting the TUI.
+Use a terminal of at least 80 columns by 24 rows; smaller terminals show a
+resize prompt instead of a clipped board. Dashboard sample data is labeled
+in the client, and History shows an unavailable state.
+
+Press Tab to open Play Chess. Type `/create` and press Enter in the first
+client; it creates a 10+0 private game as White. Copy the displayed game ID,
+then type `/join GAME_ID` in the second client and press Enter. The first
+client waits until the second joins before displaying a board.
+
+Alternatively, enter `/match` in both clients to find an opponent in the 10+0
+pool. Admission clears the submitted command only if you have not edited it.
+Waiting for an opponent has no deadline. Assignment supplies your game ID and
+color; moves and resignation stay blocked until `game.initial` arrives. An
+initially offline opponent can become online in a same-version presence update.
+
+Enter SAN moves such as `e4`, `Nf3`, or `O-O`, or UCI moves such as `e2e4` and
+`a7a8q`. Use `/resign` to finish a game. A finished game is read-only; use
+`/match`, `/create` or `/join GAME_ID` to play another. The plain board comes from the
+existing chess library and shows only server-confirmed positions. Clocks show
+the last received server values, rather than a local countdown.
+
+Updates continue on Dashboard and History; navigating away does not resign or
+stop server clocks. Session moves show the latest received SAN moves, with
+version labels and gaps when updates were missed. The display shows the last
+four entries; it is not a complete history, especially after reconnecting.
+Dashboard statistics and History remain mocked or placeholders.
+
+Escape clears the current input before returning to Dashboard. Ordinary text
+keys, including `q`, go to the Play input. Ctrl+C quits; `q` also quits outside
+Play. Ctrl+R reconnects with the same profile ID and resumes the known game.
+Server replies preserve text edited while a request was pending. Long input
+shows its ending and cursor; the full value is submitted.
+There is no automatic reconnect. Quit forgets the placeholder identity; an
+unfinished game also disappears when the server restarts.
+
+Only one action can be pending. A socket write does not acknowledge an action:
+the TUI waits for the server response or initial state. Missing responses and
+write failures show an unknown outcome and block further submissions until
+recovery. Ctrl+R reconnects and resumes rather than replaying actions. If a
+create response was lost, there is no game ID to recover; restart the TUI
+before creating another game. A stale-version rejection also requires recovery
+before another move. If resume is temporarily rejected while the old session
+is closing, press Ctrl+R again.
+
+A late matching create response clears the timeout feedback and preserves any
+edited draft. Matchmaking admission retires the entry response deadline while
+retaining its request ID for assignment. Once assigned, Ctrl+R recovers through
+`game.resume`. Before assignment, reconnect never automatically requeues or
+resumes a previously finished game. Disconnect cancels a waiting ticket, but a
+match can commit just before disconnect and its assignment can be lost. Without
+that game ID, the TUI conservatively asks for a restart. The backend has no queue
+inspection, cancellation request, or current-game lookup.
+
+Malformed server messages, including empty required values or invalid colors
+and statuses, are reported while receiving continues. The next valid message
+clears the connection warning. Unknown server fields remain accepted.
+
 ## Manual two-player flow
 
 This flow requires [`websocat`](https://github.com/vi/websocat).
@@ -141,9 +207,11 @@ terminals, enter the same matchmaking pool:
 {"type":"matchmaking.enter","requestId":"match-1","payload":{"timeControl":"10+0"}}
 ```
 
-Each player first receives `matchmaking.entered`. Once both players are queued,
+Each player first receives `matchmaking.entered` with the entry `requestId` and
+`{"timeControl":"10+0"}` payload. Once both players are queued,
 each receives `matchmaking.found` containing the shared `gameId` and that
-player's assigned `color`, followed by the authoritative `game.initial` state.
+player's assigned `color`, using that same `requestId`, followed by an
+uncorrelated authoritative `game.initial`. Waiting for an opponent has no deadline.
 Players are registered as their matchmaking results are processed. If the
 first initial state shows the opponent as disconnected, a subsequent
 unsolicited `game.state` reports that opponent's registration.

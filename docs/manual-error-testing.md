@@ -47,6 +47,69 @@ reports the updated presence.
 The expected-error examples below show the `payload` portion of the server's
 `error` envelope.
 
+## Terminal client checks
+
+Run the server and two instances of `go run ./cmd/chessli`. Open Play with Tab,
+create with `/create`, and join from the other client with `/join GAME_ID`.
+At 80x24, the complete board, input and controls should remain visible. Smaller
+terminals show a resize prompt. Dashboard labels its sample data; History
+reports that it is unavailable.
+
+To start with a known identity, run `make run-tui PROFILE_ID=YOUR_PROFILE_UUID`
+or `go run ./cmd/chessli -profile-id YOUR_PROFILE_UUID`. Check that the displayed
+profile ID matches. Without an ID, a new identity is created; an invalid UUID is
+rejected by the server. Selecting an identity does not discover or resume an
+existing game after restarting the TUI.
+
+Alternatively, enter `/match` in both clients to use the 10+0 matchmaking pool.
+The first client should wait indefinitely for an opponent; navigating to
+History must not stop admission or assignment updates. `matchmaking.entered`
+acknowledges the entry request ID and has payload `{"timeControl":"10+0"}`.
+Admission clears the submitted input only if unchanged. `matchmaking.found`
+uses the same request ID and assigns the game ID and color. Gameplay stays
+blocked until the uncorrelated `game.initial`; a same-version `game.state` can
+then report the opponent online. Verify that both clients display the same
+game ID and opposite colors, can move, reconnect through `game.resume`, and
+resign. `/match` is also available after a finished game.
+Enter an illegal SAN move such as `Qa5` from the initial White position; the
+TUI should display `illegal_move` and preserve both the board and input.
+Escape clears that input. Submit `e4`, then move the first client to History
+while the second submits `e7e5`. Returning to Play should show both updates.
+Feedback should reflect whose turn it is. Text edited while a request is
+pending should survive its reply. Long pasted input shows its ending and
+cursor while preserving the full submitted value.
+
+Ctrl+R reconnects with the displayed profile ID and sends `game.resume` for
+the known game. This is also the recovery path for `stale_game_version` and
+uncertain requests; the TUI never automatically resends moves or create
+requests. A lost create response has no game ID to resume, so the client asks
+for a TUI restart instead. If resume is rejected because the old session is
+still closing, use Ctrl+R again. Stop the server to check the disconnected
+status, disabled submissions, and retention of the last displayed board.
+
+Focused behavioral tests cover a create timeout followed by a late matching
+`game.created`: the known game returns to ordinary waiting, pending action and
+timeout feedback clear, and an edited draft survives. Matchmaking admission
+also clears timeout feedback and retires the entry deadline; that timer must
+remain harmless while queued, after assignment, and after initial state.
+Drafts edited after admission must survive assignment and initialization.
+
+Disconnect cancels a waiting matchmaking ticket, but a match can commit just
+before disconnect. If its assignment is lost, there is no recoverable game ID.
+Before assignment, Ctrl+R must never automatically requeue or resume a previously
+finished game; it conservatively asks for a TUI restart. The backend has no
+queue inspection, cancellation request, or current-game lookup. After assignment,
+Ctrl+R resumes the assigned game and waits for its initial state.
+
+Use `/resign` to check the final result and the ability to create another game.
+Session moves show received SAN values rather than a complete game history;
+clocks show the last server snapshot. Ctrl+C closes the connection. These TUI
+controls use the existing protocol and do not change the JSON examples below.
+
+Client decoder tests cover malformed server messages: empty required values
+and invalid colors or statuses produce a warning without stopping reception.
+The next valid message clears that warning; additive server fields are accepted.
+
 ## Common setup
 
 In client A, create a game as White:

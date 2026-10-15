@@ -35,7 +35,7 @@ arbitrary direct service callers. Existing gameplay locks remain necessary.
 
 ## Persistence boundary
 
-[ADR 0009](../adr/0009-persistence-boundary.md) persists completed games, not each
+[ADR 0005](../adr/0005-persistence-boundary.md) persists completed games, not each
 live move. A save failure must not undo completion or prevent final-state delivery.
 My earlier suggestion to require a successful save before publishing does not
 fit that decision.
@@ -52,7 +52,7 @@ decisions. Per-game locks do not provide those guarantees.
 
 ## Before replacing the global lock
 
-Update [ADR 0004](../adr/0004-message-delivery-semantics.md) with the new lock scope.
+Update [ADR 0003](../adr/0003-message-delivery-semantics.md) with the new lock scope.
 Add controlled concurrency tests proving that unrelated games proceed independently,
 same-game updates stay ordered, terminal cleanup cannot race with admission, one
 session cannot enter two games, and storage failure does not suppress final delivery.

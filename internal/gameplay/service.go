@@ -129,7 +129,6 @@ func (s *GameService) JoinPrivateGame(_ context.Context, command JoinPrivateComm
 
 // ResumeGame returns the current state, rejecting profiles that are not participants.
 func (s *GameService) ResumeGame(_ context.Context, command ResumeGameCommand) (GameSnapshot, error) {
-
 	if err := validateProfileID(command.ProfileID); err != nil {
 		return GameSnapshot{}, err
 	}
@@ -222,7 +221,6 @@ func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (GameAs
 
 // MakeMove applies a move to the identified game on behalf of a profile.
 func (s *GameService) MakeMove(_ context.Context, command MoveCommand) (GameSnapshot, error) {
-
 	game, err := s.gameByID(command.GameID)
 	if err != nil {
 		return GameSnapshot{}, err
@@ -240,7 +238,6 @@ func (s *GameService) MakeMove(_ context.Context, command MoveCommand) (GameSnap
 
 // GameState returns the current snapshot, settling an expired clock before returning.
 func (s *GameService) GameState(_ context.Context, gameID identity.GameID) (GameSnapshot, error) {
-
 	game, err := s.gameByID(gameID)
 	if err != nil {
 		return GameSnapshot{}, err
@@ -252,7 +249,6 @@ func (s *GameService) GameState(_ context.Context, gameID identity.GameID) (Game
 
 // Resign resigns a game on behalf of a participant.
 func (s *GameService) Resign(_ context.Context, command ResignCommand) (GameSnapshot, error) {
-
 	game, err := s.gameByID(command.GameID)
 	if err != nil {
 		return GameSnapshot{}, err
@@ -270,7 +266,6 @@ func (s *GameService) Resign(_ context.Context, command ResignCommand) (GameSnap
 
 // OfferDraw makes a draw offer on behalf of a game participant.
 func (s *GameService) OfferDraw(_ context.Context, command OfferDrawCommand) (GameSnapshot, error) {
-
 	game, err := s.gameByID(command.GameID)
 	if err != nil {
 		return GameSnapshot{}, err
@@ -282,7 +277,6 @@ func (s *GameService) OfferDraw(_ context.Context, command OfferDrawCommand) (Ga
 
 // AcceptDraw accepts a pending draw offer on behalf of a game participant.
 func (s *GameService) AcceptDraw(_ context.Context, command DrawOfferResponseCommand) (GameSnapshot, error) {
-
 	game, err := s.gameByID(command.GameID)
 	if err != nil {
 		return GameSnapshot{}, err
@@ -300,7 +294,6 @@ func (s *GameService) AcceptDraw(_ context.Context, command DrawOfferResponseCom
 
 // DeclineDraw declines a pending draw offer on behalf of a game participant.
 func (s *GameService) DeclineDraw(_ context.Context, command DrawOfferResponseCommand) (GameSnapshot, error) {
-
 	game, err := s.gameByID(command.GameID)
 	if err != nil {
 		return GameSnapshot{}, err
