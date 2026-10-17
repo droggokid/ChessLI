@@ -1,6 +1,7 @@
 package gameplay
 
 import (
+	"log/slog"
 	"time"
 
 	domain "ChessLI/internal/game"
@@ -49,26 +50,24 @@ func (g *game) expireLocked(now time.Time) bool {
 	winner := loser.Other()
 	if !g.hasMatingMaterialLocked(winner) {
 		g.outcome = domain.OutcomeDraw
-		g.termination = domain.TerminationTimeout
-		g.version++
-		g.clearPendingDrawOfferLocked()
-		return true
-	}
-
-	switch loser {
-	case chess.White:
+	} else if loser == chess.White {
 		g.outcome = domain.OutcomeBlackWin
-	case chess.Black:
+	} else {
 		g.outcome = domain.OutcomeWhiteWin
-	default:
-		return false
 	}
 
 	g.termination = domain.TerminationTimeout
 	g.version++
-	g.clearPendingDrawOfferLocked()
+	g.drawOffers.pending = nil
+	g.logFinishedLocked()
 
 	return true
+}
+
+// Log the transition itself so repeated snapshots and broadcasts cannot count it twice.
+func (g *game) logFinishedLocked() {
+	slog.Info("game finished", "event", "game.finished", "game_id", g.id,
+		"outcome", g.outcome, "termination", g.termination, "version", g.version)
 }
 
 // hasMatingMaterialLocked reports the minimum FIDE requirement for a timeout

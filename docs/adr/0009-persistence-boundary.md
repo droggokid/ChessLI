@@ -41,3 +41,7 @@ dynamic SQL and is unnecessary here.
   requirements are defined.
 - Persistence interfaces and their generated mocks change together; query and
   driver types remain implementation details.
+- Repository integration tests run only when `CHESSLI_TEST_DATABASE_URL` is set.
+  Each test uses a transaction and a unique schema, applies migrations there,
+  and rolls everything back. CI supplies PostgreSQL 17. These tests do not wire
+  persistence into the application or change in-memory game retention.

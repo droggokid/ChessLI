@@ -12,7 +12,7 @@ import (
 func TestGameSessionsRegistrationLifecycle(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	session := newQueuedSession("player")
 
 	if err := registry.Add("game-1", session); err != nil {
@@ -43,7 +43,7 @@ func TestGameSessionsRegistrationLifecycle(t *testing.T) {
 func TestGameSessionsReservationPreventsConflictingLifecycle(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	session := newQueuedSession("player")
 	if err := registry.Hold(session); err != nil {
 		t.Fatalf("Hold() error = %v", err)
@@ -65,7 +65,7 @@ func TestGameSessionsReservationPreventsConflictingLifecycle(t *testing.T) {
 func TestGameSessionsIsConnected(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	session := newQueuedSession("player")
 	if err := registry.Add("game", session); err != nil {
 		t.Fatalf("Add() error = %v", err)
@@ -90,7 +90,7 @@ func TestGameSessionsIsConnected(t *testing.T) {
 func TestGameSessionsRejectsDuplicateProfileInGame(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	if err := registry.Add("game", newQueuedSession("player")); err != nil {
 		t.Fatalf("Add() first session error = %v", err)
 	}
@@ -104,7 +104,7 @@ func TestGameSessionsRejectsDuplicateProfileInGame(t *testing.T) {
 func TestGameSessionsRejectsStoppedSession(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	session := newQueuedSession("player")
 	session.runState.Store(uint32(sessionStopped))
 
@@ -117,7 +117,7 @@ func TestGameSessionsRejectsStoppedSession(t *testing.T) {
 func TestGameSessionsRemoveGameReleasesAllSessions(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	white := newQueuedSession("white")
 	black := newQueuedSession("black")
 	for _, session := range []*Session{white, black} {
@@ -138,7 +138,7 @@ func TestGameSessionsRemoveGameReleasesAllSessions(t *testing.T) {
 func TestGameSessionsBroadcastPreservesOnlySourceRequestID(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	source := newQueuedSession("source")
 	peer := newQueuedSession("peer")
 	if err := registry.Add("game", source); err != nil {
@@ -171,7 +171,7 @@ func TestGameSessionsBroadcastAttemptsPeersAfterSourceFailure(t *testing.T) {
 	t.Parallel()
 	for _, failure := range []string{"stopped", "full", "canceled"} {
 		t.Run(failure, func(t *testing.T) {
-			registry := NewGameSessions()
+			registry := newGameSessions()
 			source, peer := newQueuedSession("source"), newQueuedSession("peer")
 			for _, session := range []*Session{source, peer} {
 				if err := registry.Add("game", session); err != nil {
@@ -276,8 +276,8 @@ func TestSessionSend(t *testing.T) {
 
 func newQueuedSession(profileID identity.ProfileID) *Session {
 	session := &Session{
-		profile:  identity.Profile{ID: profileID},
-		outgoing: make(chan protocol.ServerEnvelope, 8),
+		profileID: profileID,
+		outgoing:  make(chan protocol.ServerEnvelope, 8),
 	}
 	session.runState.Store(uint32(sessionRunning))
 	return session

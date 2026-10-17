@@ -2,15 +2,10 @@ package websocket
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
 
 	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
-	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
-
-	"github.com/corentings/chess/v2"
 )
 
 func (h *Handler) handleCreateGame(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
@@ -32,23 +27,23 @@ func (h *Handler) handleCreateGame(ctx context.Context, client *Session, message
 	if err = h.gameSessions.Hold(client); err != nil {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
+	defer h.gameSessions.Release(client)
 
 	result, err := h.gameService.CreatePrivateGame(ctx, gameplay.CreatePrivateCommand{
-		ProfileID: client.profile.ID, Initial: initial, Increment: increment, ColorPreference: colorPreference,
+		ProfileID: client.profileID, Initial: initial, Increment: increment, ColorPreference: colorPreference,
 	})
 	if err != nil {
-		return h.releaseAndSendApplicationError(ctx, client, message.RequestID, err)
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
 
-	color, err := h.completeGameAdmission(client, result.GameID, result.Color)
-	if err != nil {
-		return h.releaseAndSendApplicationError(ctx, client, message.RequestID, err)
+	if err := h.gameSessions.Add(result.GameID, client); err != nil {
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
 
 	return client.Send(ctx, protocol.ServerEnvelope{
 		Type:      protocol.ServerGameCreated,
 		RequestID: message.RequestID,
-		Payload:   protocol.GameCreatedPayload{GameID: result.GameID, Color: color},
+		Payload:   protocol.GameCreatedPayload{GameID: result.GameID, Color: mapColorFromServer(result.Color)},
 	})
 }
 
@@ -63,31 +58,35 @@ func (h *Handler) handleJoinGame(ctx context.Context, client *Session, message p
 	if err = h.gameSessions.Hold(client); err != nil {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
+	defer h.gameSessions.Release(client)
 
-	result, err := h.gameService.JoinPrivateGame(ctx, gameplay.JoinPrivateCommand{ProfileID: client.profile.ID, GameID: request.GameID})
+	result, err := h.gameService.JoinPrivateGame(ctx, gameplay.JoinPrivateCommand{ProfileID: client.profileID, GameID: request.GameID})
 	if err != nil {
-		return h.releaseAndSendApplicationError(ctx, client, message.RequestID, err)
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
-	color, err := h.completeGameAdmission(client, result.GameID, result.Color)
+	// Joining has committed; fetching and publishing its state survives source cancellation.
+	peerCtx := context.WithoutCancel(ctx)
+	state, err := h.gameService.GameState(peerCtx, result.GameID)
 	if err != nil {
-		return h.releaseAndSendApplicationError(ctx, client, message.RequestID, err)
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
+	}
+	defer func() {
+		h.gameSessions.BroadcastPeers(peerCtx, state.GameID, client, h.initialState(state))
+		if state.Outcome != game.OutcomeNone {
+			h.gameSessions.RemoveGame(state.GameID)
+		}
+	}()
+	if err := h.gameSessions.Add(result.GameID, client); err != nil {
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
 	if err = client.Send(ctx, protocol.ServerEnvelope{
 		Type:      protocol.ServerGameJoined,
 		RequestID: message.RequestID,
-		Payload:   protocol.GameCreatedPayload{GameID: result.GameID, Color: color},
+		Payload:   protocol.GameCreatedPayload{GameID: result.GameID, Color: mapColorFromServer(result.Color)},
 	}); err != nil {
-		return h.sendApplicationError(ctx, client, message.RequestID, err)
+		return err
 	}
-
-	state, err := h.gameService.GameState(ctx, result.GameID)
-	if err != nil {
-		return h.sendApplicationError(ctx, client, message.RequestID, err)
-	}
-	if state.Outcome != game.OutcomeNone {
-		defer h.gameSessions.RemoveGame(state.GameID)
-	}
-	return h.gameSessions.Broadcast(ctx, result.GameID, client, h.initialState(state))
+	return client.Send(ctx, h.initialState(state))
 }
 
 func (h *Handler) handleResumeGame(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
@@ -98,48 +97,43 @@ func (h *Handler) handleResumeGame(ctx context.Context, client *Session, message
 	if err = h.gameSessions.Hold(client); err != nil {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
+	defer h.gameSessions.Release(client)
 
-	state, err := h.gameService.ResumeGame(ctx, gameplay.ResumeGameCommand{GameID: request.GameID, ProfileID: client.profile.ID})
+	state, err := h.gameService.ResumeGame(ctx, gameplay.ResumeGameCommand{GameID: request.GameID, ProfileID: client.profileID})
 	if err != nil {
-		return h.releaseAndSendApplicationError(ctx, client, message.RequestID, err)
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
 
-	var color protocol.Color
-	switch client.profile.ID {
-	case state.WhiteProfileID:
+	// ResumeGame has already verified that the profile occupies one of the seats.
+	color := protocol.ColorBlack
+	if client.profileID == state.WhiteProfileID {
 		color = protocol.ColorWhite
-	case state.BlackProfileID:
-		color = protocol.ColorBlack
-	default:
-		h.gameSessions.Release(client)
-		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInternal, "internal server error")
 	}
+	return h.admitGame(ctx, client, message.RequestID, protocol.ServerGameResumed, color, state)
+}
 
+// Finished games are read-only; active admission publishes presence even if the ack fails.
+func (h *Handler) admitGame(ctx context.Context, client *Session, requestID string, responseType protocol.ServerMessageType, color protocol.Color, state gameplay.GameSnapshot) error {
 	active := state.Outcome == game.OutcomeNone
 	if active {
-		if err = h.gameSessions.Add(state.GameID, client); err != nil {
-			h.gameSessions.Release(client)
-			return h.sendApplicationError(ctx, client, message.RequestID, err)
+		if err := h.gameSessions.Add(state.GameID, client); err != nil {
+			return h.sendApplicationError(ctx, client, requestID, err)
 		}
+		defer func() {
+			h.gameSessions.BroadcastPeers(context.WithoutCancel(ctx), state.GameID, client, protocol.ServerEnvelope{Type: protocol.ServerGameState, Payload: h.gameStatePayload(state)})
+		}()
 	} else {
-		h.gameSessions.Release(client)
-		_ = h.broadcastGameState(ctx, nil, "", state)
+		_ = h.broadcastGameState(context.WithoutCancel(ctx), nil, "", state)
 	}
 
-	if err = client.Send(ctx, protocol.ServerEnvelope{
-		Type:      protocol.ServerGameResumed,
-		RequestID: message.RequestID,
+	if err := client.Send(ctx, protocol.ServerEnvelope{
+		Type:      responseType,
+		RequestID: requestID,
 		Payload:   protocol.GameCreatedPayload{GameID: state.GameID, Color: color},
 	}); err != nil {
 		return err
 	}
-	if err = client.Send(ctx, h.initialState(state)); err != nil {
-		return err
-	}
-	if active {
-		h.gameSessions.BroadcastPeers(ctx, state.GameID, client, protocol.ServerEnvelope{Type: protocol.ServerGameState, Payload: h.gameStatePayload(state)})
-	}
-	return nil
+	return client.Send(ctx, h.initialState(state))
 }
 
 func (h *Handler) handleMatchmaking(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
@@ -155,85 +149,44 @@ func (h *Handler) handleMatchmaking(ctx context.Context, client *Session, messag
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
 
-	ticket, err := h.gameService.EnterMatchmaking(ctx, gameplay.NewEnterMatchmakingCommand(client.profile.ID, initial, increment))
+	ticket, err := h.gameService.EnterMatchmaking(ctx, gameplay.EnterMatchmakingCommand{ProfileID: client.profileID, Initial: initial, Increment: increment})
 	if err != nil {
-		return h.releaseAndSendApplicationError(ctx, client, message.RequestID, err)
+		h.gameSessions.Release(client)
+		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
 	if err = client.Send(ctx, protocol.ServerEnvelope{Type: protocol.ServerMatchmakingEntered, RequestID: message.RequestID, Payload: protocol.EnterMatchmakingPayload{TimeControl: request.TimeControl}}); err != nil {
 		h.gameSessions.Release(client)
 		return err
 	}
-	go h.awaitMatch(ctx, client, message.RequestID, ticket)
+	// The waiter owns the reservation until it is matched or canceled.
+	h.matchmaking.Add(1)
+	go func() {
+		defer h.matchmaking.Done()
+		// Service failures and queue pressure are logged where they occur.
+		_ = h.awaitMatch(ctx, client, message.RequestID, ticket)
+	}()
 	return nil
 }
 
-func (h *Handler) awaitMatch(ctx context.Context, client *Session, requestID string, ticket gameplay.MatchTicket) {
+func (h *Handler) awaitMatch(ctx context.Context, client *Session, requestID string, ticket gameplay.MatchTicket) error {
 	var result gameplay.GameAssignment
+	var matched bool
 	select {
 	case <-ctx.Done():
-		h.gameSessions.Release(client)
-		return
 	case match, ok := <-ticket.Result:
-		if !ok {
-			h.gameSessions.Release(client)
-			return
-		}
 		result = match
+		matched = ok
 	}
 	h.dispatchMu.Lock()
 	defer h.dispatchMu.Unlock()
-	if err := ctx.Err(); err != nil {
-		h.gameSessions.Release(client)
-		return
+	defer h.gameSessions.Release(client)
+	if ctx.Err() != nil || !matched {
+		return nil
 	}
 
-	color, err := mapColorFromServer(result.Color)
-	if err != nil {
-		h.gameSessions.Release(client)
-		if sendErr := h.sendError(ctx, client, requestID, protocol.ErrorInternal, "internal server error"); sendErr != nil {
-			slog.Warn("send matchmaking color error", "error", sendErr)
-		}
-		return
-	}
 	state, err := h.gameService.GameState(ctx, result.GameID)
 	if err != nil {
-		h.gameSessions.Release(client)
-		if sendErr := h.sendApplicationError(ctx, client, requestID, err); sendErr != nil {
-			slog.Warn("send matchmaking state error", "error", sendErr)
-		}
-		return
+		return h.sendApplicationError(ctx, client, requestID, err)
 	}
-	active := state.Outcome == game.OutcomeNone
-	if active {
-		if err = h.gameSessions.Add(result.GameID, client); err != nil {
-			h.gameSessions.Release(client)
-			slog.Warn("register matched session", "game_id", result.GameID, "error", err)
-			return
-		}
-	} else {
-		h.gameSessions.Release(client)
-		_ = h.broadcastGameState(ctx, nil, "", state)
-	}
-	if err = client.Send(ctx, protocol.ServerEnvelope{Type: protocol.ServerMatchFound, RequestID: requestID, Payload: protocol.GameCreatedPayload{GameID: result.GameID, Color: color}}); err != nil {
-		slog.Warn("send matchmaking result", "error", err)
-		return
-	}
-
-	if err = client.Send(ctx, h.initialState(state)); err != nil {
-		slog.Warn("send matched game initial state", "game_id", result.GameID, "error", err)
-	}
-	if active {
-		h.gameSessions.BroadcastPeers(context.WithoutCancel(ctx), state.GameID, client, protocol.ServerEnvelope{Type: protocol.ServerGameState, Payload: h.gameStatePayload(state)})
-	}
-}
-
-func (h *Handler) completeGameAdmission(client *Session, gameID identity.GameID, serviceColor chess.Color) (protocol.Color, error) {
-	color, err := mapColorFromServer(serviceColor)
-	if err != nil {
-		return "", fmt.Errorf("invalid service color %v", serviceColor)
-	}
-	if err = h.gameSessions.Add(gameID, client); err != nil {
-		return "", err
-	}
-	return color, nil
+	return h.admitGame(ctx, client, requestID, protocol.ServerMatchFound, mapColorFromServer(result.Color), state)
 }

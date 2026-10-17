@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -37,9 +38,9 @@ type HandlerFunc func(
 // Session exchanges JSON messages over a WebSocket connection.
 // Send is safe for concurrent use; Run may be called only once.
 type Session struct {
-	profile  identity.Profile
-	conn     *coderws.Conn
-	runState atomic.Uint32
+	profileID identity.ProfileID
+	conn      *coderws.Conn
+	runState  atomic.Uint32
 
 	outgoing chan protocol.ServerEnvelope
 
@@ -47,10 +48,10 @@ type Session struct {
 	heartbeatTimeout  time.Duration
 }
 
-// NewSession creates a Session for profile and conn.
-func NewSession(profile identity.Profile, conn *coderws.Conn) *Session {
+// NewSession creates a Session for profileID and conn.
+func NewSession(profileID identity.ProfileID, conn *coderws.Conn) *Session {
 	return &Session{
-		profile:           profile,
+		profileID:         profileID,
 		conn:              conn,
 		outgoing:          make(chan protocol.ServerEnvelope, outgoingBufferSize),
 		heartbeatInterval: heartbeatInterval,
@@ -59,7 +60,7 @@ func NewSession(profile identity.Profile, conn *coderws.Conn) *Session {
 }
 
 // Run exchanges messages until the context is canceled or an I/O loop stops.
-// It may be called only once.
+// It sends connection.ready first and joins all I/O loops before returning; call only once.
 func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 	if handleMessage == nil {
 		return errMessageHandlerRequired
@@ -70,6 +71,19 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	defer c.runState.Store(uint32(sessionStopped))
+	defer c.conn.CloseNow()
+
+	// Write before starting the loops so no response can overtake connection.ready.
+	readyCtx, readyCancel := context.WithTimeout(ctx, heartbeatTimeout)
+	err := wsjson.Write(readyCtx, c.conn, protocol.ServerEnvelope{
+		Type:    protocol.ServerConnectionReady,
+		Payload: protocol.ConnectionReadyPayload{ProfileID: c.profileID},
+	})
+	readyCancel()
+	if err != nil {
+		return fmt.Errorf("send connection ack: %w", err)
+	}
 
 	errCh := make(chan error, 3)
 
@@ -86,6 +100,7 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 	}()
 
 	firstError := <-errCh
+	// Closing the socket releases the other loops before we join them.
 	c.runState.Store(uint32(sessionStopped))
 	cancel()
 
@@ -136,17 +151,14 @@ func (c *Session) writeLoop(ctx context.Context) error {
 
 		case message := <-c.outgoing:
 			if err := wsjson.Write(ctx, c.conn, message); err != nil {
-				return fmt.Errorf(
-					"write websocket message: %w",
-					err,
-				)
+				return fmt.Errorf("write websocket message: %w", err)
 			}
 		}
 	}
 }
 
 // Send queues a message without allowing a slow client to block its caller.
-// It is safe for concurrent use.
+// It is safe for concurrent use; success means queued, not delivered.
 func (c *Session) Send(ctx context.Context, message protocol.ServerEnvelope) error {
 	if sessionRunState(c.runState.Load()) != sessionRunning {
 		return protocol.ErrSessionNotRunning
@@ -159,6 +171,8 @@ func (c *Session) Send(ctx context.Context, message protocol.ServerEnvelope) err
 	case c.outgoing <- message:
 		return nil
 	default:
+		slog.Warn("outgoing queue full", "event", "message.dropped", "reason", "queue_full",
+			"profile_id", c.profileID, "message_type", message.Type, "request_id", message.RequestID)
 		return protocol.ErrSessionQueueFull
 	}
 }

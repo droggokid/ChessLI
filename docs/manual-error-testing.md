@@ -23,6 +23,10 @@ final state is queued for delivery, its live connections can start or join
 another game. Open a fresh connection or restart the server when a scenario
 requires a clean game.
 
+`connection.ready` is sent before commands are processed. If its socket write
+cannot finish within 10 seconds, or shutdown cancels it, the connection closes
+without an application error envelope.
+
 A former participant can use `game.resume` to load a finished game's final
 read-only state. This does not occupy a game session or mark either player
 connected.
@@ -32,6 +36,9 @@ publish active state after a finished state or occupy a finished game.
 An acting player's stopped connection, full queue, or canceled request does
 not suppress the opponent's delivery attempt. Delivery is still best effort;
 queue acceptance does not confirm receipt.
+The same independent peer-delivery rule covers committed joins and presence
+updates during resume and matchmaking. A failed acknowledgement does not roll
+back a committed game or suppress that peer update.
 
 During matchmaking, an initial state may show the opponent as disconnected
 until that opponent's result is processed. An unsolicited `game.state` then

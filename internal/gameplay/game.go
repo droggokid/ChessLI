@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -97,13 +98,13 @@ func (g *game) move(command MoveCommand) (GameSnapshot, error) {
 	g.clock.completeMove(now, mover)
 	g.syncOutcomeFromEngineLocked()
 
-	if g.outcome != domain.OutcomeNone {
-		g.clock.stop(now, g.engine.Position().Turn())
-	}
-
 	g.version++
 	g.lastMoveSAN = san
-	g.clearPendingDrawOfferLocked()
+	g.drawOffers.pending = nil
+	if g.outcome != domain.OutcomeNone {
+		g.clock.stop(now, g.engine.Position().Turn())
+		g.logFinishedLocked()
+	}
 
 	return g.snapshotLocked(now), nil
 }
@@ -184,6 +185,9 @@ func (g *game) joinPrivate(command JoinPrivateCommand) (chess.Color, error) {
 func (g *game) startClockIfReadyLocked() {
 	if g.whiteProfileID != "" && g.blackProfileID != "" {
 		g.clock.start(g.now())
+		slog.Info("game started", "event", "game.started", "game_id", g.id, "mode", "private",
+			"white_profile_id", g.whiteProfileID, "black_profile_id", g.blackProfileID,
+			"initial_ms", g.clock.whiteRemaining.Milliseconds(), "increment_ms", g.clock.increment.Milliseconds())
 	}
 }
 
@@ -209,7 +213,8 @@ func (g *game) resign(command ResignCommand) (GameSnapshot, error) {
 	g.syncOutcomeFromEngineLocked()
 	g.version++
 	g.clock.stop(now, g.engine.Position().Turn())
-	g.clearPendingDrawOfferLocked()
+	g.drawOffers.pending = nil
+	g.logFinishedLocked()
 
 	return g.snapshotLocked(now), nil
 }

@@ -18,6 +18,7 @@ func (h *Handler) initialState(state gameplay.GameSnapshot) protocol.ServerEnvel
 	}
 }
 
+// Presence belongs to the transport registry, not the gameplay snapshot.
 func (h *Handler) gameStatePayload(state gameplay.GameSnapshot) protocol.GameStatePayload {
 	return protocol.GameStatePayload{
 		GameID:           state.GameID,
@@ -62,15 +63,12 @@ func (h *Handler) playerState(gameID identity.GameID, profileID identity.Profile
 	}
 }
 
-func mapColorFromServer(color chess.Color) (protocol.Color, error) {
-	switch color {
-	case chess.White:
-		return protocol.ColorWhite, nil
-	case chess.Black:
-		return protocol.ColorBlack, nil
-	default:
-		return "", gameplay.ErrInvalidColorPreference
+// Successful service assignments always contain White or Black.
+func mapColorFromServer(color chess.Color) protocol.Color {
+	if color == chess.White {
+		return protocol.ColorWhite
 	}
+	return protocol.ColorBlack
 }
 
 func mapMoveNotation(notation protocol.MoveNotation) (gameplay.MoveNotation, error) {

@@ -40,7 +40,7 @@ func TestHandlerProtocolErrors(t *testing.T) {
 
 			client := newQueuedSession("player")
 			service := gameplay.NewMockGameService(gomock.NewController(t))
-			handler := NewHandler(service, NewGameSessions())
+			handler := newHandler(service, newGameSessions())
 			if err := handler.Handle(context.Background(), client, tt.raw); err != nil {
 				t.Fatalf("Handle() error = %v", err)
 			}
@@ -55,58 +55,6 @@ func TestHandlerProtocolErrors(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestHandlerRejectsInvalidServiceColorWithoutRegistering(t *testing.T) {
-	t.Parallel()
-
-	service := gameplay.NewMockGameService(gomock.NewController(t))
-	service.EXPECT().CreatePrivateGame(gomock.Any(), gomock.Any()).Return(gameplay.GameAssignment{GameID: "game", Color: chess.NoColor}, nil)
-	registry := NewGameSessions()
-	client := newQueuedSession("player")
-	if err := NewHandler(service, registry).Handle(context.Background(), client, json.RawMessage(`{"type":"game.create","requestId":"request","payload":{"color":"white","timeControl":"3+2"}}`)); err != nil {
-		t.Fatalf("Handle() error = %v", err)
-	}
-	message := receiveEnvelope(t, client)
-	if len(client.outgoing) != 0 {
-		t.Fatal("admission error was followed by another response")
-	}
-	if message.Type != protocol.ServerError || errorPayloadCode(t, message) != protocol.ErrorInternal {
-		t.Fatalf("response = %+v, want internal error", message)
-	}
-	if err := registry.Hold(client); err != nil {
-		t.Fatalf("Hold() after invalid color = %v, want released session", err)
-	}
-}
-
-func TestAwaitMatchRejectsInvalidColorAndReleasesSession(t *testing.T) {
-	t.Parallel()
-
-	registry := NewGameSessions()
-	client := newQueuedSession("player")
-	if err := registry.Hold(client); err != nil {
-		t.Fatalf("Hold() error = %v", err)
-	}
-	handler := NewHandler(gameplay.NewMockGameService(gomock.NewController(t)), registry)
-	handler.awaitMatch(context.Background(), client, "request", gameplay.MatchTicket{
-		Result: matchResults(gameplay.GameAssignment{GameID: "game", Color: chess.NoColor}),
-	})
-	message := receiveEnvelope(t, client)
-	if message.Type != protocol.ServerError || errorPayloadCode(t, message) != protocol.ErrorInternal {
-		t.Fatalf("response = %+v, want internal error", message)
-	}
-	if err := registry.Hold(client); err != nil {
-		t.Fatalf("Hold() after invalid match color = %v, want released session", err)
-	}
-}
-
-func errorPayloadCode(t *testing.T, message protocol.ServerEnvelope) protocol.ErrorCode {
-	t.Helper()
-	payload, ok := message.Payload.(protocol.ErrorPayload)
-	if !ok {
-		t.Fatalf("error payload = %T, want protocol.ErrorPayload", message.Payload)
-	}
-	return payload.Code
 }
 
 func TestHandlerGameActionsBroadcastState(t *testing.T) {
@@ -157,7 +105,7 @@ func TestHandlerGameActionsBroadcastState(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			service := gameplay.NewMockGameService(gomock.NewController(t))
 			want := tt.expect(service)
-			registry := NewGameSessions()
+			registry := newGameSessions()
 			client := newQueuedSession("white")
 			peer := newQueuedSession("black")
 			if err := registry.Add("game", client); err != nil {
@@ -167,7 +115,7 @@ func TestHandlerGameActionsBroadcastState(t *testing.T) {
 				t.Fatalf("Add(peer) error = %v", err)
 			}
 
-			if err := NewHandler(service, registry).Handle(context.Background(), client, tt.raw); err != nil {
+			if err := newHandler(service, registry).Handle(context.Background(), client, tt.raw); err != nil {
 				t.Fatalf("Handle() error = %v", err)
 			}
 
@@ -198,8 +146,8 @@ func TestHandlerCreateGameMapsAndRegisters(t *testing.T) {
 		Increment:       2 * time.Second,
 		ColorPreference: gameplay.ColorBlack,
 	}).Return(gameplay.GameAssignment{GameID: "game", Color: chess.Black}, nil)
-	registry := NewGameSessions()
-	handler := NewHandler(service, registry)
+	registry := newGameSessions()
+	handler := newHandler(service, registry)
 	client := newQueuedSession("player")
 	raw := json.RawMessage(`{"type":"game.create","requestId":"request","payload":{"timeControl":"3+2","color":"black"}}`)
 
@@ -221,8 +169,8 @@ func TestHandlerCreateGameReleasesReservationOnServiceError(t *testing.T) {
 
 	service := gameplay.NewMockGameService(gomock.NewController(t))
 	service.EXPECT().CreatePrivateGame(gomock.Any(), gomock.Any()).Return(gameplay.GameAssignment{}, gameplay.ErrInvalidTimeControl)
-	registry := NewGameSessions()
-	handler := NewHandler(service, registry)
+	registry := newGameSessions()
+	handler := newHandler(service, registry)
 	client := newQueuedSession("player")
 	raw := json.RawMessage(`{"type":"game.create","requestId":"request","payload":{"timeControl":"3+2","color":"black"}}`)
 
@@ -254,8 +202,8 @@ func TestHandlerJoinGameMapsRegistersAndInitializes(t *testing.T) {
 		BlackProfileID: "player",
 		Outcome:        game.OutcomeNone,
 	}, nil)
-	registry := NewGameSessions()
-	handler := NewHandler(service, registry)
+	registry := newGameSessions()
+	handler := newHandler(service, registry)
 	client := newQueuedSession("player")
 	raw := json.RawMessage(`{"type":"game.join","requestId":"request","payload":{"gameId":"game"}}`)
 
@@ -291,10 +239,10 @@ func TestHandlerResumeGameRegistersAndInitializes(t *testing.T) {
 		GameID:    "game",
 		ProfileID: "player",
 	}).Return(state, nil)
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	client := newQueuedSession("player")
 
-	if err := NewHandler(service, registry).Handle(context.Background(), client, json.RawMessage(`{"type":"game.resume","requestId":"request","payload":{"gameId":"game"}}`)); err != nil {
+	if err := newHandler(service, registry).Handle(context.Background(), client, json.RawMessage(`{"type":"game.resume","requestId":"request","payload":{"gameId":"game"}}`)); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
 
@@ -327,10 +275,10 @@ func TestHandlerResumeFinishedGameDoesNotRegisterSession(t *testing.T) {
 		GameID:    "game",
 		ProfileID: "player",
 	}).Return(state, nil)
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	client := newQueuedSession("player")
 
-	if err := NewHandler(service, registry).Handle(context.Background(), client, json.RawMessage(`{"type":"game.resume","requestId":"request","payload":{"gameId":"game"}}`)); err != nil {
+	if err := newHandler(service, registry).Handle(context.Background(), client, json.RawMessage(`{"type":"game.resume","requestId":"request","payload":{"gameId":"game"}}`)); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
 
@@ -374,8 +322,8 @@ func TestHandlerMakeMoveBroadcastsAuthoritativeResult(t *testing.T) {
 		LastMoveSAN:    "e4",
 		Outcome:        game.OutcomeNone,
 	}, nil)
-	registry := NewGameSessions()
-	handler := NewHandler(service, registry)
+	registry := newGameSessions()
+	handler := newHandler(service, registry)
 	client := newQueuedSession("player")
 	peer := newQueuedSession("peer")
 	if err := registry.Add("game", client); err != nil {
@@ -428,8 +376,8 @@ func TestAwaitMatchRegistersAndInitializesSession(t *testing.T) {
 	}
 	service := gameplay.NewMockGameService(gomock.NewController(t))
 	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(state, nil).Times(2)
-	registry := NewGameSessions()
-	handler := NewHandler(service, registry)
+	registry := newGameSessions()
+	handler := newHandler(service, registry)
 	white := newQueuedSession("white")
 	black := newQueuedSession("black")
 	if err := registry.Hold(white); err != nil {
@@ -466,13 +414,13 @@ func TestAwaitMatchRegistersAndInitializesSession(t *testing.T) {
 		if payload.White == nil || payload.Black == nil {
 			t.Fatalf("%s player state = (%+v, %+v), want both players", name, payload.White, payload.Black)
 		}
-		if session.profile.ID == "white" && !payload.White.Connected {
+		if session.profileID == "white" && !payload.White.Connected {
 			t.Fatalf("%s white player was not connected", name)
 		}
-		if session.profile.ID == "black" && !payload.Black.Connected {
+		if session.profileID == "black" && !payload.Black.Connected {
 			t.Fatalf("%s black player was not connected", name)
 		}
-		if !registry.IsConnected("game", session.profile.ID) {
+		if !registry.IsConnected("game", session.profileID) {
 			t.Fatalf("%s was not registered to game", name)
 		}
 		// The earlier admission receives a presence update after its initial state.
@@ -495,13 +443,13 @@ func TestAwaitMatchInitializesSurvivingSession(t *testing.T) {
 	state := gameplay.GameSnapshot{GameID: "game", WhiteProfileID: "player", BlackProfileID: "peer"}
 	service := gameplay.NewMockGameService(gomock.NewController(t))
 	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(state, nil)
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	client := newQueuedSession("player")
 	if err := registry.Hold(client); err != nil {
 		t.Fatalf("Hold() error = %v", err)
 	}
 
-	NewHandler(service, registry).awaitMatch(context.Background(), client, "request", gameplay.MatchTicket{
+	newHandler(service, registry).awaitMatch(context.Background(), client, "request", gameplay.MatchTicket{
 		Result: matchResults(gameplay.GameAssignment{GameID: "game", Color: chess.White}),
 	})
 
@@ -518,8 +466,8 @@ func TestAwaitMatchStopsWhenInitialStateFails(t *testing.T) {
 
 	service := gameplay.NewMockGameService(gomock.NewController(t))
 	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(gameplay.GameSnapshot{}, gameplay.ErrGameNotFound)
-	registry := NewGameSessions()
-	handler := NewHandler(service, registry)
+	registry := newGameSessions()
+	handler := newHandler(service, registry)
 	client := newQueuedSession("player")
 	peer := newQueuedSession("peer")
 	if err := registry.Add("game", peer); err != nil {
@@ -546,8 +494,8 @@ func TestHandlerRejectsPrivateGameWhileQueued(t *testing.T) {
 	t.Parallel()
 
 	service := gameplay.NewMockGameService(gomock.NewController(t))
-	registry := NewGameSessions()
-	handler := NewHandler(service, registry)
+	registry := newGameSessions()
+	handler := newHandler(service, registry)
 	client := newQueuedSession("player")
 	if err := registry.Hold(client); err != nil {
 		t.Fatalf("Hold() error = %v", err)

@@ -8,8 +8,6 @@ import (
 	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/websocket/protocol"
-
-	"github.com/corentings/chess/v2"
 )
 
 func TestMapTimeControlPreset(t *testing.T) {
@@ -99,14 +97,6 @@ func TestProtocolToGameplayMappings(t *testing.T) {
 	})
 }
 
-func TestMapColorFromServerRejectsInvalidColor(t *testing.T) {
-	t.Parallel()
-
-	if _, err := mapColorFromServer(chess.NoColor); err == nil {
-		t.Fatal("mapColorFromServer(NoColor) error = nil, want error")
-	}
-}
-
 func TestMapOutcome(t *testing.T) {
 	t.Parallel()
 
@@ -145,7 +135,7 @@ func TestMapOutcome(t *testing.T) {
 func TestGameStatePayload(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(nil, NewGameSessions())
+	handler := newHandler(nil, newGameSessions())
 	state := gameplay.GameSnapshot{
 		GameID:         "game",
 		FEN:            "fen",
@@ -179,7 +169,7 @@ func TestGameStatePayload(t *testing.T) {
 func TestPlayerStateOmitsEmptySeat(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(nil, NewGameSessions())
+	handler := newHandler(nil, newGameSessions())
 	if got := handler.playerState("game", "", protocol.ColorBlack, 10*time.Minute); got != nil {
 		t.Fatalf("playerState() = %+v, want nil for empty seat", got)
 	}

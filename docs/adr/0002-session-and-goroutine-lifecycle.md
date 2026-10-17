@@ -21,8 +21,14 @@ Every goroutine has one clear lifecycle owner. The component that starts a
 goroutine is responsible for giving it a deterministic termination condition
 and, when required by its lifecycle contract, waiting for it to finish.
 
-The WebSocket session owns its read and write loops. The server owns active
-connection lifetimes. Gameplay owns matchmaking cancellation callbacks and
+The WebSocket session owns its initial acknowledgement and its read, write, and
+heartbeat loops. The initial write has a 10-second deadline and uses the session
+lifetime, so shutdown cancels it even before the loops start. The server owns
+active connection lifetimes. The handler owns asynchronous match-result waiters;
+after all connections stop, server shutdown calls `Handler.Close` to join them.
+`Handler.Close` is a join operation, not a cancellation source, and must only be
+called after connection operations stop and their contexts are canceled.
+Gameplay owns matchmaking cancellation callbacks and
 game expiration timers.
 Gameplay also owns asynchronous expiration-notification handlers. Service
 operations never wait for those handlers; `GameService.Close` stops new
@@ -55,9 +61,9 @@ callbacks must be finite or cancelable.
 
 ### Invariants
 
-- `Session.Run` does not return until both session-owned I/O loops terminate.
+- `Session.Run` does not return until all session-owned I/O loops terminate.
 - Server shutdown cancels connection lifetimes and waits for active connection
-  handlers, subject to the shutdown context.
+  handlers and handler-owned match-result waiters, subject to the shutdown context.
 - A stopped game timer cannot later apply that timer's expiration to the game.
 - A successful match does not leave dormant queue-cleanup work waiting for a
   later cancellation.

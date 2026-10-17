@@ -24,6 +24,9 @@ Each connection receives a `connection.ready` `profileId`; reconnect with it as
 `?profileId=PROFILE_ID`, then send `game.resume`. It is placeholder identity,
 not authentication.
 
+`connection.ready` is always sent before commands are processed. Its write has
+a 10-second deadline and is canceled when the server shuts down.
+
 In the first player terminal, create a game as White:
 
 ```json
@@ -94,6 +97,8 @@ After the final state is queued for delivery, both live connections are free to
 create, join, or match into another game.
 The server attempts delivery to the opponent even if the acting player's
 connection has stopped, its queue is full, or its request was canceled.
+This also applies to committed join and presence updates during resume and
+matchmaking, even when the acting player's acknowledgement cannot be queued.
 State publication and admission are ordered so a delayed operation cannot
 publish active state after a finished state or occupy a finished game.
 Delivery remains best effort: queue acceptance does not confirm receipt.
@@ -152,3 +157,44 @@ For payloads that exercise the current error responses, see
 Malformed JSON receives an `invalid_message` error and does not close the
 connection, so the client can correct and resend its request. A `game.move`
 payload must also include a non-empty `gameId`.
+
+## Operational logs
+
+The existing logger writes JSON to stdout by default. Set `CHESSLI_LOG_FORMAT=text`
+for local reading. Filter on `event`, not the human-readable `msg`.
+
+| Event | Meaning and useful fields |
+| --- | --- |
+| `server.starting`, `server.stopped` | Process lifecycle; startup includes `address`. |
+| `connection.opened`, `connection.closed` | Upgraded socket lifetime, with `profile_id`; close includes `duration_ms`, `close_code`, and `reason` (`client_closed`, `shutdown`, `timeout`, or `error`). |
+| `game.created` | A private game is waiting for its opponent; includes `game_id`, creator `profile_id`, `initial_ms`, and `increment_ms`. |
+| `game.started` | Both seats are filled; includes `game_id`, `mode` (`private` or `matchmaking`), both profile IDs, and the time control. |
+| `matchmaking.queued`, `matchmaking.canceled` | A waiting player's queue lifetime, correlated by `profile_id`; queue entry includes the time control. An immediate match emits `game.started`. |
+| `game.resumed` | A participant successfully reads their game through resume; includes `game_id`, `profile_id`, `outcome`, and `version`. This does not confirm client receipt. |
+| `game.player_disconnected` | A connection is removed from its game; includes `game_id`, `profile_id`, and `server_shutdown` to distinguish server shutdown from an individual disconnect. |
+| `game.finished` | One completion event per game transition, with `game_id`, `outcome`, `termination`, and final `version`. Reads and reconnects do not repeat it. |
+| `message.dropped` | A full outgoing queue; includes `profile_id`, `request_id`, `message_type`, and `reason=queue_full`. |
+
+Lifecycle events use INFO. Full queues, rejected upgrades (`connection.rejected`),
+timeouts, and unexpected disconnects use WARN. Unexpected application failures
+use ERROR (`request.failed`, `disconnect.state_failed`, `server.failed`, and
+`server.configuration_failed`), with the error and available correlation IDs.
+`close_code=-1` means no WebSocket close frame was available.
+
+Routine moves, heartbeat traffic, and ordinary client validation errors are not
+logged. Message payloads are not included. Use these events for operational
+dashboards; they do not provide durable game history or delivery acknowledgements.
+
+## Repository integration tests
+
+The application currently runs entirely in memory. Repository integration tests
+exercise the existing PostgreSQL adapters without wiring them into the server.
+They are skipped unless `CHESSLI_TEST_DATABASE_URL` is set:
+
+```sh
+CHESSLI_TEST_DATABASE_URL='postgres://app:app@localhost:5432/app?sslmode=disable' go test -race ./internal/persistence/... -count=1
+```
+
+Use a test database whose user can create schemas. Each test creates a unique
+schema, applies the migrations, and rolls back the schema and records at cleanup.
+CI runs these tests against PostgreSQL 17 along with the full race suite.

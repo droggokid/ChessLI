@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"context"
+	"log/slog"
 	"math/rand/v2"
 	"sync"
 
@@ -33,7 +34,7 @@ type GameService struct {
 	mu             sync.RWMutex
 	waitingPlayers map[timeControlKey]*waitingPlayer
 	games          map[identity.GameID]*game
-	pickColor      func() chess.Color
+	pickColor      func() chess.Color // Always White or Black.
 	onGameExpired  func(GameSnapshot)
 	notifications  sync.WaitGroup
 	closed         bool
@@ -70,6 +71,7 @@ func (s *GameService) notifyGameExpired(state GameSnapshot) {
 	}
 	s.notifications.Add(1)
 	s.mu.Unlock()
+	// Notifications may call back into transport code that is waiting on this operation.
 	go func() {
 		defer s.notifications.Done()
 		handler(state)
@@ -93,7 +95,7 @@ func (s *GameService) CreatePrivateGame(ctx context.Context, command CreatePriva
 		return GameAssignment{}, err
 	}
 
-	whiteProfileID, blackProfileID := assignPrivateColors(command.ProfileID, creatorColor)
+	whiteProfileID, blackProfileID := assignColors(command.ProfileID, "", creatorColor)
 	gameID := identity.NewGameID()
 	game := newGame(gameID, whiteProfileID, blackProfileID, command.Initial, command.Increment)
 
@@ -101,6 +103,9 @@ func (s *GameService) CreatePrivateGame(ctx context.Context, command CreatePriva
 	s.games[gameID] = game
 	s.mu.Unlock()
 
+	slog.Info("private game created", "event", "game.created", "game_id", gameID,
+		"profile_id", command.ProfileID, "mode", "private",
+		"initial_ms", command.Initial.Milliseconds(), "increment_ms", command.Increment.Milliseconds())
 	return GameAssignment{GameID: gameID, Color: creatorColor}, nil
 }
 
@@ -127,7 +132,7 @@ func (s *GameService) JoinPrivateGame(ctx context.Context, command JoinPrivateCo
 	return GameAssignment{GameID: game.id, Color: color}, nil
 }
 
-// ResumeGame returns the current game state for a participant.
+// ResumeGame returns the current state, rejecting profiles that are not participants.
 func (s *GameService) ResumeGame(ctx context.Context, command ResumeGameCommand) (GameSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return GameSnapshot{}, err
@@ -143,10 +148,16 @@ func (s *GameService) ResumeGame(ctx context.Context, command ResumeGameCommand)
 	}
 	defer game.notifyExpiration(s.notifyGameExpired)
 
-	return game.resume(command.ProfileID)
+	state, err := game.resume(command.ProfileID)
+	if err == nil {
+		slog.Info("game resumed", "event", "game.resumed", "game_id", command.GameID,
+			"profile_id", command.ProfileID, "outcome", state.Outcome, "version", state.Version)
+	}
+	return state, err
 }
 
-// EnterMatchmaking queues a profile or matches it with a compatible opponent.
+// EnterMatchmaking queues a profile or matches it with an opponent using the same time control.
+// Canceling ctx removes an unmatched profile from the queue.
 func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error) {
 	if err := ctx.Err(); err != nil {
 		return MatchTicket{}, err
@@ -155,8 +166,7 @@ func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchma
 		return MatchTicket{}, err
 	}
 
-	timeControl := command.timeControl
-	if err := validateTimeControl(timeControl.initial, timeControl.increment); err != nil {
+	if err := validateTimeControl(command.Initial, command.Increment); err != nil {
 		return MatchTicket{}, err
 	}
 
@@ -175,17 +185,13 @@ func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchma
 				s.removeWaitingPlayerOnCancel(player)
 			})
 		}
+		slog.Info("player queued", "event", "matchmaking.queued", "profile_id", command.ProfileID,
+			"initial_ms", command.Initial.Milliseconds(), "increment_ms", command.Increment.Milliseconds())
 		s.mu.Unlock()
 		return MatchTicket{Result: player.result}, nil
 	}
 
-	waitingResult, currentResult, game, err := s.createMatchLocked(waiting, player)
-	if err != nil {
-		s.mu.Unlock()
-		close(waiting.result)
-		close(player.result)
-		return MatchTicket{}, err
-	}
+	waitingResult, currentResult, game := s.createMatchLocked(waiting, player)
 	s.mu.Unlock()
 
 	game.scheduleExpiration(s.notifyGameExpired)
@@ -205,7 +211,7 @@ func (s *GameService) findOpponentLocked(player *waitingPlayer) (opponent *waiti
 		}
 	}
 
-	key := player.command.timeControl
+	key := timeControlKey{initial: player.command.Initial, increment: player.command.Increment}
 	waiting, exists := s.waitingPlayers[key]
 	if !exists {
 		s.waitingPlayers[key] = player
@@ -227,6 +233,7 @@ func (s *GameService) removeCanceledPlayersLocked() {
 
 		delete(s.waitingPlayers, key)
 		stopWaitingPlayerCleanup(waiting)
+		slog.Info("matchmaking canceled", "event", "matchmaking.canceled", "profile_id", waiting.command.ProfileID)
 		close(waiting.result)
 	}
 }
@@ -235,40 +242,39 @@ func (s *GameService) removeWaitingPlayerOnCancel(player *waitingPlayer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := player.command.timeControl
+	key := timeControlKey{initial: player.command.Initial, increment: player.command.Increment}
+	// A stopped cleanup callback may already be running after this player was matched.
 	if s.waitingPlayers[key] != player {
 		return
 	}
 
 	delete(s.waitingPlayers, key)
 	player.stopCleanup = nil
+	slog.Info("matchmaking canceled", "event", "matchmaking.canceled", "profile_id", player.command.ProfileID)
 	close(player.result)
 }
 
 // createMatchLocked creates and stores a game for two matched players.
 // The caller must hold s.mu.
-func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (GameAssignment, GameAssignment, *game, error) {
+func (s *GameService) createMatchLocked(waiting, current *waitingPlayer) (GameAssignment, GameAssignment, *game) {
 	waitingColor := s.pickColor()
 	currentColor := waitingColor.Other()
 
-	whiteProfileID, blackProfileID, err := assignMatchmakingColors(
+	whiteProfileID, blackProfileID := assignColors(
 		waiting.command.ProfileID,
 		current.command.ProfileID,
 		waitingColor,
 	)
-	if err != nil {
-		return GameAssignment{}, GameAssignment{}, nil, err
-	}
-
 	gameID := identity.NewGameID()
-	timeControl := current.command.timeControl
-	game := newGame(gameID, whiteProfileID, blackProfileID, timeControl.initial, timeControl.increment)
+	game := newGame(gameID, whiteProfileID, blackProfileID, current.command.Initial, current.command.Increment)
 	s.games[gameID] = game
+	slog.Info("game started", "event", "game.started", "game_id", gameID, "mode", "matchmaking",
+		"white_profile_id", whiteProfileID, "black_profile_id", blackProfileID,
+		"initial_ms", current.command.Initial.Milliseconds(), "increment_ms", current.command.Increment.Milliseconds())
 
 	return GameAssignment{GameID: gameID, Color: waitingColor},
 		GameAssignment{GameID: gameID, Color: currentColor},
-		game,
-		nil
+		game
 }
 
 // MakeMove applies a move to the identified game on behalf of a profile.
@@ -292,7 +298,7 @@ func (s *GameService) MakeMove(ctx context.Context, command MoveCommand) (GameSn
 	return state, nil
 }
 
-// GameState returns the current authoritative snapshot of a game.
+// GameState returns the current snapshot, settling an expired clock before returning.
 func (s *GameService) GameState(ctx context.Context, gameID identity.GameID) (GameSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return GameSnapshot{}, err

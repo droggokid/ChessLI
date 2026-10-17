@@ -46,6 +46,10 @@ its cancel function as part of explicit lifecycle management.
   `context.WithoutCancel` so the acting player's cancellation does not suppress
   another player's state. This detached context is neither stored nor used
   for network I/O; session-owned contexts still govern socket writes.
+- After a private join commits, the handler also fetches its in-memory snapshot
+  with `context.WithoutCancel` before peer publication. This is finite in-memory
+  work under dispatch, never database or network I/O. A future service that needs
+  I/O here must return the committed snapshot with the join result instead.
 - Long-lived components do not retain request-scoped context values after the
   request lifetime.
 

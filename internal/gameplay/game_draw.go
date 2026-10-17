@@ -66,7 +66,8 @@ func (g *game) acceptDraw(command DrawOfferResponseCommand) (GameSnapshot, error
 	g.syncOutcomeFromEngineLocked()
 	g.clock.stop(now, g.engine.Position().Turn())
 	g.version++
-	g.clearPendingDrawOfferLocked()
+	g.drawOffers.pending = nil
+	g.logFinishedLocked()
 
 	return g.snapshotLocked(now), nil
 }
@@ -84,7 +85,7 @@ func (g *game) declineDraw(command DrawOfferResponseCommand) (GameSnapshot, erro
 		return GameSnapshot{}, err
 	}
 
-	g.clearPendingDrawOfferLocked()
+	g.drawOffers.pending = nil
 	return g.snapshotLocked(now), nil
 }
 
@@ -113,8 +114,4 @@ func (g *game) validateDrawResponseLocked(command DrawOfferResponseCommand) erro
 		return ErrCannotRespondToOwnDrawOffer
 	}
 	return nil
-}
-
-func (g *game) clearPendingDrawOfferLocked() {
-	g.drawOffers.pending = nil
 }

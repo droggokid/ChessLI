@@ -3,7 +3,9 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"ChessLI/internal/gameplay"
@@ -15,19 +17,58 @@ const sessionUnavailableMessage = "session is already in a game or matchmaking"
 // Handler decodes and dispatches WebSocket messages.
 // It is safe for concurrent use when its Service is.
 type Handler struct {
-	// ponytail: serialize in-memory transport work through queue acceptance;
+	// shortcut: serialize in-memory transport work through queue acceptance;
 	// use per-game dispatch locks if throughput requires concurrent games.
 	dispatchMu   sync.Mutex
 	gameService  gameplay.Service
-	gameSessions *GameSessions
+	gameSessions *gameSessions
+	matchmaking  sync.WaitGroup
 }
 
-// NewHandler creates a WebSocket message handler backed by gameService.
-func NewHandler(gameService gameplay.Service, sessions *GameSessions) *Handler {
+// newHandler creates a WebSocket message handler backed by gameService.
+func newHandler(gameService gameplay.Service, sessions *gameSessions) *Handler {
 	return &Handler{gameService: gameService, gameSessions: sessions}
 }
 
-// Handle decodes and dispatches a client message.
+// Close joins matchmaking waiters after all connection operations have stopped.
+// Their contexts must already be canceled; Close does not cancel them.
+func (h *Handler) Close() {
+	h.matchmaking.Wait()
+}
+
+// Disconnect removes membership and publishes the remaining player's view.
+func (h *Handler) Disconnect(ctx context.Context, client *Session) {
+	h.dispatchMu.Lock()
+	defer h.dispatchMu.Unlock()
+	gameID := h.gameSessions.Remove(client)
+	if gameID == "" {
+		return
+	}
+	shuttingDown := ctx.Err() != nil
+	slog.Info("player disconnected from game", "event", "game.player_disconnected",
+		"game_id", gameID, "profile_id", client.profileID, "server_shutdown", shuttingDown)
+	if shuttingDown {
+		return
+	}
+	state, err := h.gameService.GameState(ctx, gameID)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Error("fetch disconnected game state", "event", "disconnect.state_failed",
+				"game_id", gameID, "profile_id", client.profileID, "error", err)
+		}
+		return
+	}
+	_ = h.broadcastGameState(ctx, nil, "", state)
+}
+
+// Publish orders an automatic update with commands, admission, and disconnects.
+func (h *Handler) Publish(ctx context.Context, state gameplay.GameSnapshot) {
+	h.dispatchMu.Lock()
+	defer h.dispatchMu.Unlock()
+	_ = h.broadcastGameState(ctx, nil, "", state)
+}
+
+// Handle serializes a client command through state publication and queue acceptance.
 func (h *Handler) Handle(ctx context.Context, client *Session, raw json.RawMessage) error {
 	var message protocol.ClientEnvelope
 	if err := json.Unmarshal(raw, &message); err != nil {
@@ -60,13 +101,12 @@ func (h *Handler) Handle(ctx context.Context, client *Session, raw json.RawMessa
 	}
 }
 
-func (h *Handler) releaseAndSendApplicationError(ctx context.Context, client *Session, requestID string, cause error) error {
-	h.gameSessions.Release(client)
-	return h.sendApplicationError(ctx, client, requestID, cause)
-}
-
 func (h *Handler) sendApplicationError(ctx context.Context, client *Session, requestID string, cause error) error {
 	code, publicMessage := mapApplicationError(cause)
+	if code == protocol.ErrorInternal && ctx.Err() == nil && !errors.Is(cause, protocol.ErrSessionNotRunning) {
+		slog.Error("game request failed", "event", "request.failed", "profile_id", client.profileID,
+			"request_id", requestID, "error_code", code, "error", cause)
+	}
 	return h.sendError(ctx, client, requestID, code, publicMessage)
 }
 

@@ -35,10 +35,20 @@ This deliberately limits parallelism across games; replace it with per-game
 dispatch if throughput requires it. Do not put database or network I/O inside
 this critical section.
 
+The handler exclusively owns its private game-session registry. Registry access,
+including matchmaking cancellation cleanup, occurs under the dispatch mutex;
+the registry does not need a second lock or copied recipient lists. The server
+delegates disconnect and automatic publication to handler methods instead of
+accessing registry state or acquiring the handler's lock itself.
+
 A source send failure is returned after peer delivery is attempted. Peer
 enqueues for a committed action are independent of the source request's
 cancellation, always clear its request ID, and remain finite and non-blocking.
 Matchmaking admission publishes presence to already registered peers.
+Join, resume, and matchmaking acknowledgements may fail independently of the
+committed peer update. Resume and matchmaking share the same admission sequence;
+join retains its initial-state broadcast to both players. Reservations use
+deferred release, which clears only a reservation and never actual membership.
 
 ### Constraints
 

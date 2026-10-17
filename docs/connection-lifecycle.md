@@ -9,6 +9,8 @@ in gameplay memory independently of either connection.
 - `GET /ws` accepts a WebSocket and sends `connection.ready` with a `profileId`.
   With `?profileId=PROFILE_ID`, the server reuses that ID; otherwise it creates
   a new one. The ID is a placeholder identity, not authentication.
+  The session writes this acknowledgement before processing commands, with a
+  10-second deadline and the same shutdown cancellation as the connection.
 - Reusing a profile ID does not close an older connection. The server rejects
   a second queue entry for that profile and a second session in the same game;
   it does not automatically transfer the old session's place to the new one.
@@ -17,7 +19,7 @@ in gameplay memory independently of either connection.
   ping failure, a normal close, or server shutdown ends the session. A silent
   network loss is noticed when an I/O operation or heartbeat fails, not
   necessarily at the moment the link drops.
-- When the session ends, the server cancels its operations and removes it from
+- When the session ends, its operations are canceled and the handler removes it from
   the live game-session registry. If it belonged to a game, the remaining
   connected player is sent an unsolicited `game.state` showing
   `connected: false` for that profile. Disconnecting does not resign or end
@@ -70,8 +72,24 @@ connection with the same profile ID alone does not resume a game.
 
 Server messages use a bounded outgoing queue. A successful enqueue does not
 confirm a socket write or client receipt, and a message racing with disconnect
-may be lost. Live games, matchmaking entries, and sessions are in memory; a
+may be lost. After a join or presence change commits, the peer update is attempted
+even if the acting player's acknowledgement cannot be queued or its operation
+is canceled. Live games, matchmaking entries, and sessions are in memory; a
 server restart does not recover an unfinished game or its queue.
+
+## Ownership and shutdown
+
+`Server` accepts connections, cancels their lifetimes, and waits for connection
+handlers and the handler's pending matchmaking work. `Session` owns its initial
+acknowledgement, read/write/heartbeat loops, and socket closure. `Handler` owns
+admission, membership, disconnect publication, and automatic-state publication.
+Gameplay owns matching, clocks, and expiration callbacks.
+
+All membership access and publication use the handler's single dispatch mutex,
+including matchmaking cancellation cleanup. The private session registry has no
+separate mutex. Socket writes happen outside dispatch, and gameplay retains its
+own locks for concurrent application callers. Shutdown joins matchmaking waiters
+after connections stop; a disconnect alone does not wait for unrelated matches.
 
 Implementation: `internal/websocket/server.go`, `session.go`,
 `handler_admission.go`, and `game_sessions.go`; `internal/gameplay/service.go`.

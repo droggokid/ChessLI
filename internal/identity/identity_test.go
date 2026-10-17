@@ -2,8 +2,6 @@ package identity
 
 import (
 	"testing"
-
-	"github.com/google/uuid"
 )
 
 func TestNewIdentifiers(t *testing.T) {
@@ -36,19 +34,19 @@ func TestNewIdentifiers(t *testing.T) {
 	})
 }
 
-func TestParseProfile(t *testing.T) {
+func TestParseProfileID(t *testing.T) {
 	t.Parallel()
 
-	id := uuid.NewString()
-	profile, err := ParseProfile(id)
+	const id = "a0b1c2d3-e4f5-4678-9012-3456789abcde"
+	profileID, err := ParseProfileID("{A0B1C2D3-E4F5-4678-9012-3456789ABCDE}")
 	if err != nil {
-		t.Fatalf("ParseProfile() error = %v", err)
+		t.Fatalf("ParseProfileID() error = %v", err)
 	}
-	if profile.ID != ProfileID(id) {
-		t.Fatalf("ParseProfile() ID = %q, want %q", profile.ID, id)
+	if profileID != ProfileID(id) {
+		t.Fatalf("ParseProfileID() = %q, want %q", profileID, id)
 	}
 
-	if _, err := ParseProfile("not-a-uuid"); err == nil {
-		t.Fatal("ParseProfile() accepted an invalid profile ID")
+	if _, err := ParseProfileID("not-a-uuid"); err == nil {
+		t.Fatal("ParseProfileID() accepted an invalid profile ID")
 	}
 }

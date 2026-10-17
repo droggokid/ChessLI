@@ -27,7 +27,7 @@ func (h *Handler) handleMakeMove(ctx context.Context, client *Session, message p
 	if err != nil {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "unsupported move notation")
 	}
-	state, err := h.gameService.MakeMove(ctx, gameplay.MoveCommand{GameID: request.GameID, ProfileID: client.profile.ID, Move: request.Move, Notation: moveNotation, ExpectedVersion: *request.ExpectedVersion})
+	state, err := h.gameService.MakeMove(ctx, gameplay.MoveCommand{GameID: request.GameID, ProfileID: client.profileID, Move: request.Move, Notation: moveNotation, ExpectedVersion: *request.ExpectedVersion})
 	if err != nil {
 		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
@@ -39,7 +39,7 @@ func (h *Handler) handleResign(ctx context.Context, client *Session, message pro
 	if err != nil || request.GameID == "" {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid resign payload")
 	}
-	state, err := h.gameService.Resign(ctx, gameplay.ResignCommand{GameID: request.GameID, ProfileID: client.profile.ID})
+	state, err := h.gameService.Resign(ctx, gameplay.ResignCommand{GameID: request.GameID, ProfileID: client.profileID})
 	if err != nil {
 		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
@@ -51,7 +51,7 @@ func (h *Handler) handleOfferDraw(ctx context.Context, client *Session, message 
 	if err != nil || request.GameID == "" {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid draw.offer payload")
 	}
-	state, err := h.gameService.OfferDraw(ctx, gameplay.OfferDrawCommand{GameID: request.GameID, ProfileID: client.profile.ID})
+	state, err := h.gameService.OfferDraw(ctx, gameplay.OfferDrawCommand{GameID: request.GameID, ProfileID: client.profileID})
 	if err != nil {
 		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}
@@ -63,7 +63,7 @@ func (h *Handler) handleDrawResponse(ctx context.Context, client *Session, messa
 	if err != nil || request.GameID == "" || request.OfferID == "" {
 		return h.sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, "invalid draw response payload")
 	}
-	state, err := respond(ctx, gameplay.DrawOfferResponseCommand{GameID: request.GameID, ProfileID: client.profile.ID, OfferID: request.OfferID})
+	state, err := respond(ctx, gameplay.DrawOfferResponseCommand{GameID: request.GameID, ProfileID: client.profileID, OfferID: request.OfferID})
 	if err != nil {
 		return h.sendApplicationError(ctx, client, message.RequestID, err)
 	}

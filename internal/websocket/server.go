@@ -11,10 +11,8 @@ import (
 	"time"
 
 	"ChessLI/internal/gameplay"
-	"ChessLI/internal/websocket/protocol"
 
 	coderws "github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 )
 
 const (
@@ -29,7 +27,6 @@ type Server struct {
 	httpServer *http.Server
 
 	messageHandler *Handler
-	gameSessions   *GameSessions
 
 	connectionCtx     context.Context
 	cancelConnections context.CancelFunc
@@ -43,12 +40,11 @@ type Server struct {
 func NewServer(address string, gameService gameplay.Service) *Server {
 	connectionCtx, cancelConnections := context.WithCancel(context.Background())
 
-	sessions := NewGameSessions()
+	sessions := newGameSessions()
 
 	server := &Server{
 		connectionCtx:     connectionCtx,
-		messageHandler:    NewHandler(gameService, sessions),
-		gameSessions:      sessions,
+		messageHandler:    newHandler(gameService, sessions),
 		cancelConnections: cancelConnections,
 		heartbeatInterval: heartbeatInterval,
 		heartbeatTimeout:  heartbeatTimeout,
@@ -86,6 +82,7 @@ func (s *Server) Run(ctx context.Context) error {
 	case err := <-serverError:
 		s.cancelConnections()
 		s.connections.Wait()
+		s.messageHandler.Close()
 
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -101,7 +98,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-// Shutdown stops the HTTP server and waits for client connections to close.
+// Shutdown cancels connections and joins them and their match waiters, bounded by ctx.
 func (s *Server) Shutdown(ctx context.Context) error {
 	httpError := s.httpServer.Shutdown(ctx)
 
@@ -109,6 +106,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	go func() {
 		s.connections.Wait()
+		s.messageHandler.Close()
 		close(connectionsClosed)
 	}()
 
@@ -129,10 +127,10 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 	s.connections.Add(1)
 	defer s.connections.Done()
 
-	profile := identity.NewProfile()
+	profileID := identity.NewProfileID()
 	if rawProfileID := r.URL.Query().Get("profileId"); rawProfileID != "" {
 		var err error
-		profile, err = identity.ParseProfile(rawProfileID)
+		profileID, err = identity.ParseProfileID(rawProfileID)
 		if err != nil {
 			http.Error(w, "invalid profile ID", http.StatusBadRequest)
 			return
@@ -141,64 +139,37 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := coderws.Accept(w, r, nil)
 	if err != nil {
-		slog.Error("accept websocket connection", "error", err)
+		slog.Warn("websocket upgrade rejected", "event", "connection.rejected",
+			"profile_id", profileID, "reason", "upgrade_failed", "error", err)
 		return
 	}
 	conn.SetReadLimit(maxMessageSize)
 
-	if err = wsjson.Write(r.Context(), conn, protocol.ServerEnvelope{
-		Type: protocol.ServerConnectionReady,
-		Payload: protocol.ConnectionReadyPayload{
-			ProfileID: profile.ID,
-		},
-	}); err != nil {
-		slog.Error("send connection ack", "error", err)
-		_ = conn.CloseNow()
-		return
-	}
-
-	client := NewSession(profile, conn)
+	client := NewSession(profileID, conn)
 	client.heartbeatInterval = s.heartbeatInterval
 	client.heartbeatTimeout = s.heartbeatTimeout
-	defer s.removeSession(client)
+	defer s.messageHandler.Disconnect(s.connectionCtx, client)
 
-	if err = client.Run(s.connectionCtx, s.messageHandler.Handle); err != nil {
-		if isExpectedClose(err) {
-			return
-		}
-
-		slog.Warn(
-			"websocket client disconnected unexpectedly",
-			"error",
-			err,
-		)
+	started := time.Now()
+	slog.Info("websocket connection opened", "event", "connection.opened", "profile_id", profileID)
+	err = client.Run(s.connectionCtx, s.messageHandler.Handle)
+	level, reason := slog.LevelInfo, "client_closed"
+	switch {
+	case s.connectionCtx.Err() != nil:
+		reason = "shutdown"
+	case errors.Is(err, context.DeadlineExceeded):
+		level, reason = slog.LevelWarn, "timeout"
+	case err != nil && !isExpectedClose(err):
+		level, reason = slog.LevelWarn, "error"
 	}
-}
-
-func (s *Server) removeSession(client *Session) {
-	s.messageHandler.dispatchMu.Lock()
-	defer s.messageHandler.dispatchMu.Unlock()
-
-	gameID := s.gameSessions.Remove(client)
-	if gameID == "" {
-		return
-	}
-
-	state, err := s.messageHandler.gameService.GameState(s.connectionCtx, gameID)
-	if err != nil {
-		slog.Warn("fetch disconnected game state", "game_id", gameID, "error", err)
-		return
-	}
-	_ = s.messageHandler.broadcastGameState(s.connectionCtx, nil, "", state)
+	slog.Log(s.connectionCtx, level, "websocket connection closed", "event", "connection.closed",
+		"profile_id", profileID, "duration_ms", time.Since(started).Milliseconds(),
+		"reason", reason, "close_code", int(coderws.CloseStatus(err)), "error", err)
 }
 
 // BroadcastGameState sends an unsolicited authoritative state to every session in the game.
 func (s *Server) BroadcastGameState(state gameplay.GameSnapshot) {
-	s.messageHandler.dispatchMu.Lock()
-	defer s.messageHandler.dispatchMu.Unlock()
-	if err := s.messageHandler.broadcastGameState(s.connectionCtx, nil, "", state); err != nil {
-		slog.Warn("broadcast automatic game state", "game_id", state.GameID, "error", err)
-	}
+	s.messageHandler.Publish(s.connectionCtx, state)
 }
 
 func isExpectedClose(err error) bool {

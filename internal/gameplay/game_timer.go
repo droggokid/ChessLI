@@ -10,6 +10,7 @@ import (
 func (g *game) scheduleExpiration(onExpired func(GameSnapshot)) {
 	g.mu.Lock()
 
+	// Stop cannot retract an already running callback; the generation check does.
 	if g.expirationTimer != nil {
 		g.expirationTimer.Stop()
 		g.expirationTimer = nil
@@ -39,6 +40,7 @@ func (g *game) scheduleExpiration(onExpired func(GameSnapshot)) {
 func (g *game) expireFromTimer(expirationID, expectedVersion uint64, deadline time.Time, onExpired func(GameSnapshot)) {
 	g.mu.Lock()
 
+	// A move can finish before its replacement timer is scheduled, so version matters too.
 	if g.expirationID != expirationID || g.version != expectedVersion || g.outcome != domain.OutcomeNone {
 		g.mu.Unlock()
 		return
@@ -68,6 +70,7 @@ func (g *game) expireFromTimer(expirationID, expectedVersion uint64, deadline ti
 
 func (g *game) notifyExpiration(onExpired func(GameSnapshot)) {
 	g.mu.Lock()
+	// Reads and commands can discover a timeout before the timer callback does.
 	if g.termination != domain.TerminationTimeout || g.expirationNotified {
 		g.mu.Unlock()
 		return
