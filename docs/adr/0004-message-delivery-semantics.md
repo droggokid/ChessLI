@@ -41,6 +41,12 @@ the registry does not need a second lock or copied recipient lists. The server
 delegates disconnect and automatic publication to handler methods instead of
 accessing registry state or acquiring the handler's lock itself.
 
+The private admission component uses the handler's registry under that same
+dispatch mutex. `gameSessions` builds presence-aware payloads and performs
+terminal membership cleanup after publication. Stateless mappers receive
+presence explicitly and never read the registry themselves. Extracting these
+components does not split the critical section or add another lock.
+
 A source send failure is returned after peer delivery is attempted. Peer
 enqueues for a committed action are independent of the source request's
 cancellation, always clear its request ID, and remain finite and non-blocking.

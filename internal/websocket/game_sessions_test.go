@@ -18,12 +18,6 @@ func TestGameSessionsRegistrationLifecycle(t *testing.T) {
 	if err := registry.Add("game-1", session); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
-	if err := registry.Add("game-1", session); err != nil {
-		t.Fatalf("idempotent Add() error = %v", err)
-	}
-	if err := registry.Add("game-2", session); !errors.Is(err, protocol.ErrSessionAlreadyInGame) {
-		t.Fatalf("conflicting Add() error = %v, want %v", err, protocol.ErrSessionAlreadyInGame)
-	}
 
 	if !registry.IsConnected("game-1", "player") {
 		t.Fatal("IsConnected() = false, want registered session")
@@ -106,7 +100,7 @@ func TestGameSessionsRejectsStoppedSession(t *testing.T) {
 
 	registry := newGameSessions()
 	session := newQueuedSession("player")
-	session.runState.Store(uint32(sessionStopped))
+	session.running.Store(false)
 
 	err := registry.Add("game", session)
 	if !errors.Is(err, protocol.ErrSessionNotRunning) {
@@ -183,7 +177,7 @@ func TestGameSessionsBroadcastAttemptsPeersAfterSourceFailure(t *testing.T) {
 			var wantErr error
 			switch failure {
 			case "stopped":
-				source.runState.Store(uint32(sessionStopped))
+				source.running.Store(false)
 				wantErr = protocol.ErrSessionNotRunning
 			case "full":
 				for len(source.outgoing) < cap(source.outgoing) {
@@ -236,7 +230,7 @@ func TestSessionSend(t *testing.T) {
 
 		session := newQueuedSession("player")
 		session.outgoing = make(chan protocol.ServerEnvelope)
-		session.runState.Store(uint32(sessionStopped))
+		session.running.Store(false)
 		err := session.Send(context.Background(), protocol.ServerEnvelope{})
 		if !errors.Is(err, protocol.ErrSessionNotRunning) {
 			t.Fatalf("Send() error = %v, want %v", err, protocol.ErrSessionNotRunning)
@@ -247,7 +241,7 @@ func TestSessionSend(t *testing.T) {
 		t.Parallel()
 
 		session := newQueuedSession("player")
-		session.runState.Store(uint32(sessionStopped))
+		session.running.Store(false)
 		err := session.Send(context.Background(), protocol.ServerEnvelope{})
 		if !errors.Is(err, protocol.ErrSessionNotRunning) {
 			t.Fatalf("Send() error = %v, want %v", err, protocol.ErrSessionNotRunning)
@@ -279,7 +273,7 @@ func newQueuedSession(profileID identity.ProfileID) *Session {
 		profileID: profileID,
 		outgoing:  make(chan protocol.ServerEnvelope, 8),
 	}
-	session.runState.Store(uint32(sessionRunning))
+	session.running.Store(true)
 	return session
 }
 

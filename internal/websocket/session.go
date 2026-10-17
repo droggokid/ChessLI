@@ -3,7 +3,6 @@ package websocket
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -18,16 +17,6 @@ import (
 
 const outgoingBufferSize = 16
 
-var errMessageHandlerRequired = errors.New("websocket message handler is required")
-
-type sessionRunState uint32
-
-const (
-	sessionNotStarted sessionRunState = iota
-	sessionRunning
-	sessionStopped
-)
-
 // HandlerFunc processes a JSON message received from a client.
 type HandlerFunc func(
 	ctx context.Context,
@@ -40,7 +29,7 @@ type HandlerFunc func(
 type Session struct {
 	profileID identity.ProfileID
 	conn      *coderws.Conn
-	runState  atomic.Uint32
+	running   atomic.Bool
 
 	outgoing chan protocol.ServerEnvelope
 
@@ -61,17 +50,12 @@ func NewSession(profileID identity.ProfileID, conn *coderws.Conn) *Session {
 
 // Run exchanges messages until the context is canceled or an I/O loop stops.
 // It sends connection.ready first and joins all I/O loops before returning; call only once.
+// The server supplies a valid connection and message handler for each new session.
 func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
-	if handleMessage == nil {
-		return errMessageHandlerRequired
-	}
-	if !c.runState.CompareAndSwap(uint32(sessionNotStarted), uint32(sessionRunning)) {
-		return protocol.ErrSessionAlreadyRun
-	}
-
+	c.running.Store(true)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer c.runState.Store(uint32(sessionStopped))
+	defer c.running.Store(false)
 	defer c.conn.CloseNow()
 
 	// Write before starting the loops so no response can overtake connection.ready.
@@ -101,7 +85,7 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 
 	firstError := <-errCh
 	// Closing the socket releases the other loops before we join them.
-	c.runState.Store(uint32(sessionStopped))
+	c.running.Store(false)
 	cancel()
 
 	_ = c.conn.CloseNow()
@@ -160,7 +144,7 @@ func (c *Session) writeLoop(ctx context.Context) error {
 // Send queues a message without allowing a slow client to block its caller.
 // It is safe for concurrent use; success means queued, not delivered.
 func (c *Session) Send(ctx context.Context, message protocol.ServerEnvelope) error {
-	if sessionRunState(c.runState.Load()) != sessionRunning {
+	if !c.running.Load() {
 		return protocol.ErrSessionNotRunning
 	}
 	if err := ctx.Err(); err != nil {

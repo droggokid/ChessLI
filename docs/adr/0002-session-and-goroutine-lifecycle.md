@@ -36,6 +36,16 @@ notifications, stops timers, and joins handlers already started. Close is
 called after application operations stop and must not be called from a
 notification handler.
 
+The private `matchQueue` adds no lifecycle or mutex: queue selection, cleanup,
+and game registration remain under the service mutex, and `GameService` owns
+cancellation callbacks. Each live `game` owns its mutex and expiration timer;
+`gameState` and its clock/draw-offer values do synchronous work under that mutex.
+Timer generation, version, and deadline checks remain in `game`.
+
+Transport admission owns no goroutines or locks. `Handler` still starts and
+joins matchmaking waiters, and acquires the dispatch mutex before admission or
+membership changes, including when a waiter receives its result.
+
 Long-running concurrent work terminates through context cancellation, an
 explicitly owned shutdown signal, or completion of owned input. Asynchronous
 callbacks must be finite or cancelable.

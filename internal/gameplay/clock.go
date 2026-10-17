@@ -6,6 +6,8 @@ import (
 	"github.com/corentings/chess/v2"
 )
 
+// gameClock receives White or Black from the engine and monotonic game times.
+// gameState starts it once when both seats are filled, and moves/stops it while running.
 type gameClock struct {
 	whiteRemaining time.Duration
 	blackRemaining time.Duration
@@ -23,14 +25,12 @@ func newGameClock(initial, increment time.Duration) gameClock {
 }
 
 func (c *gameClock) start(now time.Time) {
-	if c.running {
-		return
-	}
-
 	c.running = true
 	c.turnStartedAt = now
 }
 
+// remaining calculates the current clock values without modifying stored time.
+// Only the active player's time decreases while the clock is running.
 func (c *gameClock) remaining(now time.Time, active chess.Color) (white, black time.Duration) {
 	white = c.whiteRemaining
 	black = c.blackRemaining
@@ -39,23 +39,20 @@ func (c *gameClock) remaining(now time.Time, active chess.Color) (white, black t
 		return white, black
 	}
 
+	// Time elapsed since the active player's turn began.
+	// Clamp to zero so the displayed clock never becomes negative.
 	elapsed := now.Sub(c.turnStartedAt)
-	if elapsed < 0 {
-		elapsed = 0
-	}
-
-	switch active {
-	case chess.White:
+	if active == chess.White {
 		white = max(white-elapsed, 0)
-	case chess.Black:
+	} else {
 		black = max(black-elapsed, 0)
-	default:
-		return white, black
 	}
 
 	return white, black
 }
 
+// expire checks whether the active player has run out of time.
+// If so, it commits the remaining times and stops the clock.
 func (c *gameClock) expire(now time.Time, active chess.Color) (loser chess.Color, expired bool) {
 	if !c.running {
 		return chess.NoColor, false
@@ -63,16 +60,11 @@ func (c *gameClock) expire(now time.Time, active chess.Color) (loser chess.Color
 
 	white, black := c.remaining(now, active)
 
-	switch active {
-	case chess.White:
-		if white > 0 {
-			return chess.NoColor, false
-		}
-	case chess.Black:
-		if black > 0 {
-			return chess.NoColor, false
-		}
-	default:
+	remaining := black
+	if active == chess.White {
+		remaining = white
+	}
+	if remaining > 0 {
 		return chess.NoColor, false
 	}
 
@@ -83,54 +75,42 @@ func (c *gameClock) expire(now time.Time, active chess.Color) (loser chess.Color
 	return active, true
 }
 
+// deadline returns the exact time at which the active player will flag.
+// Useful for scheduling a timeout without continuously polling the clock.
 func (c *gameClock) deadline(active chess.Color) (time.Time, bool) {
 	if !c.running {
 		return time.Time{}, false
 	}
 
-	var remaining time.Duration
-
-	switch active {
-	case chess.White:
+	remaining := c.blackRemaining
+	if active == chess.White {
 		remaining = c.whiteRemaining
-	case chess.Black:
-		remaining = c.blackRemaining
-	default:
-		return time.Time{}, false
 	}
 
 	return c.turnStartedAt.Add(remaining), true
 }
 
-// completeMove commits the mover's elapsed time, adds the increment, and
-// starts the opponent's clock.
+// completeMove deducts the mover's elapsed time, awards the increment,
+// and starts measuring time for the opponent's turn.
 func (c *gameClock) completeMove(now time.Time, mover chess.Color) {
-	if !c.running {
-		return
-	}
-
+	// Persist the elapsed time before switching turns.
 	white, black := c.remaining(now, mover)
 	c.whiteRemaining = white
 	c.blackRemaining = black
 
-	switch mover {
-	case chess.White:
+	// Fischer increment: added after the player completes their move.
+	if mover == chess.White {
 		c.whiteRemaining += c.increment
-	case chess.Black:
+	} else {
 		c.blackRemaining += c.increment
-	default:
-		return
 	}
 
+	// The opponent's clock starts counting down from this moment.
 	c.turnStartedAt = now
 }
 
-// stop commits the current elapsed time and stops both clocks.
+// stop commits the active player's elapsed time and freezes both clocks.
 func (c *gameClock) stop(now time.Time, active chess.Color) {
-	if !c.running {
-		return
-	}
-
 	c.whiteRemaining, c.blackRemaining = c.remaining(now, active)
 	c.running = false
 }

@@ -92,4 +92,6 @@ own locks for concurrent application callers. Shutdown joins matchmaking waiters
 after connections stop; a disconnect alone does not wait for unrelated matches.
 
 Implementation: `internal/websocket/server.go`, `session.go`,
-`handler_admission.go`, and `game_sessions.go`; `internal/gameplay/service.go`.
+`handler.go`, `admission.go`, and `game_sessions.go`;
+`internal/gameplay/service.go`, `match_queue.go`, and `game.go`. Synchronous game
+rules live in `game_state.go`, behind the game runtime's mutex.

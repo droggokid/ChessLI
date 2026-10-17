@@ -11,22 +11,15 @@ import (
 	"github.com/corentings/chess/v2"
 )
 
-func (h *Handler) initialState(state gameplay.GameSnapshot) protocol.ServerEnvelope {
-	return protocol.ServerEnvelope{
-		Type:    protocol.ServerGameInitial,
-		Payload: h.gameStatePayload(state),
-	}
-}
-
 // Presence belongs to the transport registry, not the gameplay snapshot.
-func (h *Handler) gameStatePayload(state gameplay.GameSnapshot) protocol.GameStatePayload {
+func mapGameState(state gameplay.GameSnapshot, whiteConnected, blackConnected bool) protocol.GameStatePayload {
 	return protocol.GameStatePayload{
 		GameID:           state.GameID,
 		FEN:              state.FEN,
 		Status:           mapGameStatus(state.Outcome),
 		Version:          state.Version,
-		White:            h.playerState(state.GameID, state.WhiteProfileID, protocol.ColorWhite, state.WhiteRemaining),
-		Black:            h.playerState(state.GameID, state.BlackProfileID, protocol.ColorBlack, state.BlackRemaining),
+		White:            mapPlayerState(state.WhiteProfileID, protocol.ColorWhite, state.WhiteRemaining, whiteConnected),
+		Black:            mapPlayerState(state.BlackProfileID, protocol.ColorBlack, state.BlackRemaining, blackConnected),
 		LastMove:         state.LastMoveSAN,
 		Outcome:          mapOutcome(state.Outcome, state.Termination),
 		PendingDrawOffer: mapDrawOffer(state),
@@ -49,7 +42,7 @@ func mapDrawOffer(state gameplay.GameSnapshot) *protocol.DrawOfferPayload {
 	}
 }
 
-func (h *Handler) playerState(gameID identity.GameID, profileID identity.ProfileID, color protocol.Color, timeRemaining time.Duration) *protocol.PlayerState {
+func mapPlayerState(profileID identity.ProfileID, color protocol.Color, timeRemaining time.Duration, connected bool) *protocol.PlayerState {
 	if profileID == "" {
 		return nil
 	}
@@ -57,7 +50,7 @@ func (h *Handler) playerState(gameID identity.GameID, profileID identity.Profile
 	return &protocol.PlayerState{
 		ProfileID:             profileID,
 		Color:                 color,
-		Connected:             h.gameSessions.IsConnected(gameID, profileID),
+		Connected:             connected,
 		RemainingMilliseconds: new(timeRemaining.Milliseconds()),
 		Notation:              protocol.MoveNotationUCI,
 	}
@@ -106,10 +99,6 @@ func mapColorPreference(preference protocol.ColorPreference) (gameplay.ColorPref
 }
 
 func mapOutcome(outcome game.Outcome, termination game.Termination) *protocol.GameOutcome {
-	if outcome == game.OutcomeNone || outcome == game.OutcomeUnknown {
-		return nil
-	}
-
 	var result protocol.GameResult
 
 	switch outcome {

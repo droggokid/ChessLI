@@ -55,6 +55,11 @@ Repository-specific rules:
   implementation-only lifecycle/configuration methods off it.
 - Keep all `GameService` methods in `internal/gameplay/service.go`.
   `service_helpers.go` is only for receiver-free supporting code.
+- In handwritten production code, keep each concrete type and all its methods
+  in one file. Extract a cohesive responsibility when that file grows; do not
+  scatter a receiver's methods. Generated code follows its generator's layout.
+- Helper files contain receiver-free functions with explicit inputs, not methods
+  disguised as functions taking the entire owning object.
 - Avoid mutable package-level state.
 - Prefer the standard library and existing dependencies.
 - Do not expose third-party types from public APIs unless intentional.

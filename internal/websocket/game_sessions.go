@@ -1,6 +1,8 @@
 package websocket
 
 import (
+	"ChessLI/internal/game"
+	"ChessLI/internal/gameplay"
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
 	"context"
@@ -37,19 +39,11 @@ func (g *gameSessions) Release(session *Session) {
 	}
 }
 
-// Add registers a session with one game and rejects conflicting registration.
+// Add seats a running session after Hold has established that it is available.
+// A second connection for the same profile in this game is rejected.
 func (g *gameSessions) Add(gameID identity.GameID, session *Session) error {
-	if sessionRunState(session.runState.Load()) != sessionRunning {
+	if !session.running.Load() {
 		return protocol.ErrSessionNotRunning
-	}
-
-	if currentGameID, exists := g.bySession[session]; exists {
-		if currentGameID == gameID {
-			return nil
-		}
-		if currentGameID != "" {
-			return protocol.ErrSessionAlreadyInGame
-		}
 	}
 
 	if g.byGame[gameID] == nil {
@@ -121,10 +115,7 @@ func (g *gameSessions) BroadcastPeers(ctx context.Context, gameID identity.GameI
 }
 
 // IsConnected reports whether a profile has a session registered to the game.
-func (g *gameSessions) IsConnected(
-	gameID identity.GameID,
-	profileID identity.ProfileID,
-) bool {
+func (g *gameSessions) IsConnected(gameID identity.GameID, profileID identity.ProfileID) bool {
 	for session := range g.byGame[gameID] {
 		if session.profileID == profileID {
 			return true
@@ -132,4 +123,25 @@ func (g *gameSessions) IsConnected(
 	}
 
 	return false
+}
+
+func (g *gameSessions) initialState(state gameplay.GameSnapshot) protocol.ServerEnvelope {
+	return protocol.ServerEnvelope{
+		Type:    protocol.ServerGameInitial,
+		Payload: g.statePayload(state),
+	}
+}
+
+func (g *gameSessions) statePayload(state gameplay.GameSnapshot) protocol.GameStatePayload {
+	return mapGameState(state,
+		g.IsConnected(state.GameID, state.WhiteProfileID),
+		g.IsConnected(state.GameID, state.BlackProfileID))
+}
+
+func (g *gameSessions) broadcastState(ctx context.Context, client *Session, requestID string, state gameplay.GameSnapshot) error {
+	err := g.Broadcast(ctx, state.GameID, client, protocol.ServerEnvelope{Type: protocol.ServerGameState, RequestID: requestID, Payload: g.statePayload(state)})
+	if state.Outcome != game.OutcomeNone {
+		g.RemoveGame(state.GameID)
+	}
+	return err
 }

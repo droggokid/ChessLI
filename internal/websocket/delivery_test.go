@@ -69,7 +69,7 @@ func TestHandlerTerminalStateReachesPeerWhenSourceStops(t *testing.T) {
 	}
 	service.EXPECT().Resign(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(context.Context, gameplay.ResignCommand) (gameplay.GameSnapshot, error) {
-			source.runState.Store(uint32(sessionStopped))
+			source.running.Store(false)
 			return gameplay.GameSnapshot{GameID: "game", Outcome: game.OutcomeBlackWin, Termination: game.TerminationResignation}, nil
 		})
 	err := newHandler(service, registry).Handle(context.Background(), source,

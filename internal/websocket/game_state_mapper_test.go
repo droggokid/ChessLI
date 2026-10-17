@@ -135,7 +135,6 @@ func TestMapOutcome(t *testing.T) {
 func TestGameStatePayload(t *testing.T) {
 	t.Parallel()
 
-	handler := newHandler(nil, newGameSessions())
 	state := gameplay.GameSnapshot{
 		GameID:         "game",
 		FEN:            "fen",
@@ -150,7 +149,7 @@ func TestGameStatePayload(t *testing.T) {
 		},
 	}
 
-	got := handler.gameStatePayload(state)
+	got := mapGameState(state, false, false)
 	if got.GameID != state.GameID || got.FEN != state.FEN || got.Version != state.Version || got.LastMove != state.LastMoveSAN {
 		t.Fatalf("gameStatePayload() = %+v, want snapshot values %+v", got, state)
 	}
@@ -169,8 +168,7 @@ func TestGameStatePayload(t *testing.T) {
 func TestPlayerStateOmitsEmptySeat(t *testing.T) {
 	t.Parallel()
 
-	handler := newHandler(nil, newGameSessions())
-	if got := handler.playerState("game", "", protocol.ColorBlack, 10*time.Minute); got != nil {
+	if got := mapPlayerState("", protocol.ColorBlack, 10*time.Minute, false); got != nil {
 		t.Fatalf("playerState() = %+v, want nil for empty seat", got)
 	}
 }

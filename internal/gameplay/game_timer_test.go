@@ -16,14 +16,14 @@ func TestGameIgnoresReplacedOrStoppedTimer(t *testing.T) {
 				defer g.stopExpiration()
 				now := time.Now()
 				g.now = func() time.Time { return now }
-				g.clock = newGameClock(time.Minute, 0)
-				g.clock.start(now)
-				g.scheduleExpiration(nil)
-				id, version := g.expirationID, g.version
-				deadline, _ := g.clock.deadline(g.engine.Position().Turn())
+				g.state.clock = newGameClock(time.Minute, 0)
+				g.state.clock.start(now)
+				g.scheduleExpiration(func(GameSnapshot) {})
+				id, version := g.expirationID, g.state.version
+				deadline, _ := g.state.clock.deadline(g.state.engine.Position().Turn())
 				switch action {
 				case "replace":
-					g.scheduleExpiration(nil)
+					g.scheduleExpiration(func(GameSnapshot) {})
 				case "stop":
 					g.stopExpiration()
 				case "move":
@@ -33,8 +33,8 @@ func TestGameIgnoresReplacedOrStoppedTimer(t *testing.T) {
 				}
 				now = deadline
 				notified := false
-				g.expireFromTimer(id, version, deadline, func(GameSnapshot) { notified = true })
-				if g.outcome != domain.OutcomeNone || notified {
+				g.expireFromTimer(id, version, func(GameSnapshot) { notified = true })
+				if g.state.outcome != domain.OutcomeNone || notified {
 					t.Fatal("stale timer expired the game")
 				}
 			})

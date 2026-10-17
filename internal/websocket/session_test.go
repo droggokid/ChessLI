@@ -2,7 +2,6 @@ package websocket
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -20,33 +19,8 @@ func TestNewSessionInitializesSession(t *testing.T) {
 	if session.outgoing == nil || cap(session.outgoing) != outgoingBufferSize {
 		t.Fatalf("NewSession() outgoing capacity = %d, want %d", cap(session.outgoing), outgoingBufferSize)
 	}
-	if state := sessionRunState(session.runState.Load()); state != sessionNotStarted {
-		t.Fatalf("NewSession() state = %v, want not started", state)
-	}
-}
-
-func TestSessionRunRejectsMissingHandler(t *testing.T) {
-	t.Parallel()
-
-	err := NewSession(identity.NewProfileID(), nil).Run(context.Background(), nil)
-	if !errors.Is(err, errMessageHandlerRequired) {
-		t.Fatalf("Run() error = %v, want %v", err, errMessageHandlerRequired)
-	}
-}
-
-func TestSessionRunRejectsReusedSession(t *testing.T) {
-	t.Parallel()
-
-	for _, state := range []sessionRunState{sessionRunning, sessionStopped} {
-		session := NewSession(identity.NewProfileID(), nil)
-		session.runState.Store(uint32(state))
-
-		err := session.Run(context.Background(), func(context.Context, *Session, json.RawMessage) error {
-			return nil
-		})
-		if !errors.Is(err, protocol.ErrSessionAlreadyRun) {
-			t.Fatalf("Run() in state %v error = %v, want %v", state, err, protocol.ErrSessionAlreadyRun)
-		}
+	if session.running.Load() {
+		t.Fatal("NewSession() returned a running session")
 	}
 }
 

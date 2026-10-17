@@ -1,6 +1,27 @@
 # ChessLI
 ChessLI is a terminal-first chess platform inspired by Chess.com, built for playing games, managing matches, and exploring chess from the command line.
 
+## Finding the code
+
+`cmd/main.go` wires the gameplay service and WebSocket server. Each concrete
+type keeps its methods in one file; helper files contain independent functions.
+
+| Responsibility | Start here |
+| --- | --- |
+| Application operations and shutdown | `internal/gameplay/service.go` |
+| Matchmaking queue mechanics | `internal/gameplay/match_queue.go` |
+| Game rules and synchronous state transitions | `internal/gameplay/game_state.go` |
+| Game locking, timers, and expiration notifications | `internal/gameplay/game.go` |
+| Connection acceptance and lifetime | `internal/websocket/server.go` |
+| Socket I/O and heartbeat | `internal/websocket/session.go` |
+| Command ordering and matchmaking waiters | `internal/websocket/handler.go` |
+| Creating, joining, and resuming games | `internal/websocket/admission.go` |
+| Membership, presence, and state publication | `internal/websocket/game_sessions.go` |
+
+Wire decoding and mapping stay in `internal/websocket`; payload types live in
+`protocol/`. Persistence adapters and generated database code remain separate
+from the in-memory gameplay runtime.
+
 ## Manual two-player flow
 
 This flow requires [`websocat`](https://github.com/vi/websocat).

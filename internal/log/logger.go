@@ -16,18 +16,10 @@ const (
 )
 
 // NewLogger returns an info-level logger that writes to standard output.
-// It returns nil when format is unsupported.
+// Config.Load validates format; JSON is the default unless text is requested.
 func NewLogger(format LogFormat) *slog.Logger {
-	var logger *slog.Logger
-
-	if format == LogFormatJSON {
-		logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		}))
-	} else if format == LogFormatText {
-		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		}))
+	if format == LogFormatText {
+		return slog.New(slog.NewTextHandler(os.Stdout, nil))
 	}
-	return logger
+	return slog.New(slog.NewJSONHandler(os.Stdout, nil))
 }

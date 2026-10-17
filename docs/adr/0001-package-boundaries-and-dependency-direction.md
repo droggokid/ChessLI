@@ -30,6 +30,18 @@ cmd -> websocket -> gameplay -> game -> identity
 the gameplay core. Support packages such as `config` and `log` remain outside
 the domain layering and must not become back doors for transport state.
 
+Within gameplay, `GameService` coordinates application operations and owns its
+private `matchQueue`. A live `game` owns synchronization and timers around a
+`gameState`, whose methods implement synchronous rules using an explicit time.
+Clock calculations and draw-offer bookkeeping have their own concrete types.
+These collaborators stay private in the same package; they do not add service
+ports or dependency wiring in `cmd`.
+
+Within WebSocket, `Handler` delegates seating workflows to private `admission`
+and membership/publication to `gameSessions`. Payload decoders, model mappings,
+and error-response helpers are receiver-free functions. Each concrete type's
+methods live beside its definition.
+
 ### Constraints
 
 - `internal/gameplay`, `internal/game`, and `internal/identity` must not import WebSocket, HTTP,

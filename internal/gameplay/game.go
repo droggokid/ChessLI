@@ -1,8 +1,6 @@
 package gameplay
 
 import (
-	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -12,223 +10,135 @@ import (
 	"github.com/corentings/chess/v2"
 )
 
-// game is safe for concurrent use through its methods.
+// game owns synchronization and timers; all access to state is protected by mu.
 type game struct {
-	// mu guards all game state. Helpers ending in Locked require callers to hold it and do not lock it.
 	mu                 sync.Mutex
-	id                 identity.GameID
-	version            uint64
-	whiteProfileID     identity.ProfileID
-	blackProfileID     identity.ProfileID
-	engine             *chess.Game
-	lastMoveSAN        string
-	clock              gameClock
+	state              gameState
 	expirationTimer    *time.Timer
 	expirationID       uint64
 	expirationNotified bool
 	now                func() time.Time
-	outcome            domain.Outcome
-	termination        domain.Termination
-	drawOffers         drawOfferState
 }
 
-// newGame returns a game with the standard starting position and the supplied
-// players and time control.
-func newGame(id identity.GameID, white identity.ProfileID, black identity.ProfileID, initialTime time.Duration, increment time.Duration) *game {
-	g := &game{
-		id:             id,
-		version:        0,
-		whiteProfileID: white,
-		blackProfileID: black,
-		engine:         chess.NewGame(),
-		clock:          newGameClock(initialTime, increment),
-		now:            time.Now,
-		outcome:        domain.OutcomeNone,
-		termination:    domain.TerminationNone,
-		drawOffers: drawOfferState{
-			lastOfferedAt: make(map[identity.ProfileID]time.Time, 2),
-		},
-	}
-
-	if white != "" && black != "" {
-		g.clock.start(g.now())
-	}
-
+func newGame(id identity.GameID, white, black identity.ProfileID, initial, increment time.Duration) *game {
+	g := &game{now: time.Now}
+	g.state = newGameState(id, white, black, initial, increment, g.now())
 	return g
 }
 
-// move decodes, validates, and applies a move for the profile whose turn it is.
 func (g *game) move(command MoveCommand) (GameSnapshot, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-
-	now := g.now()
-
-	if g.expireLocked(now) {
-		return g.snapshotLocked(now), nil
-	}
-
-	if command.ExpectedVersion != g.version {
-		return GameSnapshot{}, ErrStaleGameVersion
-	}
-
-	if err := g.validateMoveLocked(command.ProfileID); err != nil {
-		return GameSnapshot{}, err
-	}
-
-	position := g.engine.Position()
-
-	notation, err := engineNotation(command.Notation)
-	if err != nil {
-		return GameSnapshot{}, err
-	}
-
-	move, err := notation.Decode(position, command.Move)
-	if err != nil {
-		return GameSnapshot{}, fmt.Errorf("%w: %v", ErrIllegalMove, err)
-	}
-
-	san := chess.AlgebraicNotation{}.Encode(position, move)
-	mover := position.Turn()
-
-	if err = g.engine.Move(move, nil); err != nil {
-		return GameSnapshot{}, ErrIllegalMove
-	}
-
-	g.clock.completeMove(now, mover)
-	g.syncOutcomeFromEngineLocked()
-
-	g.version++
-	g.lastMoveSAN = san
-	g.drawOffers.pending = nil
-	if g.outcome != domain.OutcomeNone {
-		g.clock.stop(now, g.engine.Position().Turn())
-		g.logFinishedLocked()
-	}
-
-	return g.snapshotLocked(now), nil
+	return g.state.move(command, g.now())
 }
 
-func (g *game) validateMoveLocked(source identity.ProfileID) error {
-	if err := g.validateReadyLocked(); err != nil {
-		return err
-	}
-
-	if g.outcome != domain.OutcomeNone {
-		return ErrGameFinished
-	}
-	if source != g.whiteProfileID && source != g.blackProfileID {
-		return ErrNotParticipant
-	}
-
-	turn := g.engine.CurrentPosition().Turn()
-
-	switch turn {
-	case chess.White:
-		if source != g.whiteProfileID {
-			return ErrNotYourTurn
-		}
-	case chess.Black:
-		if source != g.blackProfileID {
-			return ErrNotYourTurn
-		}
-	default:
-		return ErrGameFinished
-	}
-
-	return nil
-}
-
-func (g *game) validateReadyLocked() error {
-	if g.whiteProfileID == "" || g.blackProfileID == "" {
-		return ErrGameNotReady
-	}
-
-	return nil
-}
-
-func colorFromProfileID(profileID, whiteProfileID, blackProfileID identity.ProfileID) (chess.Color, error) {
-	switch profileID {
-	case whiteProfileID:
-		return chess.White, nil
-	case blackProfileID:
-		return chess.Black, nil
-	default:
-		return chess.NoColor, ErrNotParticipant
-	}
-}
-
-// joinPrivate assigns a profile to the unoccupied color in a private game.
 func (g *game) joinPrivate(command JoinPrivateCommand) (chess.Color, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-
-	switch {
-	case g.whiteProfileID == command.ProfileID || g.blackProfileID == command.ProfileID:
-		return chess.NoColor, ErrAlreadyParticipant
-
-	case g.whiteProfileID == "":
-		g.whiteProfileID = command.ProfileID
-		g.startClockIfReadyLocked()
-		return chess.White, nil
-
-	case g.blackProfileID == "":
-		g.blackProfileID = command.ProfileID
-		g.startClockIfReadyLocked()
-		return chess.Black, nil
-
-	default:
-		return chess.NoColor, ErrGameFull
-	}
+	return g.state.joinPrivate(command, g.now())
 }
 
-func (g *game) startClockIfReadyLocked() {
-	if g.whiteProfileID != "" && g.blackProfileID != "" {
-		g.clock.start(g.now())
-		slog.Info("game started", "event", "game.started", "game_id", g.id, "mode", "private",
-			"white_profile_id", g.whiteProfileID, "black_profile_id", g.blackProfileID,
-			"initial_ms", g.clock.whiteRemaining.Milliseconds(), "increment_ms", g.clock.increment.Milliseconds())
-	}
-}
-
-// resign resigns a game participant.
 func (g *game) resign(command ResignCommand) (GameSnapshot, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-
-	now := g.now()
-	if err := g.validateReadyLocked(); err != nil {
-		return GameSnapshot{}, err
-	}
-	if g.expireLocked(now) || g.outcome != domain.OutcomeNone {
-		return GameSnapshot{}, ErrGameFinished
-	}
-
-	color, err := colorFromProfileID(command.ProfileID, g.whiteProfileID, g.blackProfileID)
-	if err != nil {
-		return GameSnapshot{}, err
-	}
-
-	g.engine.Resign(color)
-	g.syncOutcomeFromEngineLocked()
-	g.version++
-	g.clock.stop(now, g.engine.Position().Turn())
-	g.drawOffers.pending = nil
-	g.logFinishedLocked()
-
-	return g.snapshotLocked(now), nil
+	return g.state.resign(command, g.now())
 }
 
 func (g *game) resume(profileID identity.ProfileID) (GameSnapshot, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.state.resume(profileID, g.now())
+}
 
+func (g *game) offerDraw(command OfferDrawCommand) (GameSnapshot, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.state.offerDraw(command, g.now())
+}
+
+func (g *game) acceptDraw(command DrawOfferResponseCommand) (GameSnapshot, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.state.acceptDraw(command, g.now())
+}
+
+func (g *game) declineDraw(command DrawOfferResponseCommand) (GameSnapshot, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.state.declineDraw(command, g.now())
+}
+
+// snapshot also settles an expired clock, so it needs exclusive access.
+func (g *game) snapshot() GameSnapshot {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	now := g.now()
-	g.expireLocked(now)
+	g.state.expire(now)
+	return g.state.snapshot(now)
+}
 
-	if _, err := colorFromProfileID(profileID, g.whiteProfileID, g.blackProfileID); err != nil {
-		return GameSnapshot{}, err
+// scheduleExpiration replaces the real timer for the active turn.
+func (g *game) scheduleExpiration(onExpired func(GameSnapshot)) {
+	g.mu.Lock()
+
+	// Stop cannot retract an already running callback; the generation check does.
+	if g.expirationTimer != nil {
+		g.expirationTimer.Stop()
+		g.expirationTimer = nil
+	}
+	g.expirationID++
+
+	deadline, ok := g.state.clock.deadline(g.state.engine.Position().Turn())
+	if !ok {
+		g.mu.Unlock()
+		return
 	}
 
-	return g.snapshotLocked(now), nil
+	expectedVersion := g.state.version
+	expirationID := g.expirationID
+	g.expirationTimer = time.AfterFunc(deadline.Sub(g.now()), func() {
+		g.expireFromTimer(expirationID, expectedVersion, onExpired)
+	})
+
+	g.mu.Unlock()
+}
+
+func (g *game) expireFromTimer(expirationID, expectedVersion uint64, onExpired func(GameSnapshot)) {
+	g.mu.Lock()
+
+	// Moves and terminal results change version; replacing or stopping a timer changes its ID.
+	if g.expirationID != expirationID || g.state.version != expectedVersion {
+		g.mu.Unlock()
+		return
+	}
+
+	g.expirationTimer = nil
+	g.state.expire(g.now())
+	g.mu.Unlock()
+	g.notifyExpiration(onExpired)
+}
+
+func (g *game) notifyExpiration(onExpired func(GameSnapshot)) {
+	g.mu.Lock()
+	// Reads and commands can discover a timeout before the timer callback does.
+	if g.state.termination != domain.TerminationTimeout || g.expirationNotified {
+		g.mu.Unlock()
+		return
+	}
+	g.expirationNotified = true
+	state := g.state.snapshot(g.now())
+	g.mu.Unlock()
+
+	onExpired(state)
+}
+
+func (g *game) stopExpiration() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.expirationTimer != nil {
+		g.expirationTimer.Stop()
+		g.expirationTimer = nil
+	}
+	g.expirationID++
 }
