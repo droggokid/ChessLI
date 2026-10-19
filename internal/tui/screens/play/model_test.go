@@ -15,6 +15,33 @@ import (
 const initialFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 const afterE4FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
 
+func TestConnectionReadyRecoversServerAssignedGame(t *testing.T) {
+	model, request := submitText(t, &Model{}, "/create")
+	model, _ = model.Update(TimeoutMsg{RequestID: request.RequestID}, true)
+	model.input = "draft"
+	model, cmd := model.Update(protocol.ServerEvent{
+		Type: protocol.ServerConnectionReady,
+		Ready: &protocol.ConnectionReadyPayload{
+			ProfileID: "player", ActiveGameID: "game-1",
+		},
+	}, true)
+	if cmd == nil {
+		t.Fatal("connection.ready did not request recovery")
+	}
+	resume, ok := cmd().(RequestMsg)
+	if !ok || resume.Type != protocol.ClientResumeGame ||
+		resume.Payload != (protocol.ResumeGamePayload{GameID: "game-1"}) {
+		t.Fatalf("recovery request = %+v", resume)
+	}
+	model, _ = model.Update(protocol.ServerEvent{
+		Type: protocol.ServerGameResumed, RequestID: resume.RequestID,
+		Assignment: &protocol.GameCreatedPayload{GameID: "game-1", Color: protocol.ColorWhite},
+	}, true)
+	if model.gameID != "game-1" || model.input != "draft" {
+		t.Fatalf("recovered model = %+v", model)
+	}
+}
+
 func TestLateCreateAcknowledgmentClearsTimeoutFeedbackAndPreservesDraft(t *testing.T) {
 	model, request := submitText(t, &Model{}, "/create")
 	model, _ = model.Update(TimeoutMsg{RequestID: request.RequestID}, true)
@@ -611,7 +638,7 @@ func TestDisconnectPreservesBoardAndDraftUntilRecovery(t *testing.T) {
 	if _, cmd := model.submit(true); cmd != nil {
 		t.Fatal("readiness alone permitted submission without recovery")
 	}
-	if !strings.Contains(model.View(74, true), "reconnect and recover") {
+	if !strings.Contains(model.View(74, true), "Restart with the same profile ID to recover") {
 		t.Fatal("known game was not shown as requiring recovery")
 	}
 }

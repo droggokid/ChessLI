@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -27,6 +28,7 @@ type Server struct {
 	httpServer *http.Server
 
 	messageHandler *Handler
+	gameService    gameplay.Service
 
 	connectionCtx     context.Context
 	cancelConnections context.CancelFunc
@@ -45,6 +47,7 @@ func NewServer(address string, gameService gameplay.Service) *Server {
 	server := &Server{
 		connectionCtx:     connectionCtx,
 		messageHandler:    newHandler(gameService, sessions),
+		gameService:       gameService,
 		cancelConnections: cancelConnections,
 		heartbeatInterval: heartbeatInterval,
 		heartbeatTimeout:  heartbeatTimeout,
@@ -146,6 +149,7 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(maxMessageSize)
 
 	client := NewSession(profileID, conn)
+	client.activeGameID = s.gameService.ActiveGame(profileID)
 	client.heartbeatInterval = s.heartbeatInterval
 	client.heartbeatTimeout = s.heartbeatTimeout
 	defer s.messageHandler.Disconnect(s.connectionCtx, client)
@@ -159,12 +163,21 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 		reason = "shutdown"
 	case errors.Is(err, context.DeadlineExceeded):
 		level, reason = slog.LevelWarn, "timeout"
+	case errors.Is(err, io.EOF):
+		reason = "transport_closed"
 	case err != nil && !isExpectedClose(err):
 		level, reason = slog.LevelWarn, "error"
 	}
-	slog.Log(s.connectionCtx, level, "websocket connection closed", "event", "connection.closed",
+	attributes := []any{"event", "connection.closed",
 		"profile_id", profileID, "duration_ms", time.Since(started).Milliseconds(),
-		"reason", reason, "close_code", int(coderws.CloseStatus(err)), "error", err)
+		"reason", reason}
+	if code := coderws.CloseStatus(err); code != -1 {
+		attributes = append(attributes, "close_code", int(code))
+	}
+	if level >= slog.LevelWarn {
+		attributes = append(attributes, "error", err)
+	}
+	slog.Log(s.connectionCtx, level, "websocket connection closed", attributes...)
 }
 
 // BroadcastGameState sends an unsolicited authoritative state to every session in the game.

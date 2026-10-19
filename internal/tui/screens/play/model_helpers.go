@@ -46,7 +46,7 @@ func (m *Model) board() string {
 	if m.color == protocol.ColorBlack {
 		perspective = chess.Black
 	}
-	return strings.Trim(m.position.Board().Draw2(perspective, false), "\n")
+	return strings.Trim(m.position.Board().Draw2(perspective, true), "\n")
 }
 
 func playerView(label string, player *protocol.PlayerState) string {

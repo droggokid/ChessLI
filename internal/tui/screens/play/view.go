@@ -19,9 +19,9 @@ func (m *Model) View(width int, ready bool) string {
 	if status == "" {
 		switch {
 		case !ready:
-			status = "Disconnected. Ctrl+R: reconnect."
+			status = "Disconnected. Restart with the same profile ID to recover."
 		case m.action == actionUnknown:
-			status = "Outcome unknown. Ctrl+R: reconnect and recover."
+			status = "Outcome unknown. Restart with the same profile ID to recover."
 		case m.action == actionQueued:
 			status = "Waiting for a matchmaking opponent…"
 		case m.action == actionInitializing:
@@ -29,7 +29,7 @@ func (m *Model) View(width int, ready bool) string {
 		case m.action == actionAwaiting:
 			status = "Awaiting server response…"
 		case m.action == actionRecoveryRequired:
-			status = "Ctrl+R: reconnect and recover."
+			status = "Restart with the same profile ID to recover."
 		case m.gameID == "":
 			status = "/match: find an opponent · /create: new game · /join GAME_ID: join a friend"
 		case m.gameID != "" && m.state == nil:

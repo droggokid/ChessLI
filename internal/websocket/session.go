@@ -27,9 +27,10 @@ type HandlerFunc func(
 // Session exchanges JSON messages over a WebSocket connection.
 // Send is safe for concurrent use; Run may be called only once.
 type Session struct {
-	profileID identity.ProfileID
-	conn      *coderws.Conn
-	running   atomic.Bool
+	profileID    identity.ProfileID
+	activeGameID identity.GameID
+	conn         *coderws.Conn
+	running      atomic.Bool
 
 	outgoing chan protocol.ServerEnvelope
 
@@ -61,8 +62,11 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 	// Write before starting the loops so no response can overtake connection.ready.
 	readyCtx, readyCancel := context.WithTimeout(ctx, heartbeatTimeout)
 	err := wsjson.Write(readyCtx, c.conn, protocol.ServerEnvelope{
-		Type:    protocol.ServerConnectionReady,
-		Payload: protocol.ConnectionReadyPayload{ProfileID: c.profileID},
+		Type: protocol.ServerConnectionReady,
+		Payload: protocol.ConnectionReadyPayload{
+			ProfileID:    c.profileID,
+			ActiveGameID: c.activeGameID,
+		},
 	})
 	readyCancel()
 	if err != nil {

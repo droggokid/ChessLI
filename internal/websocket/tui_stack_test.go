@@ -21,11 +21,6 @@ func TestTUIStartsWithSuppliedProfileID(t *testing.T) {
 	if got := profileFromView(t, client.await(t, "Connected · Profile:")); got != profileID {
 		t.Fatalf("startup profile ID = %q, want %q", got, profileID)
 	}
-	client.program.Send(tea.KeyPressMsg(tea.Key{Code: 'r', Mod: tea.ModCtrl}))
-	client.await(t, "Connecting to")
-	if got := profileFromView(t, client.await(t, "Connected · Profile:")); got != profileID {
-		t.Fatalf("reconnected profile ID = %q, want %q", got, profileID)
-	}
 }
 
 func TestTUITwoClientsCreateJoinMoveReconnectAndResign(t *testing.T) {
@@ -55,12 +50,12 @@ func TestTUITwoClientsCreateJoinMoveReconnectAndResign(t *testing.T) {
 	white.program.Send(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
 	white.await(t, "v2 e5")
 
-	white.program.Send(tea.KeyPressMsg(tea.Key{Code: 'r', Mod: tea.ModCtrl}))
-	white.await(t, "Connecting to")
-	white.await(t, "Awaiting server response…")
+	stopTUI(t, white)
+	black.await(t, "White: offline")
+	white = startTUI(t, address+"?profileId="+whiteProfile)
 	resumed := white.awaitMatching(t, func(view string) bool {
 		return strings.Contains(view, "Connected · Profile: "+whiteProfile) &&
-			strings.Contains(view, "v2 e5") && strings.Contains(view, "Your turn")
+			strings.Contains(view, "Game: "+gameID) && strings.Contains(view, "Your turn")
 	})
 	if !strings.Contains(resumed, "Game: "+gameID) {
 		t.Fatal("reconnect changed the game")
@@ -79,16 +74,7 @@ func TestTUITwoClientsCreateJoinMoveReconnectAndResign(t *testing.T) {
 	white.await(t, "Waiting for the other player to join.")
 
 	for _, client := range []*tuiSession{white, black} {
-		client.program.Send(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
-		select {
-		case err := <-client.done:
-			if err != nil {
-				t.Fatal("TUI quit:", err)
-			}
-			client.stopped = true
-		case <-client.ctx.Done():
-			t.Fatal("TUI did not shut down")
-		}
+		stopTUI(t, client)
 	}
 }
 
@@ -117,8 +103,10 @@ func TestTUITwoClientsMatchMoveReconnectAndResign(t *testing.T) {
 		t.Fatal("matchmaking assigned different games")
 	}
 	white, black := first, second
+	whiteProfile := profileFromView(t, firstView)
 	if strings.Contains(firstView, "You: black") {
 		white, black = second, first
+		whiteProfile = profileFromView(t, secondView)
 	}
 	if strings.Contains(firstView, "You: white") == strings.Contains(secondView, "You: white") {
 		t.Fatal("matchmaking did not assign opposite colors")
@@ -126,8 +114,9 @@ func TestTUITwoClientsMatchMoveReconnectAndResign(t *testing.T) {
 	white.enter("e4")
 	white.await(t, "v1 e4")
 	black.await(t, "v1 e4")
-	white.program.Send(tea.KeyPressMsg(tea.Key{Code: 'r', Mod: tea.ModCtrl}))
-	white.await(t, "Connecting to")
+	stopTUI(t, white)
+	black.await(t, "White: offline")
+	white = startTUI(t, address+"?profileId="+whiteProfile)
 	resumed := white.awaitMatching(t, func(view string) bool {
 		return strings.Contains(view, "Connected · Profile:") && strings.Contains(view, "Opponent’s turn")
 	})
@@ -140,6 +129,20 @@ func TestTUITwoClientsMatchMoveReconnectAndResign(t *testing.T) {
 	black.enter("/resign")
 	white.await(t, "Result: white_win")
 	black.await(t, "Reason: resignation")
+}
+
+func stopTUI(t *testing.T, client *tuiSession) {
+	t.Helper()
+	client.program.Send(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
+	select {
+	case err := <-client.done:
+		client.stopped = true
+		if err != nil {
+			t.Fatal("TUI quit:", err)
+		}
+	case <-client.ctx.Done():
+		t.Fatal("TUI did not shut down")
+	}
 }
 
 type observedTUI struct {

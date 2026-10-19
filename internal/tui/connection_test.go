@@ -110,6 +110,27 @@ func TestConnectionCloseJoinsOutstandingReceiveAndDeadline(t *testing.T) {
 	}
 }
 
+func TestReconnectClosesPreviousConnectionNormally(t *testing.T) {
+	closed := make(chan coderws.StatusCode, 2)
+	ctx, network := newTestConnection(t, func(ctx context.Context, conn *coderws.Conn) {
+		_, _, err := conn.Read(ctx)
+		closed <- coderws.CloseStatus(err)
+	})
+
+	result := network.connect("", 2)().(connectedMsg)
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	select {
+	case status := <-closed:
+		if status != coderws.StatusNormalClosure {
+			t.Fatalf("reconnect closed previous socket with status %v, want normal closure", status)
+		}
+	case <-ctx.Done():
+		t.Fatal("server did not observe the previous connection closing")
+	}
+}
+
 func TestSendIncludesExpectedVersionZero(t *testing.T) {
 	received := make(chan protocol.ClientEnvelope, 1)
 	ctx, network := newTestConnection(t, func(ctx context.Context, conn *coderws.Conn) {

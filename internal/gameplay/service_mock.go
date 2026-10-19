@@ -56,6 +56,20 @@ func (mr *MockGameServiceMockRecorder) AcceptDraw(arg0, arg1 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcceptDraw", reflect.TypeOf((*MockGameService)(nil).AcceptDraw), arg0, arg1)
 }
 
+// ActiveGame mocks base method.
+func (m *MockGameService) ActiveGame(profileID identity.ProfileID) identity.GameID {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ActiveGame", profileID)
+	ret0, _ := ret[0].(identity.GameID)
+	return ret0
+}
+
+// ActiveGame indicates an expected call of ActiveGame.
+func (mr *MockGameServiceMockRecorder) ActiveGame(profileID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveGame", reflect.TypeOf((*MockGameService)(nil).ActiveGame), profileID)
+}
+
 // CreatePrivateGame mocks base method.
 func (m *MockGameService) CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (GameAssignment, error) {
 	m.ctrl.T.Helper()

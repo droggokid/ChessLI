@@ -98,7 +98,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.event.Ready != nil {
 			m.connectionStatus = ready
 			m.profileID = msg.event.Ready.ProfileID
-			m.play, cmd = m.play.Recover()
+			m.play, cmd = m.play.Update(msg.event, true)
+			if msg.event.Ready.ActiveGameID != "" {
+				m.active = playScreen
+			}
 		} else {
 			m.play, cmd = m.play.Update(msg.event, m.connectionStatus == ready)
 		}
@@ -155,17 +158,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.active != playScreen {
 				return m, tea.Quit
 			}
-
-		case "ctrl+r":
-			if m.connectionStatus == dialing {
-				return m, nil
-			}
-			m.generation++
-			m.connectionStatus = dialing
-			m.networkErr = nil
-			m.client = nil
-			m.play, _ = m.play.Update(play.DisconnectedMsg{}, false)
-			return m, m.network.connect(m.profileID, m.generation)
 
 		case "tab":
 			m.active = (m.active + 1) % screenCount

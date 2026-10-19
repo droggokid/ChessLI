@@ -83,9 +83,8 @@ func (c *connection) connect(profileID identity.ProfileID, generation uint64) te
 		c.client = nil
 		c.mu.Unlock()
 		if old != nil {
-			if err := closeSocket(old); err != nil {
-				return connectedMsg{generation: generation, err: err}
-			}
+			// A failed close of the old socket must not prevent a fresh connection.
+			_ = old.Close(websocket.StatusNormalClosure, "reconnecting")
 		}
 
 		address, err := url.Parse(c.address)

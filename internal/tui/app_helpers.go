@@ -30,13 +30,13 @@ func (m Model) screenView() string {
 
 func (m Model) help() string {
 	if m.active == playScreen {
-		return "Ctrl+C: quit  Tab: sections  Esc: clear/back  Ctrl+R: reconnect"
+		return "Ctrl+C: quit  Tab: sections  Esc: clear/back"
 	}
-	return "Tab: sections  Esc: back  Ctrl+R: reconnect  q/Ctrl+C: quit"
+	return "Tab: sections  Esc: back  q/Ctrl+C: quit"
 }
 
 func (m Model) connectionView() string {
-	status := "Disconnected · Ctrl+R: reconnect"
+	status := "Disconnected · restart with the same profile ID to recover"
 	switch {
 	case m.connectionStatus == dialing:
 		status = "Connecting to " + m.network.address + "…"

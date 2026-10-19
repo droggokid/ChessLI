@@ -12,13 +12,14 @@ import (
 	"testing/synctest"
 	"time"
 
+	"ChessLI/internal/gameplay"
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
 	coderws "github.com/coder/websocket"
 )
 
 func TestServerShutdownCancelsBlockedConnectionReady(t *testing.T) {
-	server := NewServer("", nil)
+	server := NewServer("", gameplay.NewGameService())
 	serverConn, peer := net.Pipe()
 	defer peer.Close()
 	defer serverConn.Close()

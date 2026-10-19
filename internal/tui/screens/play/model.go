@@ -98,14 +98,14 @@ func (m *Model) Update(msg tea.Msg, ready bool) (*Model, tea.Cmd) {
 	case SendResultMsg:
 		if m.IsPending(msg.RequestID) && msg.Err != nil {
 			m.action = actionUnknown
-			m.message = "Write failed; outcome unknown. Ctrl+R: reconnect and recover."
+			m.message = "Write failed; outcome unknown. Restart with the same profile ID to recover."
 		}
 	case TimeoutMsg:
 		if m.IsPending(msg.RequestID) && (m.pending.kind != protocol.ClientEnterMatchmaking || m.action == actionAwaiting) {
 			m.action = actionUnknown
-			m.message = "No response; outcome unknown. Ctrl+R: reconnect and recover."
+			m.message = "No response; outcome unknown. Restart with the same profile ID to recover."
 			if m.pending.kind == protocol.ClientCreateGame {
-				m.message = "No response; create outcome unknown and game ID unavailable. Restart the TUI before creating another game."
+				m.message = "No response; create outcome unknown. Restart with the same profile ID to recover."
 			}
 		}
 	case protocol.ServerEvent:
@@ -216,6 +216,16 @@ func (m *Model) request(kind protocol.ClientMessageType, gameID identity.GameID,
 }
 
 func (m *Model) event(event protocol.ServerEvent) (*Model, tea.Cmd) {
+	if event.Ready != nil {
+		// The server knows the game even when its creation response was lost.
+		m.clearPending()
+		m.recoveryTarget = event.Ready.ActiveGameID
+		if m.recoveryTarget != "" {
+			return m.Recover()
+		}
+		m.message = ""
+		return m, nil
+	}
 	if event.Error != nil {
 		m.message = fmt.Sprintf("%s: %s", event.Error.Code, event.Error.Message)
 		if m.IsPending(event.RequestID) {
@@ -237,7 +247,7 @@ func (m *Model) event(event protocol.ServerEvent) (*Model, tea.Cmd) {
 				}
 			}
 			if m.action == actionRecoveryRequired {
-				m.message += " — Ctrl+R: reconnect and recover."
+				m.message += " — Restart with the same profile ID to recover."
 			}
 		}
 		return m, nil
@@ -297,7 +307,7 @@ func (m *Model) event(event protocol.ServerEvent) (*Model, tea.Cmd) {
 	}
 	fen, err := chess.FEN(state.FEN)
 	if err != nil {
-		m.message = "Invalid server position: " + err.Error() + ". Ctrl+R: recover."
+		m.message = "Invalid server position: " + err.Error() + ". Restart with the same profile ID to recover."
 		m.action = actionRecoveryRequired
 		return m, nil
 	}

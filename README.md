@@ -60,7 +60,7 @@ Dashboard statistics and History remain mocked or placeholders.
 
 Escape clears the current input before returning to Dashboard. Ordinary text
 keys, including `q`, go to the Play input. Ctrl+C quits; `q` also quits outside
-Play. Ctrl+R reconnects with the same profile ID and resumes the known game.
+Play. Opening the client with the same profile ID automatically resumes its unfinished game.
 Server replies preserve text edited while a request was pending. Long input
 shows its ending and cursor; the full value is submitted.
 There is no automatic reconnect. Quit forgets the placeholder identity; an
@@ -69,20 +69,15 @@ unfinished game also disappears when the server restarts.
 Only one action can be pending. A socket write does not acknowledge an action:
 the TUI waits for the server response or initial state. Missing responses and
 write failures show an unknown outcome and block further submissions until
-recovery. Ctrl+R reconnects and resumes rather than replaying actions. If a
-create response was lost, there is no game ID to recover; restart the TUI
-before creating another game. A stale-version rejection also requires recovery
-before another move. If resume is temporarily rejected while the old session
-is closing, press Ctrl+R again.
+recovery. Restart with the same profile ID to recover rather than replay actions,
+including when a create or matchmaking assignment response was lost. A stale-version
+rejection also requires recovery before another move.
 
 A late matching create response clears the timeout feedback and preserves any
 edited draft. Matchmaking admission retires the entry response deadline while
-retaining its request ID for assignment. Once assigned, Ctrl+R recovers through
-`game.resume`. Before assignment, reconnect never automatically requeues or
-resumes a previously finished game. Disconnect cancels a waiting ticket, but a
-match can commit just before disconnect and its assignment can be lost. Without
-that game ID, the TUI conservatively asks for a restart. The backend has no queue
-inspection, cancellation request, or current-game lookup.
+retaining its request ID for assignment. Disconnect cancels a waiting ticket;
+reopening the client never automatically requeues. If a match committed before
+disconnect, the server supplies its game ID so the client can resume it.
 
 Malformed server messages, including empty required values or invalid colors
 and statuses, are reported while receiving continues. The next valid message
@@ -107,9 +102,11 @@ Open two more terminals and connect both players:
 websocat ws://localhost:8080/ws
 ```
 
-Each connection receives a `connection.ready` `profileId`; reconnect with it as
-`?profileId=PROFILE_ID`, then send `game.resume`. It is placeholder identity,
-not authentication.
+Each connection receives a `connection.ready` `profileId` and an optional
+`activeGameId`. Reconnect with `?profileId=PROFILE_ID`, then send `game.resume`
+for that game. The TUI does this automatically. It is placeholder identity, not
+authentication. A profile may have only one unfinished game across private games
+and matchmaking, including across connections.
 
 `connection.ready` is always sent before commands are processed. Its write has
 a 10-second deadline and is canceled when the server shuts down.
@@ -255,7 +252,7 @@ for local reading. Filter on `event`, not the human-readable `msg`.
 | Event | Meaning and useful fields |
 | --- | --- |
 | `server.starting`, `server.stopped` | Process lifecycle; startup includes `address`. |
-| `connection.opened`, `connection.closed` | Upgraded socket lifetime, with `profile_id`; close includes `duration_ms`, `close_code`, and `reason` (`client_closed`, `shutdown`, `timeout`, or `error`). |
+| `connection.opened`, `connection.closed` | Upgraded socket lifetime, with `profile_id`; close includes `duration_ms`, an available `close_code`, and `reason` (`client_closed`, `transport_closed`, `shutdown`, `timeout`, or `error`). |
 | `game.created` | A private game is waiting for its opponent; includes `game_id`, creator `profile_id`, `initial_ms`, and `increment_ms`. |
 | `game.started` | Both seats are filled; includes `game_id`, `mode` (`private` or `matchmaking`), both profile IDs, and the time control. |
 | `matchmaking.queued`, `matchmaking.canceled` | A waiting player's queue lifetime, correlated by `profile_id`; queue entry includes the time control. An immediate match emits `game.started`. |
@@ -268,7 +265,8 @@ Lifecycle events use INFO. Full queues, rejected upgrades (`connection.rejected`
 timeouts, and unexpected disconnects use WARN. Unexpected application failures
 use ERROR (`request.failed`, `disconnect.state_failed`, `server.failed`, and
 `server.configuration_failed`), with the error and available correlation IDs.
-`close_code=-1` means no WebSocket close frame was available.
+EOF disconnects use INFO with `reason=transport_closed`; routine closes omit the
+error detail, and `close_code` is omitted when no WebSocket close status is available.
 
 Routine moves, heartbeat traffic, and ordinary client validation errors are not
 logged. Message payloads are not included. Use these events for operational

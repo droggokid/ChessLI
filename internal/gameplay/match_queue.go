@@ -1,6 +1,7 @@
 package gameplay
 
 import (
+	"ChessLI/internal/identity"
 	"context"
 	"log/slog"
 	"time"
@@ -9,24 +10,28 @@ import (
 // matchQueue is owned by GameService; every access requires the service mutex.
 type matchQueue map[timeControlKey]*waitingPlayer
 
-func (q matchQueue) findOpponent(player *waitingPlayer) (opponent *waitingPlayer, queued bool, err error) {
-	q.removeCanceledPlayers()
-	for _, waiting := range q {
-		if waiting.command.ProfileID == player.command.ProfileID {
-			return nil, false, ErrAlreadyQueued
-		}
-	}
-
+// Admission has already removed canceled players and rejected duplicate profiles.
+func (q matchQueue) findOpponent(player *waitingPlayer) (opponent *waitingPlayer, queued bool) {
 	key := timeControlKey{initial: player.command.Initial, increment: player.command.Increment}
 	waiting, exists := q[key]
 	if !exists {
 		q[key] = player
-		return nil, true, nil
+		return nil, true
 	}
 
 	delete(q, key)
 	stopWaitingPlayerCleanup(waiting)
-	return waiting, false, nil
+	return waiting, false
+}
+
+func (q matchQueue) containsProfile(profileID identity.ProfileID) bool {
+	for _, waiting := range q {
+		if waiting.command.ProfileID == profileID {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (q matchQueue) removeCanceledPlayers() {

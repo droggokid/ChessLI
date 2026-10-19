@@ -68,6 +68,19 @@ func (g *game) declineDraw(command DrawOfferResponseCommand) (GameSnapshot, erro
 	return g.state.declineDraw(command, g.now())
 }
 
+// active checks elapsed time without settling or notifying a timeout.
+func (g *game) active() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.state.outcome != domain.OutcomeNone {
+		return false
+	}
+
+	deadline, running := g.state.clock.deadline(g.state.engine.Position().Turn())
+	return !running || g.now().Before(deadline)
+}
+
 // snapshot also settles an expired clock, so it needs exclusive access.
 func (g *game) snapshot() GameSnapshot {
 	g.mu.Lock()

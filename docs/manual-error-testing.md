@@ -16,7 +16,8 @@ websocat ws://localhost:8080/ws
 ```
 
 Each WebSocket connection receives a `connection.ready` payload containing a
-profile ID and may participate in only one active game. Reuse that ID as the
+profile ID and an optional `activeGameId`. A profile may participate in only one
+unfinished game across private games, matchmaking, and connections. Reuse that ID as the
 `profileId` query parameter when reconnecting to resume as the same placeholder
 player. This is development-only identity, not authentication. Once a game's
 final state is queued for delivery, its live connections can start or join
@@ -79,13 +80,11 @@ Feedback should reflect whose turn it is. Text edited while a request is
 pending should survive its reply. Long pasted input shows its ending and
 cursor while preserving the full submitted value.
 
-Ctrl+R reconnects with the displayed profile ID and sends `game.resume` for
-the known game. This is also the recovery path for `stale_game_version` and
-uncertain requests; the TUI never automatically resends moves or create
-requests. A lost create response has no game ID to resume, so the client asks
-for a TUI restart instead. If resume is rejected because the old session is
-still closing, use Ctrl+R again. Stop the server to check the disconnected
-status, disabled submissions, and retention of the last displayed board.
+Close and reopen the TUI with the same profile ID. It should automatically open
+Play and resume the game supplied in `connection.ready.activeGameId`. This also
+recovers from `stale_game_version` and uncertain requests without replaying moves
+or create requests. Stop the server to check the disconnected status, disabled
+submissions, and retention of the last displayed board.
 
 Focused behavioral tests cover a create timeout followed by a late matching
 `game.created`: the known game returns to ordinary waiting, pending action and
@@ -94,12 +93,10 @@ also clears timeout feedback and retires the entry deadline; that timer must
 remain harmless while queued, after assignment, and after initial state.
 Drafts edited after admission must survive assignment and initialization.
 
-Disconnect cancels a waiting matchmaking ticket, but a match can commit just
-before disconnect. If its assignment is lost, there is no recoverable game ID.
-Before assignment, Ctrl+R must never automatically requeue or resume a previously
-finished game; it conservatively asks for a TUI restart. The backend has no
-queue inspection, cancellation request, or current-game lookup. After assignment,
-Ctrl+R resumes the assigned game and waits for its initial state.
+Disconnect cancels a waiting matchmaking ticket. Reopening the client must not
+automatically requeue or resume a finished game. If a match committed just before
+disconnect, the server's profile lookup supplies its ID even if the assignment
+response was lost; the client resumes it and waits for its initial state.
 
 Use `/resign` to check the final result and the ability to create another game.
 Session moves show received SAN values rather than a complete game history;
