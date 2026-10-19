@@ -1,3 +1,6 @@
+> Historical version preserved during the ADR cleanup. Its status and instructions
+> below describe the original decision; see the [current record](../0002-lifecycle-and-cancellation.md).
+
 # ADR 0006: Context Represents Operation Lifetime
 
 Status: Accepted

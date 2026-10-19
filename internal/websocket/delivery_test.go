@@ -51,7 +51,7 @@ func TestHandlerAutomaticallyPublishesTimeoutAndReleasesSessions(t *testing.T) {
 			if len(session.outgoing) != 0 {
 				t.Fatal("timeout published more than once")
 			}
-			if err := server.gameSessions.Hold(session); err != nil {
+			if err := server.messageHandler.gameSessions.Hold(session); err != nil {
 				t.Fatalf("timeout did not release session: %v", err)
 			}
 		}
@@ -60,7 +60,7 @@ func TestHandlerAutomaticallyPublishesTimeoutAndReleasesSessions(t *testing.T) {
 
 func TestHandlerTerminalStateReachesPeerWhenSourceStops(t *testing.T) {
 	service := gameplay.NewMockGameService(gomock.NewController(t))
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	source, peer := newQueuedSession("white"), newQueuedSession("black")
 	for _, session := range []*Session{source, peer} {
 		if err := registry.Add("game", session); err != nil {
@@ -69,10 +69,10 @@ func TestHandlerTerminalStateReachesPeerWhenSourceStops(t *testing.T) {
 	}
 	service.EXPECT().Resign(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(context.Context, gameplay.ResignCommand) (gameplay.GameSnapshot, error) {
-			source.runState.Store(uint32(sessionStopped))
+			source.running.Store(false)
 			return gameplay.GameSnapshot{GameID: "game", Outcome: game.OutcomeBlackWin, Termination: game.TerminationResignation}, nil
 		})
-	err := NewHandler(service, registry).Handle(context.Background(), source,
+	err := newHandler(service, registry).Handle(context.Background(), source,
 		json.RawMessage(`{"type":"game.resign","requestId":"resign","payload":{"gameId":"game"}}`))
 	if !errors.Is(err, protocol.ErrSessionNotRunning) {
 		t.Fatalf("Handle() error = %v, want stopped session", err)
@@ -88,6 +88,107 @@ func TestHandlerTerminalStateReachesPeerWhenSourceStops(t *testing.T) {
 	}
 }
 
+func TestAdmissionPublishesPresenceWhenSourceQueueIsFull(t *testing.T) {
+	for _, action := range []string{"join", "resume", "match"} {
+		t.Run(action, func(t *testing.T) {
+			games := gameplay.NewGameService()
+			t.Cleanup(games.Close)
+			ctx := context.Background()
+			created, err := games.CreatePrivateGame(ctx, gameplay.CreatePrivateCommand{
+				ProfileID: "white", Initial: time.Minute, ColorPreference: gameplay.ColorWhite,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action != "join" {
+				if _, err := games.JoinPrivateGame(ctx, gameplay.JoinPrivateCommand{GameID: created.GameID, ProfileID: "black"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			registry := newGameSessions()
+			client, peer := newQueuedSession("black"), newQueuedSession("white")
+			if err := registry.Add(created.GameID, peer); err != nil {
+				t.Fatal(err)
+			}
+			for len(client.outgoing) < cap(client.outgoing) {
+				client.outgoing <- protocol.ServerEnvelope{}
+			}
+			handler := newHandler(games, registry)
+			if action == "match" {
+				if err := registry.Hold(client); err != nil {
+					t.Fatal(err)
+				}
+				handler.awaitMatch(ctx, client, "admit", gameplay.MatchTicket{Result: matchResults(gameplay.GameAssignment{GameID: created.GameID, Color: chess.Black})})
+			} else {
+				raw := json.RawMessage(`{"type":"game.` + action + `","requestId":"admit","payload":{"gameId":"` + string(created.GameID) + `"}}`)
+				if err := handler.Handle(ctx, client, raw); !errors.Is(err, protocol.ErrSessionQueueFull) {
+					t.Fatalf("admission error = %v, want queue full", err)
+				}
+			}
+			message := receiveEnvelope(t, peer)
+			state := message.Payload.(protocol.GameStatePayload)
+			if message.RequestID != "" || state.Black == nil || !state.Black.Connected {
+				t.Fatalf("peer did not receive committed presence: %+v", message)
+			}
+		})
+	}
+}
+
+func TestJoinPublishesInitialStateAfterRequestCancellation(t *testing.T) {
+	service := gameplay.NewMockGameService(gomock.NewController(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service.EXPECT().JoinPrivateGame(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, gameplay.JoinPrivateCommand) (gameplay.GameAssignment, error) {
+			cancel()
+			return gameplay.GameAssignment{GameID: "game", Color: chess.Black}, nil
+		})
+	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).DoAndReturn(
+		func(ctx context.Context, _ identity.GameID) (gameplay.GameSnapshot, error) {
+			if err := ctx.Err(); err != nil {
+				t.Fatalf("committed join snapshot context: %v", err)
+			}
+			return gameplay.GameSnapshot{GameID: "game", WhiteProfileID: "white", BlackProfileID: "black"}, nil
+		})
+	registry := newGameSessions()
+	client, peer := newQueuedSession("black"), newQueuedSession("white")
+	if err := registry.Add("game", peer); err != nil {
+		t.Fatal(err)
+	}
+	err := newHandler(service, registry).Handle(ctx, client, json.RawMessage(`{"type":"game.join","payload":{"gameId":"game"}}`))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("join error = %v, want canceled", err)
+	}
+	message := receiveEnvelope(t, peer)
+	state := message.Payload.(protocol.GameStatePayload)
+	if message.Type != protocol.ServerGameInitial || message.RequestID != "" || state.Black == nil || !state.Black.Connected {
+		t.Fatalf("peer did not receive committed initial state: %+v", message)
+	}
+}
+
+func TestResumePublishesPresenceAfterRequestCancellation(t *testing.T) {
+	service := gameplay.NewMockGameService(gomock.NewController(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service.EXPECT().ResumeGame(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, gameplay.ResumeGameCommand) (gameplay.GameSnapshot, error) {
+		cancel()
+		return gameplay.GameSnapshot{GameID: "game", WhiteProfileID: "white", BlackProfileID: "black"}, nil
+	})
+	registry := newGameSessions()
+	client, peer := newQueuedSession("black"), newQueuedSession("white")
+	if err := registry.Add("game", peer); err != nil {
+		t.Fatal(err)
+	}
+	err := newHandler(service, registry).Handle(ctx, client, json.RawMessage(`{"type":"game.resume","payload":{"gameId":"game"}}`))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("resume error = %v, want canceled", err)
+	}
+	message := receiveEnvelope(t, peer)
+	if !message.Payload.(protocol.GameStatePayload).Black.Connected {
+		t.Fatal("peer did not receive committed presence")
+	}
+}
+
 func TestAwaitMatchFinishedGameIsReadOnly(t *testing.T) {
 	service := gameplay.NewMockGameService(gomock.NewController(t))
 	state := gameplay.GameSnapshot{
@@ -95,7 +196,7 @@ func TestAwaitMatchFinishedGameIsReadOnly(t *testing.T) {
 		Outcome: game.OutcomeBlackWin, Termination: game.TerminationResignation,
 	}
 	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(state, nil)
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	client, peer := newQueuedSession("white"), newQueuedSession("black")
 	if err := registry.Hold(client); err != nil {
 		t.Fatal(err)
@@ -103,7 +204,7 @@ func TestAwaitMatchFinishedGameIsReadOnly(t *testing.T) {
 	if err := registry.Add("game", peer); err != nil {
 		t.Fatal(err)
 	}
-	NewHandler(service, registry).awaitMatch(context.Background(), client, "match", gameplay.MatchTicket{
+	newHandler(service, registry).awaitMatch(context.Background(), client, "match", gameplay.MatchTicket{
 		Result: matchResults(gameplay.GameAssignment{GameID: "game", Color: chess.White}),
 	})
 	if got := receiveEnvelope(t, client); got.Type != protocol.ServerMatchFound {
@@ -132,7 +233,7 @@ func TestHandlerQueuesStateBeforeConcurrentTimeoutPublication(t *testing.T) {
 			server := NewServer("", service)
 			t.Cleanup(server.cancelConnections)
 			client, peer := newQueuedSession("white"), newQueuedSession("black")
-			if err := server.gameSessions.Add("game", peer); err != nil {
+			if err := server.messageHandler.gameSessions.Add("game", peer); err != nil {
 				t.Fatal(err)
 			}
 			active := gameplay.GameSnapshot{GameID: "game", Version: 1, WhiteProfileID: "white", BlackProfileID: "black"}
@@ -153,7 +254,7 @@ func TestHandlerQueuesStateBeforeConcurrentTimeoutPublication(t *testing.T) {
 			}
 			var raw json.RawMessage
 			if action == "move" {
-				if err := server.gameSessions.Add("game", client); err != nil {
+				if err := server.messageHandler.gameSessions.Add("game", client); err != nil {
 					t.Fatal(err)
 				}
 				service.EXPECT().MakeMove(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -188,7 +289,7 @@ func TestHandlerQueuesStateBeforeConcurrentTimeoutPublication(t *testing.T) {
 				if !finished {
 					t.Fatal("session did not receive terminal state")
 				}
-				if err := server.gameSessions.Hold(session); err != nil {
+				if err := server.messageHandler.gameSessions.Hold(session); err != nil {
 					t.Fatalf("session remained in finished game: %v", err)
 				}
 			}

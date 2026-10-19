@@ -1,3 +1,6 @@
+> Historical version preserved during the ADR cleanup. Its status and instructions
+> below describe the original decision; see the [current record](../0001-core-and-adapter-boundaries.md).
+
 # ADR 0005: Interface Ownership Follows the Abstraction
 
 Status: Accepted

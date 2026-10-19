@@ -12,17 +12,11 @@ import (
 func TestGameSessionsRegistrationLifecycle(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	session := newQueuedSession("player")
 
 	if err := registry.Add("game-1", session); err != nil {
 		t.Fatalf("Add() error = %v", err)
-	}
-	if err := registry.Add("game-1", session); err != nil {
-		t.Fatalf("idempotent Add() error = %v", err)
-	}
-	if err := registry.Add("game-2", session); !errors.Is(err, protocol.ErrSessionAlreadyInGame) {
-		t.Fatalf("conflicting Add() error = %v, want %v", err, protocol.ErrSessionAlreadyInGame)
 	}
 
 	if !registry.IsConnected("game-1", "player") {
@@ -43,7 +37,7 @@ func TestGameSessionsRegistrationLifecycle(t *testing.T) {
 func TestGameSessionsReservationPreventsConflictingLifecycle(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	session := newQueuedSession("player")
 	if err := registry.Hold(session); err != nil {
 		t.Fatalf("Hold() error = %v", err)
@@ -65,7 +59,7 @@ func TestGameSessionsReservationPreventsConflictingLifecycle(t *testing.T) {
 func TestGameSessionsIsConnected(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	session := newQueuedSession("player")
 	if err := registry.Add("game", session); err != nil {
 		t.Fatalf("Add() error = %v", err)
@@ -90,7 +84,7 @@ func TestGameSessionsIsConnected(t *testing.T) {
 func TestGameSessionsRejectsDuplicateProfileInGame(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	if err := registry.Add("game", newQueuedSession("player")); err != nil {
 		t.Fatalf("Add() first session error = %v", err)
 	}
@@ -104,9 +98,9 @@ func TestGameSessionsRejectsDuplicateProfileInGame(t *testing.T) {
 func TestGameSessionsRejectsStoppedSession(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	session := newQueuedSession("player")
-	session.runState.Store(uint32(sessionStopped))
+	session.running.Store(false)
 
 	err := registry.Add("game", session)
 	if !errors.Is(err, protocol.ErrSessionNotRunning) {
@@ -117,7 +111,7 @@ func TestGameSessionsRejectsStoppedSession(t *testing.T) {
 func TestGameSessionsRemoveGameReleasesAllSessions(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	white := newQueuedSession("white")
 	black := newQueuedSession("black")
 	for _, session := range []*Session{white, black} {
@@ -138,7 +132,7 @@ func TestGameSessionsRemoveGameReleasesAllSessions(t *testing.T) {
 func TestGameSessionsBroadcastPreservesOnlySourceRequestID(t *testing.T) {
 	t.Parallel()
 
-	registry := NewGameSessions()
+	registry := newGameSessions()
 	source := newQueuedSession("source")
 	peer := newQueuedSession("peer")
 	if err := registry.Add("game", source); err != nil {
@@ -171,7 +165,7 @@ func TestGameSessionsBroadcastAttemptsPeersAfterSourceFailure(t *testing.T) {
 	t.Parallel()
 	for _, failure := range []string{"stopped", "full", "canceled"} {
 		t.Run(failure, func(t *testing.T) {
-			registry := NewGameSessions()
+			registry := newGameSessions()
 			source, peer := newQueuedSession("source"), newQueuedSession("peer")
 			for _, session := range []*Session{source, peer} {
 				if err := registry.Add("game", session); err != nil {
@@ -183,7 +177,7 @@ func TestGameSessionsBroadcastAttemptsPeersAfterSourceFailure(t *testing.T) {
 			var wantErr error
 			switch failure {
 			case "stopped":
-				source.runState.Store(uint32(sessionStopped))
+				source.running.Store(false)
 				wantErr = protocol.ErrSessionNotRunning
 			case "full":
 				for len(source.outgoing) < cap(source.outgoing) {
@@ -236,7 +230,7 @@ func TestSessionSend(t *testing.T) {
 
 		session := newQueuedSession("player")
 		session.outgoing = make(chan protocol.ServerEnvelope)
-		session.runState.Store(uint32(sessionStopped))
+		session.running.Store(false)
 		err := session.Send(context.Background(), protocol.ServerEnvelope{})
 		if !errors.Is(err, protocol.ErrSessionNotRunning) {
 			t.Fatalf("Send() error = %v, want %v", err, protocol.ErrSessionNotRunning)
@@ -247,7 +241,7 @@ func TestSessionSend(t *testing.T) {
 		t.Parallel()
 
 		session := newQueuedSession("player")
-		session.runState.Store(uint32(sessionStopped))
+		session.running.Store(false)
 		err := session.Send(context.Background(), protocol.ServerEnvelope{})
 		if !errors.Is(err, protocol.ErrSessionNotRunning) {
 			t.Fatalf("Send() error = %v, want %v", err, protocol.ErrSessionNotRunning)
@@ -276,10 +270,10 @@ func TestSessionSend(t *testing.T) {
 
 func newQueuedSession(profileID identity.ProfileID) *Session {
 	session := &Session{
-		profile:  identity.Profile{ID: profileID},
-		outgoing: make(chan protocol.ServerEnvelope, 8),
+		profileID: profileID,
+		outgoing:  make(chan protocol.ServerEnvelope, 8),
 	}
-	session.runState.Store(uint32(sessionRunning))
+	session.running.Store(true)
 	return session
 }
 

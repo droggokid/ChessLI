@@ -22,9 +22,10 @@ func validateProfileID(profileID identity.ProfileID) error {
 	return nil
 }
 
-func assignPrivateColors(profileID identity.ProfileID, creatorColor chess.Color) (identity.ProfileID, identity.ProfileID) {
-	if creatorColor == chess.White {
-		return profileID, ""
+// assignColors seats both players using the first player's already chosen color.
+func assignColors(first, second identity.ProfileID, firstColor chess.Color) (identity.ProfileID, identity.ProfileID) {
+	if firstColor == chess.White {
+		return first, second
 	}
-	return "", profileID
+	return second, first
 }

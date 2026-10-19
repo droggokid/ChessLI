@@ -1,3 +1,6 @@
+> Historical version preserved during the ADR cleanup. Its status and instructions
+> below describe the original decision; see the [current record](../0003-message-delivery-semantics.md).
+
 # ADR 0004: Outgoing Message Delivery Semantics
 
 Status: Accepted

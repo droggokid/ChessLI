@@ -1,3 +1,6 @@
+> Historical version preserved during the ADR cleanup. Its status and instructions
+> below describe the original decision; see the [current guidance](../../../AGENTS.md).
+
 # ADR 0007: Prefer the Standard Library and Keep Dependencies Internal
 
 Status: Accepted

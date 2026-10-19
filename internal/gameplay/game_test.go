@@ -25,8 +25,8 @@ func TestGameJoinPrivate(t *testing.T) {
 		if color != chess.White {
 			t.Fatalf("JoinPrivate() color = %v, want %v", color, chess.White)
 		}
-		if game.whiteProfileID != "white" {
-			t.Fatalf("WhiteProfileID = %q, want %q", game.whiteProfileID, "white")
+		if game.state.whiteProfileID != "white" {
+			t.Fatalf("WhiteProfileID = %q, want %q", game.state.whiteProfileID, "white")
 		}
 	})
 
@@ -143,7 +143,7 @@ func TestGameMoveUpdatesAuthoritativeState(t *testing.T) {
 
 			game := newReadyGame()
 			result, err := game.move(MoveCommand{
-				GameID:    game.id,
+				GameID:    game.state.id,
 				ProfileID: "white",
 				Move:      tt.move,
 				Notation:  tt.notation,
@@ -188,7 +188,7 @@ func TestGameRejectsMoveAfterCheckmate(t *testing.T) {
 
 	for version, move := range moves {
 		result, err := game.move(MoveCommand{
-			GameID:          game.id,
+			GameID:          game.state.id,
 			ProfileID:       move.profile,
 			Move:            move.move,
 			Notation:        MoveNotationUCI,
@@ -248,12 +248,12 @@ func TestGameMoveCommitsClockAndIncrement(t *testing.T) {
 	now := base
 	game := newGame("game", "white", "black", time.Minute, 2*time.Second)
 	game.now = func() time.Time { return now }
-	game.clock = newGameClock(time.Minute, 2*time.Second)
-	game.clock.start(now)
+	game.state.clock = newGameClock(time.Minute, 2*time.Second)
+	game.state.clock.start(now)
 
 	now = now.Add(5 * time.Second)
 	snapshot, err := game.move(MoveCommand{
-		GameID:    game.id,
+		GameID:    game.state.id,
 		ProfileID: "white",
 		Move:      "e2e4",
 		Notation:  MoveNotationUCI,
@@ -277,8 +277,8 @@ func TestGameSnapshotAdjudicatesTimeout(t *testing.T) {
 	now := base
 	game := newGame("game", "white", "black", time.Second, 0)
 	game.now = func() time.Time { return now }
-	game.clock = newGameClock(time.Second, 0)
-	game.clock.start(now)
+	game.state.clock = newGameClock(time.Second, 0)
+	game.state.clock.start(now)
 
 	now = now.Add(time.Second)
 	snapshot := game.snapshot()
@@ -309,10 +309,10 @@ func TestGameTimeoutIsDrawWhenOpponentHasBareKing(t *testing.T) {
 	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	now := base
 	game := newGame("game", "white", "black", time.Second, 0)
-	game.engine = chess.NewGame(position)
+	game.state.engine = chess.NewGame(position)
 	game.now = func() time.Time { return now }
-	game.clock = newGameClock(time.Second, 0)
-	game.clock.start(now)
+	game.state.clock = newGameClock(time.Second, 0)
+	game.state.clock.start(now)
 
 	now = now.Add(time.Second)
 	snapshot := game.snapshot()
@@ -328,13 +328,13 @@ func TestGameMoveReturnsTimeoutStateWithoutApplyingMove(t *testing.T) {
 	now := base
 	game := newGame("game", "white", "black", time.Second, 0)
 	game.now = func() time.Time { return now }
-	game.clock = newGameClock(time.Second, 0)
-	game.clock.start(now)
-	startingFEN := game.engine.FEN()
+	game.state.clock = newGameClock(time.Second, 0)
+	game.state.clock.start(now)
+	startingFEN := game.state.engine.FEN()
 
 	now = now.Add(time.Second)
 	snapshot, err := game.move(MoveCommand{
-		GameID:    game.id,
+		GameID:    game.state.id,
 		ProfileID: "white",
 		Move:      "e2e4",
 		Notation:  MoveNotationUCI,

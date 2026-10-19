@@ -1,3 +1,6 @@
+> Historical version preserved during the ADR cleanup. Its status and instructions
+> below describe the original decision; see the [current record](../0005-persistence-boundary.md).
+
 # ADR 0009: Persistence Boundary
 
 Status: Accepted

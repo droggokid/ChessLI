@@ -1,3 +1,6 @@
+> Historical version preserved during the ADR cleanup. Its status and instructions
+> below describe the original decision; see the [current record](../0001-core-and-adapter-boundaries.md).
+
 # ADR 0001: Package Boundaries and Dependency Direction
 
 Status: Accepted

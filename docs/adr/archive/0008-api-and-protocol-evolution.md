@@ -1,3 +1,6 @@
+> Historical version preserved during the ADR cleanup. Its status and instructions
+> below describe the original decision; see the [current record](../0004-protocol-compatibility.md).
+
 # ADR 0008: Protocol Changes Are Explicit and Compatibility Is Intentional
 
 Status: Accepted

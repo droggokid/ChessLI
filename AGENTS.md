@@ -1,102 +1,77 @@
-# Repository Guidelines
+# Repository Guide
 
-## Project Structure & Module Organization
+## Project and commands
 
-ChessLI is a Go WebSocket server for real-time chess games. The entry point and
-dependency wiring live in `cmd/main.go`. Core code is under `internal/`:
-`gameplay` owns games, clocks, matchmaking, commands, snapshots, and application
-orchestration; `identity` owns stable game and profile identifiers; `websocket`
-owns the server, sessions, handlers, and mappings; `websocket/protocol` owns the
-wire contract; `config` and `log` provide process-level support. Runnable
-examples live under `demo/`. Tests are kept next to the code they cover.
+ChessLI is a Go chess server with a terminal client. `cmd/main.go` wires the
+server; `cmd/chessli/` runs the client. Under `internal/`, `gameplay` owns
+live games, clocks, and matchmaking; `game`, `profile`, and `identity` hold
+domain models; `websocket` serves connections and `websocket/protocol` defines
+the wire contract. `tui` contains the client, `persistence` the storage
+adapters, and `database` the SQL, migrations, and generated queries.
+Tests live beside the code; runnable examples are in `demo/`.
 
-## Build, Test, and Development Commands
-
-Use the Makefile targets from the repository root:
+Run commands from the repository root:
 
 ```sh
-make run        # run ./cmd
-make build      # compile the server
-make test       # run all Go tests
-make test-race  # run all tests with the race detector
-make fmt        # format Go code with go fmt
-make fmt-check  # verify Go formatting
-make vet        # run go vet
-make check      # run formatting, vet, and tests
-make generate   # run go generate directives
-make tidy       # update go.mod/go.sum
+make run         # run the server
+make run-tui     # run the terminal client; optional PROFILE_ID=uuid
+make build       # build the server (build-tui for the client)
+make test        # go test ./...
+make test-race   # go test -race ./...
+make fmt         # format Go code
+make vet         # go vet ./...
+make check       # formatting check, vet, and tests
+make generate    # regenerate sqlc code and Go-generated files
+make tidy        # update module metadata when dependencies change
 ```
 
-Direct Go commands are also acceptable, for example `go test ./...` or `go run ./cmd`.
+See the Makefile for database and other development targets. Direct Go commands
+are also fine.
 
-## Conversational Style
+## Working approach
 
-- Be an insightful, candid, collaborative thought partner with a clear point of
-  view.
-- Lead with the outcome, then explain only the reasoning and trade-offs that
-  matter.
-- Match my technical level and tone; use plain language without becoming
-  simplistic.
-- Stay concise without becoming curt. Use minimal formatting.
-- Ask questions only when missing information materially changes the result or
-  creates risk.
-- When disagreeing, be direct, concrete, and constructive.
-- During tool-heavy work, give brief updates and make the final answer self-
-  contained.
+Read the relevant code before proposing or implementing changes. Prefer the
+smallest coherent solution, idiomatic Go, and existing conventions where they
+help. Use interfaces and abstractions for demonstrated needs. Prefer the
+standard library and existing dependencies when suitable; weigh new dependencies
+against their maintenance cost and keep their types internal unless exposing
+them is intentional.
 
-## Go Conventions
+Exercise engineering judgment: explain meaningful trade-offs and challenge
+existing choices when a better solution is justified. Consult the relevant
+[ADRs](docs/adr/) for architectural context; revise or supersede decisions when
+their rationale no longer holds. Record significant architectural decisions,
+rather than ordinary implementation or style choices.
 
-Follow idiomatic Go and the Uber Go Style Guide.
+Implement requested changes within their scope, preserving unrelated user
+changes. Update affected callers, generated code, tests, and documentation as
+needed. For protocol changes, check the examples in `README.md` and
+`docs/manual-error-testing.md` and update the affected material.
 
-Repository-specific rules:
+## Go conventions
 
 - Prefer concrete types over premature interfaces.
 - `gameplay.Service` is the transport-independent gameplay contract; keep
   implementation-only lifecycle/configuration methods off it.
 - Keep all `GameService` methods in `internal/gameplay/service.go`.
   `service_helpers.go` is only for receiver-free supporting code.
+- In handwritten production code, keep each concrete type and all its methods
+  in one file. Extract a cohesive responsibility when that file grows; do not
+  scatter a receiver's methods. Generated code follows its generator's layout.
+- Helper files contain receiver-free functions with explicit inputs, not methods
+  disguised as functions taking the entire owning object.
 - Avoid mutable package-level state.
 - Prefer the standard library and existing dependencies.
 - Do not expose third-party types from public APIs unless intentional.
 
+## Verification and communication
 
-## Testing Guidelines
+Use Go's testing package for meaningful behavior tests with clear fixtures.
+Synchronize concurrency tests through observable events or controlled clocks
+rather than arbitrary sleeps. For Go changes, run `go test ./...` and
+`go vet ./...`; include `go test -race ./...` for concurrency changes.
+Choose proportionate checks for documentation or configuration changes.
 
-Use Go’s built-in `testing` package and keep tests next to the code they cover with `_test.go` suffixes. Name tests by behavior, such as `TestMoveRejectsOwnPieceCapture`. Prefer table-driven tests with `t.Run` when checking variants of the same behavior. Keep one-off tests direct when a table would add noise.
-
-Test helpers must live in `_test.go` files, usually `test_helpers_test.go`, and must call `t.Helper()` when they receive `*testing.T`. Use explicit test helpers for shared fixture setup instead of hiding important setup in broad abstractions. Avoid panics in tests; fail through `t.Fatalf` or `t.Fatal`. Prefer comparing domain values directly and keep fixtures small enough that the expected behavior is visible in the test. Do not use arbitrary sleeps to synchronize concurrency tests; wait on an observable event or use a controlled clock.
-
-For gomock, keep `//go:generate go run go.uber.org/mock/mockgen@...` directives near the interface they generate from. Generate mocks as normal package files named after the interface source, such as `game_service_mock.go`. Run `make generate` after interface changes, then `make test` and `make vet`.
-
-Run `go test ./...` for normal changes and `go test -race ./...` for
-concurrency-related changes. Run `go vet ./...` before handing off production Go
-changes.
-
-## Commit & Pull Request Guidelines
-
-Recent commits use short, imperative summaries such as `clean up refactoring` and `game models and board`. Keep commit messages concise and focused on one logical change. Pull requests should include a brief description, the commands run (`make test`, `make vet`, etc.), and notes about known limitations or incomplete chess rules. Include screenshots only when UI work is added.
-
-## Documentation Guidelines
-
-Keep the manual WebSocket flow in `README.md` and the payload examples in `docs/manual-error-testing.md` synchronized with the current protocol. Whenever message types, payload schemas, validation rules, error codes, error messages, or observable flow behavior change, update both documents in the same change. Keep JSON examples ready to paste into `websocat`, and clearly identify application errors that are not currently reachable through the WebSocket API.
-
-## Architecture Decisions
-
-Accepted architecture decisions live in `docs/adr/`.
-
-Before changing package boundaries, concurrency semantics, lifecycle ownership,
-protocol behavior, public APIs, interface ownership, context propagation, or
-dependency direction, read the applicable ADRs.
-
-Treat ADR constraints and invariants as requirements. Do not silently work
-around or contradict an accepted ADR. If a requested change conflicts with an
-ADR, point out the conflict and update or supersede the ADR as part of the
-change when appropriate.
-
-Do not create ADRs for ordinary implementation details or style choices. Create
-one when a decision is cross-cutting, surprising, difficult to reverse, or
-represents an intentional trade-off.
-
-## Agent-Specific Instructions
-
-Agents are not allowed to make direct production-code edits without explicit user permission. Agents have standing permission to update `README.md`, files under `docs/`, and test files when needed to keep documentation and verification aligned with the current behavior. When reviewing or advising, inspect the relevant files first and ground feedback in the current code. Preserve user changes in the working tree and avoid broad refactors unless requested. Prefer the smallest coherent change that solves the requested problem.
+Be concise, candid, and concrete. Ask when missing information materially
+affects the result; give brief updates during longer work. Summarize what
+changed, the checks run, and any remaining limitations in handoffs and PRs.

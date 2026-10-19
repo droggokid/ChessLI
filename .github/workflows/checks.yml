@@ -10,6 +10,24 @@ jobs:
     name: Go checks
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: chessli_test
+          POSTGRES_PASSWORD: chessli_test
+          POSTGRES_DB: chessli_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U chessli_test -d chessli_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CHESSLI_TEST_DATABASE_URL: postgres://chessli_test:chessli_test@localhost:5432/chessli_test?sslmode=disable
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -23,8 +41,8 @@ jobs:
       - name: Run checks
         run: make check
 
-      - name: Run WebSocket stack tests
-        run: make test-stack
+      - name: Run all tests with the race detector
+        run: make test-race
 
       - name: Build
         run: make build
