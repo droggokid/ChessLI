@@ -21,7 +21,7 @@ make test-race   # go test -race ./...
 make fmt         # format Go code
 make vet         # go vet ./...
 make check       # formatting check, vet, and tests
-make generate    # regenerate sqlc code and Go-generated files
+make generate    # regenerate Go-generated files
 make tidy        # update module metadata when dependencies change
 ```
 

@@ -7,7 +7,7 @@ in-memory ownership of live games.
 
 ## Scope
 
-- PostgreSQL, migrations, and `sqlc` generation.
+- PostgreSQL, migrations, and pgx pools with Squirrel queries.
 - Durable profile rows keyed by the existing `ProfileID`.
 - Immutable completed-game records with players, time control, outcome,
   termination reason, final FEN, and move history with post-move clock balances.
@@ -22,15 +22,15 @@ in-memory ownership of live games.
 
 ## Steps
 
-1. Choose the PostgreSQL driver and migration tool; add a pinned `sqlc` tool
-   directive and `sqlc.yaml`.
+1. Use pgx pools for PostgreSQL access, Squirrel for parameterized SQL, and
+   Goose for schema migrations.
 2. Create the initial schema and migrations for `profiles`, `completed_games`,
    and `completed_game_moves`. Add only the indexes required by the planned
    profile-history queries.
-3. Write named SQL queries, generate the storage package, and test migrations
-   plus the generated-query integration against PostgreSQL.
+3. Build queries in the storage adapters and test migrations plus repository
+   behavior against PostgreSQL.
 4. Add small storage adapters at the consumers that need them. Do not expose
-   generated types through gameplay or WebSocket APIs.
+   driver types through gameplay or WebSocket APIs.
 5. At terminal transition, build a completed-game record and attempt to save
    it before releasing transport membership. If saving fails, log the failure
    and still publish the final state; do not make players retry a completed game.

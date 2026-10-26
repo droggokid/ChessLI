@@ -1,4 +1,4 @@
-package game
+package persistence
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 )
 
 func TestGameRepositoryRejectsInvalidGameID(t *testing.T) {
-	repository := &GameRepository{}
+	repository := NewGameRepository(nil)
 
 	if _, err := repository.GetGameByID(context.Background(), identity.GameID("invalid")); err == nil {
 		t.Fatal("GetGameByID() error = nil, want invalid game ID error")
@@ -18,7 +18,7 @@ func TestGameRepositoryRejectsInvalidGameID(t *testing.T) {
 }
 
 func TestGameRepositoryRejectsNonSequentialMovePly(t *testing.T) {
-	repository := &GameRepository{}
+	repository := NewGameRepository(nil)
 	gameID := identity.GameID("00000000-0000-0000-0000-000000000001")
 
 	err := repository.CreateMoves(context.Background(), gameID, []domain.Move{{

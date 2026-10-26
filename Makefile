@@ -5,7 +5,7 @@ include .env
 export
 endif
 
-.PHONY: help chessli reset-local-db run run-tui build build-tui test test-stack fmt fmt-check vet check test-race cover tidy clean generate mockgen run-deps stop-deps clean-deps seed-local migration migrate-up migrate-down migrate-status sqlc
+.PHONY: help chessli reset-local-db run run-tui build build-tui test test-stack fmt fmt-check vet check test-race cover tidy clean generate mockgen run-deps stop-deps clean-deps seed-local migration migrate-up migrate-down migrate-status
 
 help:
 	@echo "Available targets:"
@@ -25,7 +25,7 @@ help:
 	@echo "  make cover  - report test coverage"
 	@echo "  make tidy   - tidy go.mod/go.sum"
 	@echo "  make clean  - clean Go build and test caches"
-	@echo "  make generate - regenerate Go and sqlc code"
+	@echo "  make generate - regenerate Go code"
 	@echo "  make mockgen  - print mockgen version"
 	@echo "  make run-deps  - start PostgreSQL"
 	@echo "  make stop-deps - stop PostgreSQL"
@@ -93,7 +93,6 @@ clean:
 	rm -rf bin
 
 generate:
-	$(MAKE) sqlc
 	go generate ./...
 
 mockgen:
@@ -124,7 +123,3 @@ migrate-down:
 
 migrate-status:
 	goose -dir $(MIGRATIONS_DIR) postgres "$(DATABASE_URL)" status
-
-sqlc:
-	mkdir -p internal/database/sqlc
-	sqlc generate

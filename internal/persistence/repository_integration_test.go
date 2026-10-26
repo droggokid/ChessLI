@@ -1,6 +1,7 @@
 package persistence_test
 
 import (
+	"ChessLI/internal/persistence"
 	"context"
 	"errors"
 	"os"
@@ -10,21 +11,19 @@ import (
 	"testing"
 	"time"
 
-	"ChessLI/internal/database/sqlc"
 	domain "ChessLI/internal/game"
 	"ChessLI/internal/identity"
-	gamestore "ChessLI/internal/persistence/game"
-	profilestore "ChessLI/internal/persistence/profile"
 	"ChessLI/internal/profile"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestPostgresProfileRoundTrip(t *testing.T) {
-	ctx, tx := testDatabase(t)
-	repository := profilestore.NewProfileRepository(*sqlc.New(tx))
+	ctx, pool := testDatabase(t)
+	repository := persistence.NewProfileRepository(pool)
 	first, second := createProfiles(t, ctx, repository)
 	got, err := repository.GetProfileByID(ctx, first.ID)
 	if err != nil {
@@ -55,10 +54,9 @@ func TestPostgresProfileRoundTrip(t *testing.T) {
 }
 
 func TestPostgresCompletedGameRoundTrip(t *testing.T) {
-	ctx, tx := testDatabase(t)
-	queries := sqlc.New(tx)
-	white, black := createProfiles(t, ctx, profilestore.NewProfileRepository(*queries))
-	repository := gamestore.NewGameRepository(*queries)
+	ctx, pool := testDatabase(t)
+	white, black := createProfiles(t, ctx, persistence.NewProfileRepository(pool))
+	repository := persistence.NewGameRepository(pool)
 	completed := completedGame(white.ID, black.ID)
 	if err := repository.CreateGame(ctx, completed); err != nil {
 		t.Fatal(err)
@@ -119,8 +117,8 @@ func TestPostgresCompletedGameRoundTrip(t *testing.T) {
 func TestPostgresRejectsDuplicateProfiles(t *testing.T) {
 	for _, field := range []string{"username", "email"} {
 		t.Run(field, func(t *testing.T) {
-			ctx, tx := testDatabase(t)
-			repository := profilestore.NewProfileRepository(*sqlc.New(tx))
+			ctx, pool := testDatabase(t)
+			repository := persistence.NewProfileRepository(pool)
 			createProfiles(t, ctx, repository)
 			username, email := "other", "other@example.test"
 			if field == "username" {
@@ -147,45 +145,35 @@ func TestPostgresRejectsInvalidCompletedGames(t *testing.T) {
 		{"missing termination", func(g *domain.CompletedGame) { g.Termination = domain.TerminationNone }, "23514"},
 	} {
 		t.Run(invalid.name, func(t *testing.T) {
-			ctx, tx := testDatabase(t)
-			queries := sqlc.New(tx)
-			white, black := createProfiles(t, ctx, profilestore.NewProfileRepository(*queries))
+			ctx, pool := testDatabase(t)
+			white, black := createProfiles(t, ctx, persistence.NewProfileRepository(pool))
 			completed := completedGame(white.ID, black.ID)
 			invalid.change(&completed)
-			assertSQLState(t, gamestore.NewGameRepository(*queries).CreateGame(ctx, completed), invalid.code)
+			assertSQLState(t, persistence.NewGameRepository(pool).CreateGame(ctx, completed), invalid.code)
 		})
 	}
 }
 
-func TestPostgresRejectsInvalidMovesAndAllowsRollback(t *testing.T) {
-	ctx, tx := testDatabase(t)
-	queries := sqlc.New(tx)
-	white, black := createProfiles(t, ctx, profilestore.NewProfileRepository(*queries))
-	repository := gamestore.NewGameRepository(*queries)
+func TestPostgresRejectsInvalidMoveBatchAtomically(t *testing.T) {
+	ctx, pool := testDatabase(t)
+	white, black := createProfiles(t, ctx, persistence.NewProfileRepository(pool))
+	repository := persistence.NewGameRepository(pool)
 	completed := completedGame(white.ID, black.ID)
 	if err := repository.CreateGame(ctx, completed); err != nil {
 		t.Fatal(err)
 	}
-	// A savepoint lets us inspect the game after PostgreSQL rejects the batch.
-	batch, err := tx.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = gamestore.NewGameRepository(*sqlc.New(batch)).CreateMoves(ctx, completed.ID, []domain.Move{
+	err := repository.CreateMoves(ctx, completed.ID, []domain.Move{
 		{Ply: 1, UCI: "e2e4", WhiteRemaining: time.Minute, BlackRemaining: time.Minute},
 		{Ply: 2, UCI: "e7e5", WhiteRemaining: -time.Second, BlackRemaining: time.Minute},
 	})
 	assertSQLState(t, err, "23514")
-	if err := batch.Rollback(ctx); err != nil {
-		t.Fatal(err)
-	}
 	moves, err := repository.ListMovesByGameID(ctx, completed.ID)
 	if err != nil || len(moves) != 0 {
 		t.Fatalf("rejected batch left moves = %+v, error %v", moves, err)
 	}
 }
 
-func testDatabase(t *testing.T) (context.Context, pgx.Tx) {
+func testDatabase(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 	databaseURL := os.Getenv("CHESSLI_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -204,24 +192,27 @@ func testDatabase(t *testing.T) (context.Context, pgx.Tx) {
 			t.Error(err)
 		}
 	})
-	tx, err := conn.Begin(ctx)
-	if err != nil {
+	schema := pgx.Identifier{"chessli_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")}.Sanitize()
+	if _, err := conn.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := tx.Rollback(cleanupCtx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		if _, err := conn.Exec(cleanupCtx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
 			t.Error(err)
 		}
 	})
-	schema := pgx.Identifier{"chessli_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")}.Sanitize()
-	if _, err := tx.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, "SET LOCAL search_path TO "+schema); err != nil {
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(pool.Close)
 	migrations, err := filepath.Glob("../database/migrations/*.sql")
 	if err != nil || len(migrations) == 0 {
 		t.Fatalf("find migrations: %v", err)
@@ -235,14 +226,14 @@ func testDatabase(t *testing.T) (context.Context, pgx.Tx) {
 		if !found {
 			t.Fatalf("migration %s has no Down boundary", migration)
 		}
-		if _, err := tx.Exec(ctx, up); err != nil {
+		if _, err := pool.Exec(ctx, up); err != nil {
 			t.Fatalf("apply %s: %v", migration, err)
 		}
 	}
-	return ctx, tx
+	return ctx, pool
 }
 
-func createProfiles(t *testing.T, ctx context.Context, repository *profilestore.ProfileRepository) (profile.Profile, profile.Profile) {
+func createProfiles(t *testing.T, ctx context.Context, repository persistence.ProfileRepository) (profile.Profile, profile.Profile) {
 	t.Helper()
 	white, err := repository.CreateProfile(ctx, "White", "white@example.test", "test-hash")
 	if err != nil {

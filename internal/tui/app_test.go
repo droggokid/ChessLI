@@ -343,7 +343,8 @@ func TestPlayViewKeepsInputVisibleWithinTerminal(t *testing.T) {
 		if !strings.Contains(view, "> ") {
 			t.Fatal("move input was clipped")
 		}
-		if !strings.Contains(view, "8♜") || !strings.Contains(view, "1♖") {
+		// The board uses dark-mode glyphs, which reverse the piece symbols.
+		if !strings.Contains(view, "8♖") || !strings.Contains(view, "1♜") {
 			t.Fatalf("board ranks were clipped:\n%s", view)
 		}
 	}

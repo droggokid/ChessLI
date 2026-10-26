@@ -19,7 +19,7 @@ type keeps its methods in one file; helper files contain independent functions.
 | Membership, presence, and state publication | `internal/websocket/game_sessions.go` |
 
 Wire decoding and mapping stay in `internal/websocket`; payload types live in
-`protocol/`. Persistence adapters and generated database code remain separate
+`protocol/`. Persistence adapters use pgx pools and Squirrel query builders, separate
 from the in-memory gameplay runtime.
 
 ## Terminal client
@@ -283,5 +283,5 @@ CHESSLI_TEST_DATABASE_URL='postgres://app:app@localhost:5432/app?sslmode=disable
 ```
 
 Use a test database whose user can create schemas. Each test creates a unique
-schema, applies the migrations, and rolls back the schema and records at cleanup.
+schema, applies the migrations, and drops the schema and records at cleanup.
 CI runs these tests against PostgreSQL 17 along with the full race suite.
