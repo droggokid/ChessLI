@@ -1,5 +1,20 @@
 # Repository Guide
 
+## Mandatory code review before edits
+
+The user is an engineer and must read and approve the proposed code before it is
+applied. Before changing code, tests, configuration, or documentation, show the
+exact proposed diff and wait for explicit approval. A request to implement a task
+or approval of a plan does not waive this requirement. Apply only the approved
+changes; show any subsequent changes and wait for approval again.
+
+Use visible, focused `apply_patch` edits after approval. Never bulk edit, rewrite
+files through scripts, or use Python, shell substitutions, formatters, generators,
+or other tools to bypass the user's review. Explain any necessary generated or
+mechanical changes and obtain approval before running tools that modify files.
+Read-only investigation may continue without approval. Preserve existing changes;
+do not revert them without approval.
+
 ## Project and commands
 
 ChessLI is a Go chess server with a terminal client. `cmd/main.go` wires the

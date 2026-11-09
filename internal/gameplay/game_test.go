@@ -117,9 +117,13 @@ func TestGameMoveRejectsInvalidCommands(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := tt.game().move(tt.command)
+			game := tt.game()
+			_, err := game.move(tt.command)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Move() error = %v, want %v", err, tt.wantErr)
+			}
+			if len(game.moveClocks) != 0 {
+				t.Fatalf("rejected move added clock history: %+v", game.moveClocks)
 			}
 		})
 	}
@@ -216,6 +220,9 @@ func TestGameRejectsMoveAfterCheckmate(t *testing.T) {
 	})
 	if !errors.Is(err, ErrGameFinished) {
 		t.Fatalf("Move() error = %v, want %v", err, ErrGameFinished)
+	}
+	if len(game.moveClocks) != len(moves) {
+		t.Fatalf("move after checkmate changed clock history: %+v", game.moveClocks)
 	}
 }
 

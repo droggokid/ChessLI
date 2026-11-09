@@ -5,6 +5,8 @@ commands are in [README](../README.md); architecture decisions are in [ADRs](adr
 
 ## Durable identities and history
 
+Completed games retain their original time control, ordered UCI moves with
+post-move clock balances, and stable completion metadata in memory.
 The PostgreSQL schema and game/profile repositories exist. Next, wire them into
 the application with an identity and authorization policy. Save completed games
 with their moves and expose history after restart. Storage failures must not

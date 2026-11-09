@@ -24,6 +24,10 @@ type game struct {
 	blackProfileID     identity.ProfileID
 	engine             *chess.Game
 	lastMoveSAN        string
+	initial            time.Duration
+	increment          time.Duration
+	moveClocks         []moveClockBalances
+	completedAt        time.Time
 	clock              gameClock
 	outcome            domain.Outcome
 	termination        domain.Termination
@@ -40,6 +44,8 @@ func newGame(id identity.GameID, white identity.ProfileID, black identity.Profil
 		whiteProfileID: white,
 		blackProfileID: black,
 		engine:         chess.NewGame(),
+		initial:        initialTime,
+		increment:      increment,
 		clock:          newGameClock(initialTime, increment),
 		drawOffers: drawOfferState{
 			lastOfferedAt: make(map[identity.ProfileID]time.Time, 2),
@@ -88,14 +94,19 @@ func (g *game) move(command MoveCommand) (GameSnapshot, error) {
 	}
 
 	g.clock.completeMove(now, mover)
+	whiteRemaining, blackRemaining := g.clock.remaining(now, g.engine.Position().Turn())
+	// Each accepted engine move gets exactly one pair of post-move balances.
+	g.moveClocks = append(g.moveClocks, moveClockBalances{
+		white: whiteRemaining,
+		black: blackRemaining,
+	})
 	g.syncOutcomeFromEngine()
 
 	g.version++
 	g.lastMoveSAN = san
 	g.drawOffers.pending = nil
 	if g.outcome != domain.OutcomeNone {
-		g.clock.stop(now, g.engine.Position().Turn())
-		g.logFinished()
+		g.finish(now)
 	}
 
 	return g.snapshot(now), nil
@@ -177,9 +188,7 @@ func (g *game) resign(command ResignCommand) (GameSnapshot, error) {
 	g.engine.Resign(color)
 	g.syncOutcomeFromEngine()
 	g.version++
-	g.clock.stop(now, g.engine.Position().Turn())
-	g.drawOffers.pending = nil
-	g.logFinished()
+	g.finish(now)
 
 	return g.snapshot(now), nil
 }
@@ -222,10 +231,8 @@ func (g *game) acceptDraw(command DrawOfferResponseCommand) (GameSnapshot, error
 	}
 
 	g.syncOutcomeFromEngine()
-	g.clock.stop(now, g.engine.Position().Turn())
 	g.version++
-	g.drawOffers.pending = nil
-	g.logFinished()
+	g.finish(now)
 
 	return g.snapshot(now), nil
 }
@@ -262,6 +269,7 @@ func (g *game) syncOutcomeFromEngine() {
 
 func (g *game) expire(now time.Time) bool {
 	active := g.engine.Position().Turn()
+	deadline, _ := g.clock.deadline(active)
 
 	loser, expired := g.clock.expire(now, active)
 	if !expired {
@@ -279,16 +287,48 @@ func (g *game) expire(now time.Time) bool {
 
 	g.termination = domain.TerminationTimeout
 	g.version++
-	g.drawOffers.pending = nil
-	g.logFinished()
+	g.finish(deadline)
 
 	return true
 }
 
-// Log the transition itself so repeated snapshots and broadcasts cannot count it twice.
-func (g *game) logFinished() {
+// finish records the terminal transition once; reads and broadcasts do not complete games.
+func (g *game) finish(now time.Time) {
+	g.clock.stop(now, g.engine.Position().Turn())
+	g.completedAt = now
+	g.drawOffers.pending = nil
 	slog.Info("game finished", "event", "game.finished", "game_id", g.id,
 		"outcome", g.outcome, "termination", g.termination, "version", g.version)
+}
+
+// completedRecord reads detached state after a terminal transition. The caller
+// must settle expiration explicitly, just as with snapshot.
+func (g *game) completedRecord() (completedGameRecord, bool) {
+	if g.outcome == domain.OutcomeNone {
+		return completedGameRecord{}, false
+	}
+	engineMoves := g.engine.Moves()
+	moves := make([]recordedMove, len(engineMoves))
+	for i, move := range engineMoves {
+		moves[i] = recordedMove{
+			Ply:            i + 1,
+			UCI:            chess.UCINotation{}.Encode(nil, move),
+			WhiteRemaining: g.moveClocks[i].white,
+			BlackRemaining: g.moveClocks[i].black,
+		}
+	}
+	return completedGameRecord{
+		ID:             g.id,
+		WhiteProfileID: g.whiteProfileID,
+		BlackProfileID: g.blackProfileID,
+		Initial:        g.initial,
+		Increment:      g.increment,
+		Moves:          moves,
+		Outcome:        g.outcome,
+		Termination:    g.termination,
+		FinalFEN:       g.engine.FEN(),
+		CompletedAt:    g.completedAt,
+	}, true
 }
 
 // hasMatingMaterial reports the minimum FIDE requirement for a timeout

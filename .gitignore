@@ -1,6 +1,5 @@
 # Local configuration
 .env
-/docs/initiatives/
 
 # Go build and test artifacts
 bin/
