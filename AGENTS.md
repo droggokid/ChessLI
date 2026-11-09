@@ -4,10 +4,10 @@
 
 ChessLI is a Go chess server with a terminal client. `cmd/main.go` wires the
 server; `cmd/chessli/` runs the client. Under `internal/`, `gameplay` owns
-live games, clocks, and matchmaking; `game`, `profile`, and `identity` hold
-domain models; `websocket` serves connections and `websocket/protocol` defines
+live games, clocks, and matchmaking; `game` and `identity` hold shared domain
+types; `websocket` serves connections and `websocket/protocol` defines
 the wire contract. `tui` contains the client, `persistence` the storage
-adapters, and `database` the SQL, migrations, and generated queries.
+adapters and their game/profile storage models, and `database` the schema migrations.
 Tests live beside the code; runnable examples are in `demo/`.
 
 Run commands from the repository root:

@@ -22,6 +22,12 @@ func TestGameSessionsRegistrationLifecycle(t *testing.T) {
 	if !registry.IsConnected("game-1", "player") {
 		t.Fatal("IsConnected() = false, want registered session")
 	}
+	if registry.IsConnected("game-1", "other") {
+		t.Fatal("IsConnected() = true for a different profile")
+	}
+	if registry.IsConnected("other-game", "player") {
+		t.Fatal("IsConnected() = true for a different game")
+	}
 
 	if gameID := registry.Remove(session); gameID != "game-1" {
 		t.Fatalf("Remove() game ID = %q, want game-1", gameID)
@@ -53,31 +59,6 @@ func TestGameSessionsReservationPreventsConflictingLifecycle(t *testing.T) {
 	}
 	if !registry.IsConnected("game", "player") {
 		t.Fatal("IsConnected() = false after Add")
-	}
-}
-
-func TestGameSessionsIsConnected(t *testing.T) {
-	t.Parallel()
-
-	registry := newGameSessions()
-	session := newQueuedSession("player")
-	if err := registry.Add("game", session); err != nil {
-		t.Fatalf("Add() error = %v", err)
-	}
-
-	if !registry.IsConnected("game", "player") {
-		t.Fatal("IsConnected() = false, want true for registered profile")
-	}
-	if registry.IsConnected("game", "other") {
-		t.Fatal("IsConnected() = true, want false for different profile")
-	}
-	if registry.IsConnected("other-game", "player") {
-		t.Fatal("IsConnected() = true, want false for different game")
-	}
-
-	registry.Remove(session)
-	if registry.IsConnected("game", "player") {
-		t.Fatal("IsConnected() = true after Remove, want false")
 	}
 }
 

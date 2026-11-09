@@ -2,42 +2,28 @@
 
 Status: Accepted.
 
-## Context and decision
+## Decision
 
-Outgoing messages are queued asynchronously. Successful `Session.Send` means
-queue acceptance, not a network write, peer receipt, or peer processing.
+`Session.Send` attempts a non-blocking enqueue into a bounded outgoing queue.
+Success confirms queue acceptance only. A stopped session, canceled caller,
+or full queue returns the corresponding error. Delivery racing with shutdown
+may be lost.
 
-Enqueueing is non-blocking so a slow client cannot stall application work.
-`Send` returns `ErrSessionNotRunning` if it observes a non-running session;
-otherwise it checks caller cancellation and returns the context error if
-already canceled. A full queue returns `ErrSessionQueueFull`. Queue acceptance
-racing with shutdown may succeed even though the message never reaches the
-peer. These are bounded local guarantees, not confirmed delivery.
+Handler serializes game operations, membership changes, and queue acceptance.
+An older active snapshot must not follow a terminal snapshot, and admission
+must not register a finished game as active. Actual socket writes happen
+outside that lock.
 
-State changes, admission, disconnect publication, and expiration publication
-are coordinated through queue acceptance. An older active snapshot must not
-follow a terminal snapshot, and admission must not re-register membership
-after terminal cleanup. Matchmaking admission publishes presence to already
-registered peers.
+After an action commits, peer enqueue attempts proceed even if the acting
+player's response fails or its request is canceled. The source error is returned
+after those attempts. Join publishes initial state to the peer; resume and
+matchmaking publish presence. Terminal publication releases live membership.
+[Request IDs](0004-protocol-compatibility.md) belong only to the initiating client.
 
-After a committed action, peer enqueue attempts proceed independently of the
-source send's failure or request cancellation; the source error is returned
-after those attempts. Peer failures are logged. These attempts remain finite
-and non-blocking. Request correlation follows
-[ADR 0004](0004-protocol-compatibility.md).
+## Rationale
 
-## Rationale and trade-offs
-
-Blocking for queue space adds latency without proving receipt. A socket-write
-acknowledgement still cannot prove peer processing; confirmed delivery would
-need a protocol-level acknowledgement and an explicit compatibility decision.
-
-The current handler uses one dispatch mutex, and expiration callbacks run
-asynchronously to avoid re-entering a transport operation waiting on them.
-That lock limits parallelism across games. Its scope and replacement mechanism
-are implementation choices; the ordering guarantees above are the contract.
-Database and network I/O stay outside the serialized state/publication work so
-slow external operations do not block unrelated gameplay.
-
-Backpressure, disconnects, and shutdown can lose messages. Clients cannot infer
-remote delivery or replay safety from queue acceptance alone.
+Bounded, non-blocking queues keep a slow client from blocking gameplay. They
+permit message loss; neither an enqueue nor a socket write proves peer receipt.
+Timeout publication runs asynchronously to avoid re-entering the handler's
+dispatch lock during a service call. Clients recover through authoritative
+state instead of assuming an unacknowledged action can be replayed safely.

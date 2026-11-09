@@ -1,6 +1,6 @@
 # Local configuration
 .env
-/docs/adr/archive/
+/docs/initiatives/
 
 # Go build and test artifacts
 bin/

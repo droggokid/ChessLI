@@ -105,11 +105,11 @@ func TestGameServiceActiveGameReleasesFinishedOrExpired(t *testing.T) {
 			s := NewGameService()
 			defer s.Close()
 			g := newReadyGame()
-			s.games[g.state.id] = g
-			s.profileGames["white"], s.profileGames["black"] = g.state.id, g.state.id
+			s.games[g.id] = g
+			s.profileGames["white"], s.profileGames["black"] = g.id, g.id
 			if name == "expired" {
-				g.now = func() time.Time { return g.state.clock.turnStartedAt.Add(10 * time.Minute) }
-			} else if _, err := s.Resign(context.Background(), ResignCommand{GameID: g.state.id, ProfileID: "white"}); err != nil {
+				g.now = func() time.Time { return g.clock.turnStartedAt.Add(10 * time.Minute) }
+			} else if _, err := s.Resign(context.Background(), ResignCommand{GameID: g.id, ProfileID: "white"}); err != nil {
 				t.Fatal(err)
 			}
 			if s.ActiveGame("white") != "" || s.ActiveGame("black") != "" {

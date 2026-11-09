@@ -1,11 +1,5 @@
 package game
 
-import (
-	"time"
-
-	"ChessLI/internal/identity"
-)
-
 type Outcome string
 
 const (
@@ -31,33 +25,3 @@ const (
 	TerminationSeventyFiveMoveRule  Termination = "seventy_five_move_rule"
 	TerminationInsufficientMaterial Termination = "insufficient_material"
 )
-
-type CompletedGame struct {
-	ID             identity.GameID
-	WhiteProfileID identity.ProfileID
-	BlackProfileID identity.ProfileID
-	Initial        time.Duration
-	Increment      time.Duration
-	Outcome        Outcome
-	Termination    Termination
-	FinalFEN       string
-	CompletedAt    time.Time
-}
-
-type Summary struct {
-	ID             identity.GameID
-	WhiteProfileID identity.ProfileID
-	BlackProfileID identity.ProfileID
-	Initial        time.Duration
-	Increment      time.Duration
-	Outcome        Outcome
-	Termination    Termination
-	CompletedAt    time.Time
-}
-
-type Move struct {
-	Ply            int
-	UCI            string
-	WhiteRemaining time.Duration
-	BlackRemaining time.Duration
-}

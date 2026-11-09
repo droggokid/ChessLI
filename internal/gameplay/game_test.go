@@ -25,8 +25,8 @@ func TestGameJoinPrivate(t *testing.T) {
 		if color != chess.White {
 			t.Fatalf("JoinPrivate() color = %v, want %v", color, chess.White)
 		}
-		if game.state.whiteProfileID != "white" {
-			t.Fatalf("WhiteProfileID = %q, want %q", game.state.whiteProfileID, "white")
+		if game.whiteProfileID != "white" {
+			t.Fatalf("WhiteProfileID = %q, want %q", game.whiteProfileID, "white")
 		}
 	})
 
@@ -143,7 +143,7 @@ func TestGameMoveUpdatesAuthoritativeState(t *testing.T) {
 
 			game := newReadyGame()
 			result, err := game.move(MoveCommand{
-				GameID:    game.state.id,
+				GameID:    game.id,
 				ProfileID: "white",
 				Move:      tt.move,
 				Notation:  tt.notation,
@@ -158,7 +158,7 @@ func TestGameMoveUpdatesAuthoritativeState(t *testing.T) {
 				t.Fatalf("Move() LastMoveSAN = %q, want %q", result.LastMoveSAN, "e4")
 			}
 
-			snapshot := game.snapshot()
+			snapshot := game.snapshot(game.now())
 			if snapshot.FEN != result.FEN {
 				t.Fatalf("Snapshot().FEN = %q, want %q", snapshot.FEN, result.FEN)
 			}
@@ -188,7 +188,7 @@ func TestGameRejectsMoveAfterCheckmate(t *testing.T) {
 
 	for version, move := range moves {
 		result, err := game.move(MoveCommand{
-			GameID:          game.state.id,
+			GameID:          game.id,
 			ProfileID:       move.profile,
 			Move:            move.move,
 			Notation:        MoveNotationUCI,
@@ -232,7 +232,7 @@ func TestGamePrivateClockStartsWhenSecondPlayerJoins(t *testing.T) {
 	}
 
 	now = now.Add(5 * time.Second)
-	snapshot := game.snapshot()
+	snapshot := game.snapshot(game.now())
 	if snapshot.WhiteRemaining != 55*time.Second {
 		t.Fatalf("WhiteRemaining = %v, want 55s", snapshot.WhiteRemaining)
 	}
@@ -248,12 +248,12 @@ func TestGameMoveCommitsClockAndIncrement(t *testing.T) {
 	now := base
 	game := newGame("game", "white", "black", time.Minute, 2*time.Second)
 	game.now = func() time.Time { return now }
-	game.state.clock = newGameClock(time.Minute, 2*time.Second)
-	game.state.clock.start(now)
+	game.clock = newGameClock(time.Minute, 2*time.Second)
+	game.clock.start(now)
 
 	now = now.Add(5 * time.Second)
 	snapshot, err := game.move(MoveCommand{
-		GameID:    game.state.id,
+		GameID:    game.id,
 		ProfileID: "white",
 		Move:      "e2e4",
 		Notation:  MoveNotationUCI,
@@ -270,18 +270,25 @@ func TestGameMoveCommitsClockAndIncrement(t *testing.T) {
 	}
 }
 
-func TestGameSnapshotAdjudicatesTimeout(t *testing.T) {
+func TestGameSnapshotLeavesTimeoutForExplicitExpiration(t *testing.T) {
 	t.Parallel()
 
 	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	now := base
 	game := newGame("game", "white", "black", time.Second, 0)
 	game.now = func() time.Time { return now }
-	game.state.clock = newGameClock(time.Second, 0)
-	game.state.clock.start(now)
+	game.clock = newGameClock(time.Second, 0)
+	game.clock.start(now)
 
 	now = now.Add(time.Second)
-	snapshot := game.snapshot()
+	snapshot := game.snapshot(game.now())
+	if snapshot.Outcome != domain.OutcomeNone || snapshot.Version != 0 || !game.clock.running {
+		t.Fatalf("snapshot settled an expired clock: %+v", snapshot)
+	}
+	if !game.expire(now) {
+		t.Fatal("explicit expiration did not settle the clock")
+	}
+	snapshot = game.snapshot(game.now())
 
 	if snapshot.Outcome != domain.OutcomeBlackWin {
 		t.Fatalf("Outcome = %v, want %v", snapshot.Outcome, domain.OutcomeBlackWin)
@@ -309,13 +316,14 @@ func TestGameTimeoutIsDrawWhenOpponentHasBareKing(t *testing.T) {
 	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	now := base
 	game := newGame("game", "white", "black", time.Second, 0)
-	game.state.engine = chess.NewGame(position)
+	game.engine = chess.NewGame(position)
 	game.now = func() time.Time { return now }
-	game.state.clock = newGameClock(time.Second, 0)
-	game.state.clock.start(now)
+	game.clock = newGameClock(time.Second, 0)
+	game.clock.start(now)
 
 	now = now.Add(time.Second)
-	snapshot := game.snapshot()
+	game.expire(now)
+	snapshot := game.snapshot(game.now())
 	if snapshot.Outcome != domain.OutcomeDraw || snapshot.Termination != domain.TerminationTimeout {
 		t.Fatalf("timeout state = (%v, %v), want (%v, %v)", snapshot.Outcome, snapshot.Termination, domain.OutcomeDraw, domain.TerminationTimeout)
 	}
@@ -328,13 +336,13 @@ func TestGameMoveReturnsTimeoutStateWithoutApplyingMove(t *testing.T) {
 	now := base
 	game := newGame("game", "white", "black", time.Second, 0)
 	game.now = func() time.Time { return now }
-	game.state.clock = newGameClock(time.Second, 0)
-	game.state.clock.start(now)
-	startingFEN := game.state.engine.FEN()
+	game.clock = newGameClock(time.Second, 0)
+	game.clock.start(now)
+	startingFEN := game.engine.FEN()
 
 	now = now.Add(time.Second)
 	snapshot, err := game.move(MoveCommand{
-		GameID:    game.state.id,
+		GameID:    game.id,
 		ProfileID: "white",
 		Move:      "e2e4",
 		Notation:  MoveNotationUCI,

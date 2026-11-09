@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"ChessLI/internal/dashboard_data"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 type failingSource struct{}
@@ -45,28 +43,6 @@ func TestDashboardDisplaysLoadError(t *testing.T) {
 
 	if !strings.Contains(model.View(), "unavailable") {
 		t.Fatal("missing load error")
-	}
-	if !strings.Contains(model.View(), "r: retry") {
-		t.Fatal("missing retry instruction")
-	}
-}
-
-func TestDashboardRetriesFailedLoadWithoutDuplicateRequests(t *testing.T) {
-	model := New(failingSource{})
-	model, _ = model.Update(model.Init()())
-	retry := tea.KeyPressMsg(tea.Key{Code: 'r', Text: "r"})
-
-	model, cmd := model.Update(retry)
-	if cmd == nil || !strings.Contains(model.View(), "Loading") {
-		t.Fatal("retry did not start loading")
-	}
-	if _, duplicate := model.Update(retry); duplicate != nil {
-		t.Fatal("retry started another request while already loading")
-	}
-
-	model, _ = model.Update(cmd())
-	if !strings.Contains(model.View(), "unavailable") {
-		t.Fatal("retry did not display its result")
 	}
 }
 

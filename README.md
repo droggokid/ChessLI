@@ -8,29 +8,87 @@ type keeps its methods in one file; helper files contain independent functions.
 
 | Responsibility | Start here |
 | --- | --- |
-| Application operations and shutdown | `internal/gameplay/service.go` |
+| Application operations, gameplay locking, timers, and shutdown | `internal/gameplay/service.go` |
 | Matchmaking queue mechanics | `internal/gameplay/match_queue.go` |
-| Game rules and synchronous state transitions | `internal/gameplay/game_state.go` |
-| Game locking, timers, and expiration notifications | `internal/gameplay/game.go` |
+| Game rules and synchronous state transitions | `internal/gameplay/game.go` |
+| Clock arithmetic | `internal/gameplay/clock.go` |
 | Connection acceptance and lifetime | `internal/websocket/server.go` |
 | Socket I/O and heartbeat | `internal/websocket/session.go` |
-| Command ordering and matchmaking waiters | `internal/websocket/handler.go` |
-| Creating, joining, and resuming games | `internal/websocket/admission.go` |
+| Command ordering, matchmaking waiters, and creating/joining/resuming games | `internal/websocket/handler.go` |
 | Membership, presence, and state publication | `internal/websocket/game_sessions.go` |
 
 Wire decoding and mapping stay in `internal/websocket`; payload types live in
-`protocol/`. Persistence adapters use pgx pools and Squirrel query builders, separate
-from the in-memory gameplay runtime.
+`protocol/`. Persistence lives in `internal/persistence/game` and
+`internal/persistence/profile`. Each package owns its repository, mock, and stored
+models, using pgx pools and Squirrel query builders. A completed game includes its
+ordered moves in a JSONB array and is saved in one insert. Live gameplay remains
+in memory.
+
+Handler orders commands and outgoing queue acceptance; GameService protects game
+state and timer updates. Session writers perform the socket I/O.
+
+```mermaid
+flowchart LR
+    C[Terminal client] <-->|WebSocket| S[Session]
+    S -->|Commands| H[Handler: dispatch mutex]
+    H -->|Queue responses| S
+    H -->|Named operations| GS[GameService: gameplay mutex]
+    GS --> G[Synchronous game rules]
+    G --> CL[Clock arithmetic]
+    GS -.->|Async timeout notification| H
+```
+
+See [architecture decisions](docs/adr/), [connection recovery](docs/connection-lifecycle.md),
+and the [future roadmap](docs/roadmap.md).
+
+## System sequence
+
+A successful private game from connection to session reuse. Responses below are
+queued for delivery; messages to different clients can interleave.
+
+```mermaid
+sequenceDiagram
+    actor W as White client
+    participant S as ChessLI server
+    actor B as Black client
+
+    W->>S: Connect
+    S-->>W: connection.ready (profileId)
+    B->>S: Connect
+    S-->>B: connection.ready (profileId)
+    W->>S: game.create (White)
+    S-->>W: game.created (gameId, White)
+    Note over W,B: Share the game ID
+    B->>S: game.join (gameId)
+    Note over S: Start White's clock
+    S-->>B: game.joined (Black)
+    S-->>B: game.initial (version 0)
+    S-->>W: game.initial (version 0)
+    W->>S: game.move (e2e4, expectedVersion 0)
+    Note over S: Apply rules and update the clock and timer
+    S-->>W: game.state (version 1)
+    S-->>B: game.state (version 1)
+    Note over W,B: Continue with alternating moves and authoritative updates
+    B->>S: game.resign
+    S-->>B: game.state (finished)
+    S-->>W: game.state (finished)
+    Note over W,B: Both sessions can create, join, or match again
+```
 
 ## Terminal client
+
+`make chessli` builds and runs the server. Gameplay runs in memory, so normal
+startup does not require PostgreSQL or code generation. Run `make generate`
+explicitly when generated code needs updating; `make run-deps` starts PostgreSQL
+and applies migrations when working with persistence.
 
 Start the server with `go run ./cmd`, then run `go run ./cmd/chessli` in two
 other terminals. The TUI connects to `ws://localhost:8080/ws` and displays its
 server-assigned profile ID separately from the mocked dashboard profile.
 To start with an existing identity, run `make run-tui PROFILE_ID=YOUR_PROFILE_UUID`
 or `go run ./cmd/chessli -profile-id YOUR_PROFILE_UUID`. Omit the ID to create a
-new identity. The server validates the UUID. This selects the connection identity;
-it does not discover or resume an existing game after restarting the TUI.
+new identity. The server validates the UUID and supplies any unfinished game's ID;
+the TUI automatically resumes it. Save the displayed profile ID to return later.
 Use a terminal of at least 80 columns by 24 rows; smaller terminals show a
 resize prompt instead of a clipped board. Dashboard sample data is labeled
 in the client, and History shows an unavailable state.
@@ -55,16 +113,16 @@ the last received server values, rather than a local countdown.
 Updates continue on Dashboard and History; navigating away does not resign or
 stop server clocks. Session moves show the latest received SAN moves, with
 version labels and gaps when updates were missed. The display shows the last
-four entries; it is not a complete history, especially after reconnecting.
+four entries; it is not a complete history, especially after restarting the client.
 Dashboard statistics and History remain mocked or placeholders.
 
 Escape clears the current input before returning to Dashboard. Ordinary text
 keys, including `q`, go to the Play input. Ctrl+C quits; `q` also quits outside
-Play. Opening the client with the same profile ID automatically resumes its unfinished game.
+Play.
 Server replies preserve text edited while a request was pending. Long input
 shows its ending and cursor; the full value is submitted.
-There is no automatic reconnect. Quit forgets the placeholder identity; an
-unfinished game also disappears when the server restarts.
+There is no automatic reconnect or saved identity. Restart with the same profile
+ID to recover an unfinished game; a server restart loses that game.
 
 Only one action can be pending. A socket write does not acknowledge an action:
 the TUI waits for the server response or initial state. Missing responses and
@@ -73,15 +131,10 @@ recovery. Restart with the same profile ID to recover rather than replay actions
 including when a create or matchmaking assignment response was lost. A stale-version
 rejection also requires recovery before another move.
 
-A late matching create response clears the timeout feedback and preserves any
-edited draft. Matchmaking admission retires the entry response deadline while
-retaining its request ID for assignment. Disconnect cancels a waiting ticket;
-reopening the client never automatically requeues. If a match committed before
-disconnect, the server supplies its game ID so the client can resume it.
-
-Malformed server messages, including empty required values or invalid colors
-and statuses, are reported while receiving continues. The next valid message
-clears the connection warning. Unknown server fields remain accepted.
+Disconnect cancels a waiting ticket; reopening the client never automatically
+requeues. If pairing committed before disconnect, startup supplies the game ID
+even if the assignment response was lost. The [manual checks](docs/manual-error-testing.md#terminal-client-checks)
+cover delayed replies, recovery, and malformed server messages.
 
 ## Manual two-player flow
 
@@ -285,3 +338,7 @@ CHESSLI_TEST_DATABASE_URL='postgres://app:app@localhost:5432/app?sslmode=disable
 Use a test database whose user can create schemas. Each test creates a unique
 schema, applies the migrations, and drops the schema and records at cleanup.
 CI runs these tests against PostgreSQL 17 along with the full race suite.
+
+The initial migration now stores moves inside completed games. Databases created
+from the previous schema need to be recreated to use it. For disposable local
+data, `make reset-local-db` recreates the database, applies migrations, and seeds it.

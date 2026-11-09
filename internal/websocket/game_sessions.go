@@ -22,9 +22,15 @@ func newGameSessions() *gameSessions {
 	}
 }
 
-// Hold marks an idle session as unavailable while a game operation is in progress.
+// IsBusy reports whether the session is seated or waiting for a match.
+func (g *gameSessions) IsBusy(session *Session) bool {
+	_, exists := g.bySession[session]
+	return exists
+}
+
+// Hold reserves an idle session while matchmaking waits outside the dispatch lock.
 func (g *gameSessions) Hold(session *Session) error {
-	if _, exists := g.bySession[session]; exists {
+	if g.IsBusy(session) {
 		return protocol.ErrSessionAlreadyInGame
 	}
 
@@ -39,7 +45,8 @@ func (g *gameSessions) Release(session *Session) {
 	}
 }
 
-// Add seats a running session after Hold has established that it is available.
+// Add seats a running session after Handler has established that it is available,
+// replacing its matchmaking reservation if present.
 // A second connection for the same profile in this game is rejected.
 func (g *gameSessions) Add(gameID identity.GameID, session *Session) error {
 	if !session.running.Load() {

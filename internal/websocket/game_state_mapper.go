@@ -31,14 +31,14 @@ func mapDrawOffer(state gameplay.GameSnapshot) *protocol.DrawOfferPayload {
 		return nil
 	}
 
-	offeredBy := protocol.ColorBlack
-	if state.PendingDrawOffer.OfferedBy == state.WhiteProfileID {
-		offeredBy = protocol.ColorWhite
+	color, err := gameplay.ColorFromProfileID(state.PendingDrawOffer.OfferedBy, state.WhiteProfileID, state.BlackProfileID)
+	if err != nil {
+		return nil
 	}
 
 	return &protocol.DrawOfferPayload{
 		OfferID:   state.PendingDrawOffer.OfferID,
-		OfferedBy: offeredBy,
+		OfferedBy: mapColorFromServer(color),
 	}
 }
 

@@ -46,16 +46,16 @@ func TestGameLogsCompletionOnce(t *testing.T) {
 					t.Fatal(err)
 				}
 			case domain.TerminationTimeout:
-				now := g.state.clock.turnStartedAt.Add(time.Hour)
+				now := g.clock.turnStartedAt.Add(time.Hour)
 				g.now = func() time.Time { return now }
+				g.expire(now)
 			}
-			state := g.snapshot()
+			state := g.snapshot(g.now())
 			for range 2 {
 				if _, err := g.resume("white"); err != nil {
 					t.Fatal(err)
 				}
-				g.snapshot()
-				g.notifyExpiration(func(GameSnapshot) {})
+				g.snapshot(g.now())
 			}
 			finished := 0
 			for _, line := range bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n")) {
@@ -74,7 +74,7 @@ func TestGameLogsCompletionOnce(t *testing.T) {
 				}
 				if event.Event == "game.finished" {
 					finished++
-					if event.GameID != g.state.id || event.Outcome != state.Outcome || event.Termination != ending || event.Version != state.Version {
+					if event.GameID != g.id || event.Outcome != state.Outcome || event.Termination != ending || event.Version != state.Version {
 						t.Fatalf("completion event = %+v, state = %+v", event, state)
 					}
 				}

@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/url"
 	"sync"
 	"time"
 
-	"ChessLI/internal/identity"
 	"ChessLI/internal/tui/screens/play"
 	"ChessLI/internal/websocket/protocol"
 
@@ -22,20 +20,13 @@ import (
 const operationTimeout = 5 * time.Second
 
 type connectedMsg struct {
-	generation uint64
-	client     *websocket.Conn
-	err        error
+	client *websocket.Conn
+	err    error
 }
 
 type receivedMsg struct {
-	generation uint64
-	event      protocol.ServerEvent
-	err        error
-}
-
-type sentMsg struct {
-	generation uint64
-	result     play.SendResultMsg
+	event protocol.ServerEvent
+	err   error
 }
 
 // messageError means the frame was consumed and receiving may continue.
@@ -71,36 +62,19 @@ func (c *connection) begin() bool {
 	return true
 }
 
-func (c *connection) connect(profileID identity.ProfileID, generation uint64) tea.Cmd {
+// connect dials once at startup; the address includes any requested profile ID.
+func (c *connection) connect() tea.Cmd {
 	return func() tea.Msg {
 		if !c.begin() {
-			return connectedMsg{generation: generation, err: context.Canceled}
+			return connectedMsg{err: context.Canceled}
 		}
 		defer c.operations.Done()
 
-		c.mu.Lock()
-		old := c.client
-		c.client = nil
-		c.mu.Unlock()
-		if old != nil {
-			// A failed close of the old socket must not prevent a fresh connection.
-			_ = old.Close(websocket.StatusNormalClosure, "reconnecting")
-		}
-
-		address, err := url.Parse(c.address)
-		if err != nil {
-			return connectedMsg{generation: generation, err: err}
-		}
-		if profileID != "" {
-			query := address.Query()
-			query.Set("profileId", string(profileID))
-			address.RawQuery = query.Encode()
-		}
 		ctx, cancel := context.WithTimeout(c.ctx, operationTimeout)
 		defer cancel()
-		client, _, err := websocket.Dial(ctx, address.String(), nil)
+		client, _, err := websocket.Dial(ctx, c.address, nil)
 		if err != nil {
-			return connectedMsg{generation: generation, err: fmt.Errorf("connect: %w", err)}
+			return connectedMsg{err: fmt.Errorf("connect: %w", err)}
 		}
 
 		c.mu.Lock()
@@ -111,39 +85,39 @@ func (c *connection) connect(profileID identity.ProfileID, generation uint64) te
 		c.mu.Unlock()
 		if closed {
 			_ = closeSocket(client)
-			return connectedMsg{generation: generation, err: context.Canceled}
+			return connectedMsg{err: context.Canceled}
 		}
-		return connectedMsg{generation: generation, client: client}
+		return connectedMsg{client: client}
 	}
 }
 
 // receive is chained by Update so only one command reads a socket at a time.
-func (c *connection) receive(client *websocket.Conn, generation uint64) tea.Cmd {
+func (c *connection) receive(client *websocket.Conn) tea.Cmd {
 	return func() tea.Msg {
 		if !c.begin() {
-			return receivedMsg{generation: generation, err: context.Canceled}
+			return receivedMsg{err: context.Canceled}
 		}
 		defer c.operations.Done()
 		kind, data, err := client.Read(c.ctx)
 		if err != nil {
-			return receivedMsg{generation: generation, err: fmt.Errorf("receive: %w", err)}
+			return receivedMsg{err: fmt.Errorf("receive: %w", err)}
 		}
 		if kind != websocket.MessageText {
-			return receivedMsg{generation: generation, err: &messageError{Err: errors.New("expected a text message")}}
+			return receivedMsg{err: &messageError{Err: errors.New("expected a text message")}}
 		}
 		event, err := protocol.DecodeServerEvent(data)
 		if err != nil {
 			err = &messageError{Err: err}
 		}
-		return receivedMsg{generation: generation, event: event, err: err}
+		return receivedMsg{event: event, err: err}
 	}
 }
 
 // send reports socket write success, not server acceptance.
-func (c *connection) send(client *websocket.Conn, generation uint64, request play.RequestMsg) tea.Cmd {
+func (c *connection) send(client *websocket.Conn, request play.RequestMsg) tea.Cmd {
 	return func() tea.Msg {
 		if !c.begin() {
-			return sentMsg{generation: generation, result: play.SendResultMsg{RequestID: request.RequestID, Err: context.Canceled}}
+			return play.SendResultMsg{RequestID: request.RequestID, Err: context.Canceled}
 		}
 		defer c.operations.Done()
 		ctx, cancel := context.WithTimeout(c.ctx, operationTimeout)
@@ -156,7 +130,7 @@ func (c *connection) send(client *websocket.Conn, generation uint64, request pla
 		}); err != nil {
 			err = fmt.Errorf("send: %w", err)
 		}
-		return sentMsg{generation: generation, result: play.SendResultMsg{RequestID: request.RequestID, Err: err}}
+		return play.SendResultMsg{RequestID: request.RequestID, Err: err}
 	}
 }
 

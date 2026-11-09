@@ -32,18 +32,8 @@ A former participant can use `game.resume` to load a finished game's final
 read-only state. This does not occupy a game session or mark either player
 connected.
 
-State publication and admission are ordered so a delayed operation cannot
-publish active state after a finished state or occupy a finished game.
-An acting player's stopped connection, full queue, or canceled request does
-not suppress the opponent's delivery attempt. Delivery is still best effort;
-queue acceptance does not confirm receipt.
-The same independent peer-delivery rule covers committed joins and presence
-updates during resume and matchmaking. A failed acknowledgement does not roll
-back a committed game or suppress that peer update.
-
-During matchmaking, an initial state may show the opponent as disconnected
-until that opponent's result is processed. An unsolicited `game.state` then
-reports the updated presence.
+See [connection recovery](connection-lifecycle.md) for resume, matchmaking races,
+and delivery limits. Queue acceptance does not confirm receipt.
 
 The expected-error examples below show the `payload` portion of the server's
 `error` envelope.
@@ -59,8 +49,8 @@ reports that it is unavailable.
 To start with a known identity, run `make run-tui PROFILE_ID=YOUR_PROFILE_UUID`
 or `go run ./cmd/chessli -profile-id YOUR_PROFILE_UUID`. Check that the displayed
 profile ID matches. Without an ID, a new identity is created; an invalid UUID is
-rejected by the server. Selecting an identity does not discover or resume an
-existing game after restarting the TUI.
+rejected by the server. If that identity has an unfinished game, startup should
+discover it through `activeGameId`, request resume, and display its initial state.
 
 Alternatively, enter `/match` in both clients to use the 10+0 matchmaking pool.
 The first client should wait indefinitely for an opponent; navigating to

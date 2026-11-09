@@ -1,4 +1,4 @@
-package persistence
+package profile
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"ChessLI/internal/identity"
 )
 
-func TestProfileRepositoryRejectsInvalidProfileID(t *testing.T) {
-	repository := NewProfileRepository(nil)
+func TestRepositoryRejectsInvalidProfileID(t *testing.T) {
+	repository := NewRepository(nil)
 
 	if _, err := repository.GetProfileByID(context.Background(), identity.ProfileID("invalid")); err == nil {
 		t.Fatal("GetProfileByID() error = nil, want invalid profile ID error")

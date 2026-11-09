@@ -140,6 +140,7 @@ func TestGameStatePayload(t *testing.T) {
 		FEN:            "fen",
 		Version:        3,
 		WhiteProfileID: "white",
+		BlackProfileID: "black",
 		LastMoveSAN:    "Qh4#",
 		Outcome:        game.OutcomeBlackWin,
 		Termination:    game.TerminationCheckmate,
@@ -162,6 +163,10 @@ func TestGameStatePayload(t *testing.T) {
 	}
 	if got.PendingDrawOffer == nil || got.PendingDrawOffer.OfferID != "offer" || got.PendingDrawOffer.OfferedBy != protocol.ColorWhite {
 		t.Fatalf("gameStatePayload() draw offer = %+v, want white offer", got.PendingDrawOffer)
+	}
+	state.PendingDrawOffer.OfferedBy = "black"
+	if offer := mapDrawOffer(state); offer == nil || offer.OfferedBy != protocol.ColorBlack {
+		t.Fatalf("draw offer = %+v, want black offer", offer)
 	}
 }
 

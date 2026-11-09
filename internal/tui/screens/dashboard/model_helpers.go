@@ -31,6 +31,6 @@ func overviewView(data dashboard_data.Overview) string {
 		}
 	}
 
-	content.WriteString("\nEnter: open Play Chess  r: refresh")
+	content.WriteString("\nEnter: open Play Chess")
 	return content.String()
 }

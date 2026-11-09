@@ -45,47 +45,20 @@ type pendingAction struct {
 }
 
 type Model struct {
-	gameID         identity.GameID
-	color          protocol.Color
-	state          *protocol.GameStatePayload
-	position       *chess.Position
-	moves          []string
-	input          string
-	pending        pendingAction
-	sequence       uint64
-	action         actionStatus
-	recoveryTarget identity.GameID // Retained only after a rejected resume.
-	message        string
+	gameID   identity.GameID
+	color    protocol.Color
+	state    *protocol.GameStatePayload
+	position *chess.Position
+	moves    []string
+	input    string
+	pending  pendingAction
+	sequence uint64
+	action   actionStatus
+	message  string
 }
 
 func (m *Model) HasInput() bool                  { return m.input != "" }
 func (m *Model) IsPending(requestID string) bool { return m.pending.id == requestID && requestID != "" }
-
-// Recover uses a fresh connection; game.resume cannot use an occupied session.
-func (m *Model) Recover() (*Model, tea.Cmd) {
-	if m.pending.kind == protocol.ClientCreateGame {
-		m.message = "Create outcome unknown; no game ID received. Restart the TUI before creating another game."
-		return m, nil
-	}
-	if m.pending.kind == protocol.ClientEnterMatchmaking && m.pending.gameID == "" {
-		m.message = "Matchmaking outcome unknown; no game ID received. Restart the TUI before entering matchmaking again."
-		return m, nil
-	}
-	gameID := m.recoveryTarget
-	if gameID == "" {
-		gameID = m.gameID
-	}
-	if m.pending.kind == protocol.ClientJoinGame || m.pending.kind == protocol.ClientResumeGame {
-		gameID = m.pending.gameID
-	}
-	if gameID == "" {
-		if m.action == actionIdle {
-			m.message = ""
-		}
-		return m, nil
-	}
-	return m.request(protocol.ClientResumeGame, gameID, protocol.ResumeGamePayload{GameID: gameID})
-}
 
 func (m *Model) Update(msg tea.Msg, ready bool) (*Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -208,7 +181,6 @@ func (m *Model) request(kind protocol.ClientMessageType, gameID identity.GameID,
 	m.sequence++
 	id := fmt.Sprintf("tui-%d", m.sequence)
 	m.pending = pendingAction{id: id, kind: kind, gameID: gameID, input: m.input}
-	m.recoveryTarget = ""
 	m.action = actionAwaiting
 	m.message = ""
 	request := RequestMsg{Type: kind, RequestID: id, Payload: payload}
@@ -219,9 +191,8 @@ func (m *Model) event(event protocol.ServerEvent) (*Model, tea.Cmd) {
 	if event.Ready != nil {
 		// The server knows the game even when its creation response was lost.
 		m.clearPending()
-		m.recoveryTarget = event.Ready.ActiveGameID
-		if m.recoveryTarget != "" {
-			return m.Recover()
+		if gameID := event.Ready.ActiveGameID; gameID != "" {
+			return m.request(protocol.ClientResumeGame, gameID, protocol.ResumeGamePayload{GameID: gameID})
 		}
 		m.message = ""
 		return m, nil
@@ -230,7 +201,6 @@ func (m *Model) event(event protocol.ServerEvent) (*Model, tea.Cmd) {
 		m.message = fmt.Sprintf("%s: %s", event.Error.Code, event.Error.Message)
 		if m.IsPending(event.RequestID) {
 			recovery := m.pending.kind == protocol.ClientResumeGame
-			target := m.pending.gameID
 			m.clearPending()
 			if recovery || event.Error.Code == protocol.ErrorStaleGameVersion {
 				m.action = actionRecoveryRequired
@@ -242,8 +212,6 @@ func (m *Model) event(event protocol.ServerEvent) (*Model, tea.Cmd) {
 					m.position = nil
 					m.moves = nil
 					m.action = actionIdle
-				} else {
-					m.recoveryTarget = target
 				}
 			}
 			if m.action == actionRecoveryRequired {
@@ -313,7 +281,7 @@ func (m *Model) event(event protocol.ServerEvent) (*Model, tea.Cmd) {
 	}
 	m.position = chess.NewGame(fen).Position()
 
-	// Only received moves are known; reconnects and skipped versions may leave gaps.
+	// Only received moves are known; startup resume and skipped versions may leave gaps.
 	if m.state != nil && state.Version > m.state.Version && state.FEN != m.state.FEN && state.LastMove != "" {
 		if state.Version-m.state.Version > 1 {
 			m.moves = append(m.moves, "… missing updates …")
@@ -328,8 +296,8 @@ func (m *Model) event(event protocol.ServerEvent) (*Model, tea.Cmd) {
 	m.state = state
 	acknowledged := m.IsPending(event.RequestID) && (m.pending.kind == protocol.ClientMakeMove || m.pending.kind == protocol.ClientResign)
 	initialTarget := m.pending.gameID == m.gameID && (m.pending.kind == protocol.ClientJoinGame || m.pending.kind == protocol.ClientResumeGame || m.pending.kind == protocol.ClientEnterMatchmaking)
-	initialized := event.Type == protocol.ServerGameInitial && (initialTarget || m.recoveryTarget == m.gameID)
-	finished := state.Status == protocol.GameStatusFinished && (m.pending.gameID == m.gameID || m.recoveryTarget == m.gameID || m.pending.id == "" && !wasFinished)
+	initialized := event.Type == protocol.ServerGameInitial && initialTarget
+	finished := state.Status == protocol.GameStatusFinished && (m.pending.gameID == m.gameID || m.pending.id == "" && !wasFinished)
 	if acknowledged || initialized || finished {
 		m.acknowledge()
 		m.message = ""
@@ -354,5 +322,4 @@ func (m *Model) acknowledge() {
 func (m *Model) clearPending() {
 	m.pending = pendingAction{}
 	m.action = actionIdle
-	m.recoveryTarget = ""
 }

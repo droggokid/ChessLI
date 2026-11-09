@@ -2,52 +2,71 @@
 
 Status: Accepted.
 
-## Context and decision
+## Decision
 
-Connections, matchmaking, clocks, and notifications outlive individual calls.
-Each goroutine, timer, and asynchronous callback has a clear lifecycle owner,
-a termination condition, and cleanup appropriate to that lifetime. Graceful
-shutdown waits for the work covered by its contract.
+`GameService` uses one mutex for games, matchmaking, timer metadata, and
+notification registration. Public operations and background callbacks acquire
+it; private helpers run under their caller's lock. Each `game` executes rules
+synchronously, without its own mutex or goroutine.
 
-Operation contexts propagate cancellation and deadlines, not configuration or
-dependencies. Canceling an operation eventually releases its owned resources
-without canceling unrelated component work. Caller/request contexts and their
-values are not retained by long-lived components after the operation ends.
-Independent component work has an explicitly owned lifetime instead of silently
-discarding a caller's cancellation. Cancellation controls queued matchmaking,
-network and database I/O, and shutdown. Synchronous in-memory game operations
-finish once dispatched; they do not poll caller cancellation before each state
-change. Once committed, an action is not rolled back by a disconnect.
+State changes and timer replacement share a critical section. Timer generations
+reject callbacks from replaced or stopped timers. Client version checks reject
+stale moves. Snapshots copy state at an explicit time; commands, timer callbacks,
+and `GameState` explicitly settle elapsed clocks. Timeout notification is
+registered once and runs asynchronously, allowing the handler to finish its
+current command before publishing the update.
 
-The lifecycle contracts are:
+Ownership and shutdown:
 
-- Session execution returns only after its owned I/O and heartbeat loops stop.
-  Shutdown safely stops concurrent producers and consumers without leaving
-  session-owned work running or allowing sends to a closed channel.
-- Server shutdown cancels connection lifetimes and waits for active handlers,
-  subject to the shutdown context's deadline.
-- Stopping or replacing a game timer prevents its stale expiration from
-  changing the game. Successful matchmaking releases cancellation cleanup
-  associated with waiting.
-- Gameplay expiration notifications are asynchronous: service operations do
-  not wait for handlers that may call back into transport. Handlers are finite
-  or cancelable. Service shutdown stops new notifications and timers and joins
-  started notification handlers. In the current API, `GameService.Close` is
-  called after application operations stop, never from a notification handler.
-- After a committed action, the acting request's cancellation does not suppress
-  finite, non-blocking peer notification attempts
-  ([ADR 0003](0003-message-delivery-semantics.md)). That independent lifetime
-  does not extend to network I/O, which remains session-owned.
+- `Session` owns socket I/O and heartbeat loops and joins them before returning.
+- `Handler` owns command/publication ordering, membership, and matchmaking
+  waiters. Its dispatch mutex covers outgoing queue acceptance, including
+  [committed peer updates](0003-message-delivery-semantics.md).
+- `Server` cancels connections and joins connection handlers and matchmaking
+  waiters, bounded by its shutdown context.
+- `GameService` owns timers and matchmaking cancellation. After application
+  calls stop, `Close` stops timers and joins started notification handlers.
+  Notification handlers must finish and must not call `Close` themselves.
 
-In the current implementation, `game` owns locking and timers around synchronous
-`gameState` rules. `GameService` owns the matchmaking queue's cancellation work.
-`Handler` owns command ordering and matchmaking waiters; its private admission
-component owns no separate lock or goroutine.
+Contexts cancel queued matchmaking and network/database I/O. Synchronous game
+operations finish once dispatched; cancellation does not roll back a committed
+action. Long-lived queue entries retain cancellation signals, not caller
+context values.
 
-## Rationale and trade-offs
+The following shows a current timer reaching its deadline. Stale timer callbacks
+return without changing the game. Callback completion and notification execution
+are independent; the notification can wait for Handler's current command to finish.
 
-Relying on process exit hides leaks and makes shutdown unreliable. Explicit
-ownership costs cancellation and joining logic, but makes resource release
-testable. Contexts and owned shutdown signals can both serve these contracts;
-no particular channel, mutex, or cancellation helper is required, and unrelated
-concurrent outcomes need not have a fixed order.
+```mermaid
+sequenceDiagram
+    participant T as Timer callback
+    participant S as GameService
+    participant G as game
+    participant N as Notification goroutine
+    participant H as Handler
+    participant Q as Session queues
+
+    T->>S: expireFromTimer(game, timerId)
+    Note over S: Acquire gameplay mutex and validate timer generation
+    S->>G: expire(now)
+    G-->>S: Timeout committed
+    S->>S: Mark notified and stop timer
+    S->>G: snapshot(now)
+    G-->>S: Terminal snapshot
+    S-->>N: Start asynchronous notification
+    par Callback completes
+        S-->>T: Release gameplay mutex and return
+    and Notification runs
+        N->>H: Publish(snapshot)
+        Note over H: Acquire dispatch mutex, may wait for a command
+        H->>Q: Queue terminal game.state for both players
+        H->>H: Release game membership and dispatch mutex
+    end
+```
+
+## Rationale
+
+One gameplay mutex simplifies state and timer ownership at the cost of
+serializing different games. The handler already serializes WebSocket commands.
+Network and database I/O stay outside gameplay operations. Revisit independent
+game execution if measured contention warrants more synchronization.

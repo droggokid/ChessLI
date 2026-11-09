@@ -13,7 +13,7 @@ type drawOfferState struct {
 	lastOfferedAt map[identity.ProfileID]time.Time
 }
 
-// offer records a pending offer after gameState has checked participant eligibility.
+// offer records a pending offer after game has checked participant eligibility.
 func (d *drawOfferState) offer(profileID identity.ProfileID, now time.Time) error {
 	if d.pending != nil {
 		return ErrDrawOfferPending

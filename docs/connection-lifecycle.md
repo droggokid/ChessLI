@@ -1,97 +1,94 @@
-# Connection and matchmaking lifecycle
+# Connections, Matchmaking, and Recovery
 
-This describes the current in-memory WebSocket behavior. A connection is a
-`Session`; a profile ID identifies a player across connections; a game remains
-in gameplay memory independently of either connection.
+Games live in server memory independently of their WebSocket connections.
+A profile ID is a placeholder identity, not authentication.
 
-## Connecting and detecting a lost connection
+## Startup and resume
 
-- `GET /ws` accepts a WebSocket and sends `connection.ready` with a `profileId`.
-  With `?profileId=PROFILE_ID`, the server reuses that ID; otherwise it creates
-  a new one. The ID is a placeholder identity, not authentication.
-  The session writes this acknowledgement before processing commands, with a
-  10-second deadline and the same shutdown cancellation as the connection.
-- Reusing a profile ID does not close an older connection. The server rejects
-  a second queue entry for that profile and a second session in the same game;
-  it does not automatically transfer the old session's place to the new one.
-- Each session reads client messages, writes queued server messages, and sends
-  WebSocket pings every 30 seconds with a 10-second timeout. A read, write, or
-  ping failure, a normal close, or server shutdown ends the session. A silent
-  network loss is noticed when an I/O operation or heartbeat fails, not
-  necessarily at the moment the link drops.
-- When the session ends, its operations are canceled and the handler removes it from
-  the live game-session registry. If it belonged to a game, the remaining
-  connected player is sent an unsolicited `game.state` showing
-  `connected: false` for that profile. Disconnecting does not resign or end
-  the game.
+`GET /ws` sends `connection.ready` before processing commands. It contains a
+new `profileId`, or the ID supplied in `?profileId=PROFILE_ID`, and an optional
+`activeGameId` for that profile's unfinished game. The initial write has a
+10-second deadline and is canceled on server shutdown.
 
-## Disconnecting around matchmaking
-
-1. `matchmaking.enter` reserves the session and queues the profile in a pool
-   for the exact time control. The server queues `matchmaking.entered` in reply.
-   There is no separate cancel message; closing the connection cancels its
-   waiting entry once the server detects the close. A later player should not
-   match against an entry already removed for cancellation.
-2. When another player enters the same pool, gameplay removes the waiting
-   entry and creates a game for both profiles. Its clock starts immediately.
-   Each live session then independently processes its match result, registers
-   with the game, and queues `matchmaking.found` followed by `game.initial`.
-   One player's initial state may briefly show the other as disconnected;
-   registration of the second player sends a later `game.state` to the first.
-3. If a connection drops just as pairing happens, the outcome depends on
-   whether cancellation is observed before the match is created. Before match
-   creation, the waiting entry is removed. After match creation, the game is
-   **not** canceled or requeued: the surviving player can receive the match
-   and see the other player disconnected. A result or outgoing message queued
-   for the lost connection is not proof that it received the game ID.
-
-There is no automatic rematch, disconnect grace period, or automatic resume.
-A player who lost the connection after a match was created must know both the
-same `profileId` and the `gameId` to resume it. If the disconnect happened
-before the client received the game ID and it has no other way to obtain it,
-the current WebSocket API cannot discover that match by profile ID.
-
-## Disconnecting during a game and resuming
-
-The game, its moves, and its clock continue in memory while a player is away.
-The opponent can keep playing; the disconnected player's turn can time out.
-To return, open `/ws?profileId=PROFILE_ID` and send:
+Restart the TUI with `make run-tui PROFILE_ID=PROFILE_ID` to discover and resume
+that game automatically. The running TUI does not reconnect automatically.
+A raw WebSocket client uses the supplied game ID explicitly:
 
 ```json
 {"type":"game.resume","requestId":"resume-1","payload":{"gameId":"GAME_ID"}}
 ```
 
-For an active game, the returning player receives `game.resumed` and the
-current `game.initial` snapshot. The opponent receives an unsolicited
-`game.state` with `connected: true`. A finished game can be resumed as a
-read-only final snapshot without registering the session as connected to it.
-When a game finishes, live sessions are released for new games. Opening a new
-connection with the same profile ID alone does not resume a game.
+An active resume returns `game.resumed`, then `game.initial`; the opponent gets
+an unsolicited `game.state` showing the player online. A former participant can
+also resume a known finished game as a read-only final snapshot. Finished games
+are not supplied as `activeGameId` and do not occupy a live session.
+
+One profile may have only one unfinished game or waiting matchmaking entry.
+Reusing an ID does not close the older connection or transfer its seat. Close
+the old client before resuming from another connection.
+
+## Disconnects
+
+Disconnecting does not resign: clocks and play continue. The remaining player
+receives `game.state` with the departing player's `connected` value set to false.
+Native WebSocket pings run every 30 seconds with a 10-second timeout; a silent
+network loss is detected by failed I/O or heartbeat rather than immediately.
+There is no disconnect grace period or automatic rematch.
+
+## Matchmaking races
+
+A waiting entry is canceled when its connection ends. Reopening the client does
+not requeue it. Pairing commits a game whose clock starts immediately, and each
+client receives `matchmaking.found` followed by `game.initial`. The first initial
+state may show the other player offline until its registration is published.
+
+This example admits the first client before the second; either order is valid.
+Each client always gets its entry acknowledgement before assignment and initial
+state. Waiters acquire the dispatch mutex before registration and publication.
+
+```mermaid
+sequenceDiagram
+    actor A as First client
+    participant H as Handler
+    participant S as GameService
+    actor B as Second client
+
+    A->>H: matchmaking.enter
+    H->>S: EnterMatchmaking
+    S-->>H: Pending ticket
+    H-->>A: matchmaking.entered
+    Note over H: Waiter retains reservation and waits outside dispatch mutex
+    alt First client disconnects before pairing
+        A->>H: Connection ends
+        Note over H,S: Cancellation ends the waiter and removes the queue entry
+        H->>H: Release session reservation
+    else Second client enters the same pool
+        B->>H: matchmaking.enter
+        H->>S: EnterMatchmaking
+        S->>S: Create game, start clock, fill both buffered tickets
+        S-->>H: Ready ticket
+        H-->>B: matchmaking.entered
+        Note over H: Each waiter reads current state and registers its player
+        H-->>A: matchmaking.found (gameId, color)
+        H-->>A: game.initial (opponent initially offline)
+        H-->>B: matchmaking.found (gameId, opposite color)
+        H-->>B: game.initial (both online)
+        H-->>A: game.state (opponent online)
+    end
+```
+
+If disconnect happens after pairing commits, the game remains. Restarting with
+the same profile ID discovers it through `activeGameId`, including when the
+assignment response was lost. Cancellation before pairing removes the waiting
+entry. One player's disconnect does not cancel the surviving player's game.
 
 ## Delivery and restart limits
 
-Server messages use a bounded outgoing queue. A successful enqueue does not
-confirm a socket write or client receipt, and a message racing with disconnect
-may be lost. After a join or presence change commits, the peer update is attempted
-even if the acting player's acknowledgement cannot be queued or its operation
-is canceled. Live games, matchmaking entries, and sessions are in memory; a
-server restart does not recover an unfinished game or its queue.
+Queue acceptance does not confirm receipt, so clients must recover an unknown
+outcome rather than replay the action. Committed peer updates are attempted even
+if the source response fails. Terminal publication releases sessions for another
+game. See [delivery decisions](adr/0003-message-delivery-semantics.md).
 
-## Ownership and shutdown
-
-`Server` accepts connections, cancels their lifetimes, and waits for connection
-handlers and the handler's pending matchmaking work. `Session` owns its initial
-acknowledgement, read/write/heartbeat loops, and socket closure. `Handler` owns
-admission, membership, disconnect publication, and automatic-state publication.
-Gameplay owns matching, clocks, and expiration callbacks.
-
-All membership access and publication use the handler's single dispatch mutex,
-including matchmaking cancellation cleanup. The private session registry has no
-separate mutex. Socket writes happen outside dispatch, and gameplay retains its
-own locks for concurrent application callers. Shutdown joins matchmaking waiters
-after connections stop; a disconnect alone does not wait for unrelated matches.
-
-Implementation: `internal/websocket/server.go`, `session.go`,
-`handler.go`, `admission.go`, and `game_sessions.go`;
-`internal/gameplay/service.go`, `match_queue.go`, and `game.go`. Synchronous game
-rules live in `game_state.go`, behind the game runtime's mutex.
+A server restart loses live games, matchmaking entries, and sessions. Persistence
+adapters exist but are not wired into gameplay. Component ownership and shutdown
+are described in [ADR 0002](adr/0002-lifecycle-and-cancellation.md).

@@ -3,6 +3,7 @@ package gameplay
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,28 +93,78 @@ func TestGameServicePrivateGameLifecycle(t *testing.T) {
 	}
 }
 
+func TestGameServiceConcurrentSnapshotsAndMoves(t *testing.T) {
+	service := NewGameService()
+	defer service.Close()
+	ctx := context.Background()
+	created, err := service.CreatePrivateGame(ctx, CreatePrivateCommand{
+		ProfileID: "white", Initial: time.Minute, ColorPreference: ColorWhite,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.JoinPrivateGame(ctx, JoinPrivateCommand{GameID: created.GameID, ProfileID: "black"}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	var readers sync.WaitGroup
+	defer readers.Wait()
+	for range 2 {
+		readers.Go(func() {
+			<-start
+			for range 8 {
+				state, err := service.GameState(ctx, created.GameID)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if state.GameID != created.GameID || state.FEN == "" {
+					t.Errorf("incomplete snapshot: %+v", state)
+				}
+			}
+		})
+	}
+	close(start)
+	for i, move := range []string{"e2e4", "e7e5", "g1f3", "b8c6"} {
+		player := identity.ProfileID("white")
+		if i%2 != 0 {
+			player = "black"
+		}
+		state, err := service.MakeMove(ctx, MoveCommand{
+			GameID: created.GameID, ProfileID: player, Move: move, ExpectedVersion: uint64(i),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Version != uint64(i+1) {
+			t.Fatalf("move %s returned version %d", move, state.Version)
+		}
+	}
+}
+
 func TestGameServiceResumeGame(t *testing.T) {
 	t.Parallel()
 
 	service := NewGameService()
 	game := newReadyGame()
-	service.games[game.state.id] = game
+	service.games[game.id] = game
 
 	for _, profileID := range []identity.ProfileID{"white", "black"} {
 		state, err := service.ResumeGame(context.Background(), ResumeGameCommand{
-			GameID:    game.state.id,
+			GameID:    game.id,
 			ProfileID: profileID,
 		})
 		if err != nil {
 			t.Fatalf("ResumeGame(%q) error = %v", profileID, err)
 		}
-		if state.GameID != game.state.id {
-			t.Fatalf("ResumeGame(%q) game ID = %q, want %q", profileID, state.GameID, game.state.id)
+		if state.GameID != game.id {
+			t.Fatalf("ResumeGame(%q) game ID = %q, want %q", profileID, state.GameID, game.id)
 		}
 	}
 
 	_, err := service.ResumeGame(context.Background(), ResumeGameCommand{
-		GameID:    game.state.id,
+		GameID:    game.id,
 		ProfileID: "spectator",
 	})
 	if !errors.Is(err, ErrNotParticipant) {
@@ -198,14 +249,14 @@ func TestGameServiceNotifiesTimeoutDetectedByCommandsOrState(t *testing.T) {
 			game := newReadyGame()
 			now := time.Now()
 			game.now = func() time.Time { return now }
-			game.state.clock = newGameClock(time.Second, 0)
-			game.state.clock.start(now)
-			service.games[game.state.id] = game
+			game.clock = newGameClock(time.Second, 0)
+			game.clock.start(now)
+			service.games[game.id] = game
 			now = now.Add(time.Second)
 
 			expired := make(chan GameSnapshot, 1)
 			service.SetGameExpiredHandler(func(state GameSnapshot) { expired <- state })
-			_ = tt.act(service, game.state.id)
+			_ = tt.act(service, game.id)
 
 			select {
 			case state := <-expired:
@@ -215,7 +266,7 @@ func TestGameServiceNotifiesTimeoutDetectedByCommandsOrState(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("timeout did not notify")
 			}
-			_ = tt.act(service, game.state.id)
+			_ = tt.act(service, game.id)
 			select {
 			case state := <-expired:
 				t.Fatalf("duplicate timeout notification = %+v", state)
@@ -233,18 +284,18 @@ func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
 		{
 			name: "resign",
 			act: func(service *GameService, game *game) error {
-				_, err := service.Resign(context.Background(), ResignCommand{GameID: game.state.id, ProfileID: "white"})
+				_, err := service.Resign(context.Background(), ResignCommand{GameID: game.id, ProfileID: "white"})
 				return err
 			},
 		},
 		{
 			name: "accept draw",
 			act: func(service *GameService, game *game) error {
-				state, err := service.OfferDraw(context.Background(), OfferDrawCommand{GameID: game.state.id, ProfileID: "white"})
+				state, err := service.OfferDraw(context.Background(), OfferDrawCommand{GameID: game.id, ProfileID: "white"})
 				if err != nil {
 					return err
 				}
-				_, err = service.AcceptDraw(context.Background(), DrawOfferResponseCommand{GameID: game.state.id, ProfileID: "black", OfferID: state.PendingDrawOffer.OfferID})
+				_, err = service.AcceptDraw(context.Background(), DrawOfferResponseCommand{GameID: game.id, ProfileID: "black", OfferID: state.PendingDrawOffer.OfferID})
 				return err
 			},
 		},
@@ -254,16 +305,18 @@ func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			service := NewGameService()
 			game := newReadyGame()
-			service.games[game.state.id] = game
-			game.scheduleExpiration(func(GameSnapshot) {})
+			service.games[game.id] = game
+			service.mu.Lock()
+			service.scheduleExpiration(game)
+			service.mu.Unlock()
 
 			if err := tt.act(service, game); err != nil {
 				t.Fatalf("terminal action error = %v", err)
 			}
 
-			game.mu.Lock()
+			service.mu.Lock()
 			timer := game.expirationTimer
-			game.mu.Unlock()
+			service.mu.Unlock()
 			if timer != nil {
 				t.Fatal("terminal action left expiration timer running")
 			}
@@ -370,9 +423,9 @@ func TestGameServiceMatchmakingStopsCancellationCleanupAfterMatch(t *testing.T) 
 	}
 
 	key := timeControlKey{initial: time.Minute}
-	service.mu.RLock()
+	service.mu.Lock()
 	waiting := service.queue[key]
-	service.mu.RUnlock()
+	service.mu.Unlock()
 	if waiting == nil || waiting.stopCleanup == nil {
 		t.Fatal("queued player has no cancellation cleanup")
 	}
@@ -384,9 +437,9 @@ func TestGameServiceMatchmakingStopsCancellationCleanupAfterMatch(t *testing.T) 
 	receiveMatch(t, first.Result)
 	receiveMatch(t, second.Result)
 
-	service.mu.RLock()
+	service.mu.Lock()
 	cleanup := waiting.stopCleanup
-	service.mu.RUnlock()
+	service.mu.Unlock()
 	if cleanup != nil {
 		t.Fatal("matched player still has a cancellation cleanup")
 	}
@@ -473,9 +526,9 @@ func TestGameServiceMatchmakingRemovesCanceledPlayer(t *testing.T) {
 		t.Fatal("canceled matchmaking ticket was not closed")
 	}
 
-	service.mu.RLock()
+	service.mu.Lock()
 	remaining := len(service.queue)
-	service.mu.RUnlock()
+	service.mu.Unlock()
 	if remaining != 0 {
 		t.Fatalf("waiting player count = %d, want 0", remaining)
 	}

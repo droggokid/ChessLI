@@ -2,44 +2,34 @@
 
 Status: Accepted.
 
-## Context and decision
+## Decision
 
-Use PostgreSQL for durable application data, Squirrel for parameterized SQL,
-and pgx pools for database access. This supersedes the original sqlc choice.
-The database is the intended authority for profiles and completed
-games. Live games, clocks, matchmaking, and sessions stay in memory; a restart
-does not recover unfinished games.
+Use PostgreSQL, pgx pools, and Squirrel query builders for durable profiles and
+completed games. Live games, clocks, and matchmaking remain in memory; a restart
+does not recover unfinished play.
 
-Store completed games as immutable records of players, time control, terminal
-outcome, termination reason, final position, and move history. Derive player
-matchup history from those records rather than duplicating it in another table.
+`internal/persistence/game` and `internal/persistence/profile` each own a
+`Repository`, `RepositoryImpl`, generated mock, and storage models. Driver and
+JSON representations stay inside those packages.
 
-Storage operations use domain identifiers and models; driver representations
-are translated at the adapter boundary. Interface
-ownership, mock generation, and internal adapter layout are implementation
-choices.
+A completed-game row stores players, time control, terminal outcome/reason,
+final position, completion time, and an ordered JSONB moves array. Each move
+includes its ply, UCI notation, and both remaining clocks in milliseconds.
+`CreateGame` saves the whole record in one insert; `GetGameByID` loads it with
+its moves. Constraints validate players, time controls, outcomes, and moves.
+Player history is derived from these records.
 
-A database outage must not undo game completion or prevent final-state
-publication to connected players. Initial persistence failures are logged;
-reliable retry and active-game recovery remain separate future decisions.
-Publication still has the delivery limits in
-[ADR 0003](0003-message-delivery-semantics.md).
+## Rationale and current status
 
-## Rationale and trade-offs
+Squirrel keeps parameterized SQL reviewable without generated query code.
+Moves share the immutable game's lifetime, so embedding them makes saving atomic.
+Per-move queries are less direct; current queries load whole games or summaries.
 
-The initial queries are known: create/read profiles, save completed games,
-list a player's games, and load a game. Reviewable SQL fits
-these needs without a generic repository. Squirrel keeps query construction
-inside the adapters and removes the generated query layer; PostgreSQL integration
-tests check SQL behavior instead of sqlc's compile-time checks. Keeping
-live play in memory simplifies clocks and matchmaking, at the cost of restart
-loss and no guaranteed durable completion during an outage.
+The schema, seed, repositories, and PostgreSQL integration tests exist.
+Application wiring, authentication, completion persistence, and retry are still
+future work; the running server uses placeholder identities and memory only.
+When storage is wired in, failures must not undo game completion or prevent
+final-state delivery. See the [roadmap](../roadmap.md).
 
-## Implementation status
-
-The schema and adapters exist, but `cmd/main.go` does not yet wire
-persistence into gameplay. WebSocket profile IDs remain placeholder identities.
-Completed-game and move writes are currently separate operations, not an atomic
-save of the whole record. This decision describes the storage boundary and
-failure policy; it does not claim those integration or durability gaps are
-already solved.
+The initial migration reflects this layout. Existing development databases need
+recreation to adopt it; editing an applied migration does not rerun it.

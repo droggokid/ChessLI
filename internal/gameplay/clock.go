@@ -7,7 +7,7 @@ import (
 )
 
 // gameClock receives White or Black from the engine and monotonic game times.
-// gameState starts it once when both seats are filled, and moves/stops it while running.
+// game starts it once when both seats are filled, and moves/stops it while running.
 type gameClock struct {
 	whiteRemaining time.Duration
 	blackRemaining time.Duration

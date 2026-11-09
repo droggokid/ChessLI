@@ -9,7 +9,7 @@ endif
 
 help:
 	@echo "Available targets:"
-	@echo "  make chessli - generate, build, start PostgreSQL, migrate, and run"
+	@echo "  make chessli - build and run the WebSocket server"
 	@echo "  make reset-local-db - recreate PostgreSQL data, migrate, and seed it"
 	@echo "  make run    - run the WebSocket server"
 	@echo "  make run-tui [PROFILE_ID=uuid] - run the terminal client"
@@ -37,9 +37,7 @@ help:
 	@echo "  make migrate-status - show migration status"
 
 chessli:
-	$(MAKE) generate
 	$(MAKE) build
-	$(MAKE) run-deps
 	./bin/chessli
 
 reset-local-db:

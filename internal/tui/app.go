@@ -39,7 +39,6 @@ type Model struct {
 	theme            theme
 	network          *connection
 	client           *websocket.Conn
-	generation       uint64
 	connectionStatus connectionStatus
 	profileID        identity.ProfileID
 	networkErr       error
@@ -54,12 +53,11 @@ func New(source dashboard.Source, address string) Model {
 		theme:            newTheme(),
 		network:          newConnection(address),
 		connectionStatus: dialing,
-		generation:       1,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.dashboard.Init(), m.network.connect(m.profileID, m.generation))
+	return tea.Batch(m.dashboard.Init(), m.network.connect())
 }
 
 // Close must be called after the Bubble Tea program returns, including on errors.
@@ -68,9 +66,6 @@ func (m Model) Close() error { return m.network.Close() }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case connectedMsg:
-		if msg.generation != m.generation {
-			return m, nil
-		}
 		m.networkErr = msg.err
 		if msg.err != nil {
 			m.connectionStatus = disconnected
@@ -78,16 +73,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.client = msg.client
 		m.connectionStatus = awaitingReady
-		return m, m.network.receive(m.client, m.generation)
+		return m, m.network.receive(m.client)
 
 	case receivedMsg:
-		if msg.generation != m.generation {
-			return m, nil
-		}
 		if msg.err != nil {
 			m.networkErr = msg.err
 			if _, ok := errors.AsType[*messageError](msg.err); ok {
-				return m, m.network.receive(m.client, m.generation)
+				return m, m.network.receive(m.client)
 			}
 			m.connectionStatus = disconnected
 			m.play, _ = m.play.Update(play.DisconnectedMsg{}, false)
@@ -105,7 +97,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.play, cmd = m.play.Update(msg.event, m.connectionStatus == ready)
 		}
-		return m, tea.Batch(m.network.receive(m.client, m.generation), cmd)
+		return m, tea.Batch(m.network.receive(m.client), cmd)
 
 	case play.RequestMsg:
 		if !m.play.IsPending(msg.RequestID) {
@@ -115,19 +107,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.play, _ = m.play.Update(play.SendResultMsg{RequestID: msg.RequestID, Err: errors.New("disconnected")}, false)
 			return m, nil
 		}
-		return m, tea.Batch(m.network.send(m.client, m.generation, msg), m.network.responseDeadline(msg.RequestID))
+		return m, tea.Batch(m.network.send(m.client, msg), m.network.responseDeadline(msg.RequestID))
 
-	case sentMsg:
-		if msg.generation != m.generation {
-			return m, nil
-		}
-		if msg.result.Err != nil {
-			m.networkErr = msg.result.Err
+	case play.SendResultMsg:
+		if msg.Err != nil {
+			m.networkErr = msg.Err
 			m.connectionStatus = disconnected
 			m.play, _ = m.play.Update(play.DisconnectedMsg{}, false)
 		}
 		var cmd tea.Cmd
-		m.play, cmd = m.play.Update(msg.result, m.connectionStatus == ready)
+		m.play, cmd = m.play.Update(msg, m.connectionStatus == ready)
 		return m, cmd
 
 	case play.TimeoutMsg:

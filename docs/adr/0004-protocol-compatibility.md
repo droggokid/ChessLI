@@ -2,35 +2,25 @@
 
 Status: Accepted.
 
-## Context and decision
+## Decision
 
-WebSocket messages are a contract between independently running clients and
-servers. Internal refactoring preserves that contract; changes to names,
-payloads, validation, errors, or observable flow are intentional and documented.
-
-The existing compatibility rules remain:
+Internal refactors preserve message names, payloads, errors, validation, and
+observable ordering. Intentional protocol changes update the examples in
+[README](../../README.md) and [manual error testing](../manual-error-testing.md).
 
 - Unknown client message types return `unknown_message_type`.
-- Unknown fields inside recognized client payloads are invalid messages.
+- Unknown fields in recognized client payloads are rejected.
 - Unknown top-level client envelope fields are ignored.
-- Direct responses preserve the initiating `requestId`. Unsolicited events
-  and peer broadcasts do not reuse another client's request ID.
+- Direct responses preserve `requestId`; unsolicited and peer messages omit it.
+  Matchmaking retains the entry request ID through assignment.
+- The TUI accepts additive server fields and reports malformed known messages.
 
-Prefer optional, additive server fields when practical. An additive client
-payload field is incompatible with an older server that rejects unknown fields;
-changes must account for that asymmetry.
+Prefer optional, additive server fields. Client payload additions must account
+for older servers rejecting unknown fields.
 
-## Rationale and trade-offs
+## Rationale
 
-Strict payload decoding catches misspellings and unsupported input, at the cost
-of harder request evolution. Tolerant envelopes allow additional metadata.
-Neither behavior should change accidentally because a Go struct moves or a
-decoder is replaced.
-
-Protocol examples describe implemented, reachable behavior and remain ready to
-paste into `websocat`; errors not reachable through WebSocket are identified
-as such. Update affected examples and compatibility guidance when behavior
-changes. This does not require unrelated documentation edits or a separate
-review ceremony.
-
-[Delivery guarantees](0003-message-delivery-semantics.md) are recorded separately.
+Strict payloads catch misspellings, while tolerant envelopes allow new metadata.
+Client and server releases can differ, so compatibility must be deliberate.
+[Delivery guarantees](0003-message-delivery-semantics.md) remain separate from
+message compatibility.

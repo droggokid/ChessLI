@@ -30,7 +30,7 @@ func TestConnectionCloseCancelsOutstandingDial(t *testing.T) {
 	connection := newConnection("ws" + strings.TrimPrefix(server.URL, "http"))
 	defer connection.Close()
 	result := make(chan tea.Msg, 1)
-	go func() { result <- connection.connect("", 1)() }()
+	go func() { result <- connection.connect()() }()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	select {
@@ -70,13 +70,13 @@ func TestConnectionCloseJoinsOutstandingReceiveAndDeadline(t *testing.T) {
 	defer server.Close()
 	connection := newConnection("ws" + strings.TrimPrefix(server.URL, "http"))
 	defer connection.Close()
-	connected := connection.connect("", 1)().(connectedMsg)
+	connected := connection.connect()().(connectedMsg)
 	if connected.err != nil {
 		t.Fatal(connected.err)
 	}
 	receiveDone := make(chan tea.Msg, 1)
 	deadlineDone := make(chan tea.Msg, 1)
-	go func() { receiveDone <- connection.receive(connected.client, 1)() }()
+	go func() { receiveDone <- connection.receive(connected.client)() }()
 	go func() { deadlineDone <- connection.responseDeadline("request-1")() }()
 	select {
 	case err := <-reading:
@@ -105,29 +105,8 @@ func TestConnectionCloseJoinsOutstandingReceiveAndDeadline(t *testing.T) {
 	if err := connection.Close(); err != nil {
 		t.Fatal("second close:", err)
 	}
-	if message := connection.connect("", 2)().(connectedMsg); !errors.Is(message.err, context.Canceled) {
+	if message := connection.connect()().(connectedMsg); !errors.Is(message.err, context.Canceled) {
 		t.Fatal("closed owner accepted another dial")
-	}
-}
-
-func TestReconnectClosesPreviousConnectionNormally(t *testing.T) {
-	closed := make(chan coderws.StatusCode, 2)
-	ctx, network := newTestConnection(t, func(ctx context.Context, conn *coderws.Conn) {
-		_, _, err := conn.Read(ctx)
-		closed <- coderws.CloseStatus(err)
-	})
-
-	result := network.connect("", 2)().(connectedMsg)
-	if result.err != nil {
-		t.Fatal(result.err)
-	}
-	select {
-	case status := <-closed:
-		if status != coderws.StatusNormalClosure {
-			t.Fatalf("reconnect closed previous socket with status %v, want normal closure", status)
-		}
-	case <-ctx.Done():
-		t.Fatal("server did not observe the previous connection closing")
 	}
 }
 
@@ -150,13 +129,13 @@ func TestSendIncludesExpectedVersionZero(t *testing.T) {
 		}
 		received <- request
 	})
-	result := network.send(network.client, 1, play.RequestMsg{
+	result := network.send(network.client, play.RequestMsg{
 		Type: protocol.ClientMakeMove, RequestID: "move-1", Payload: protocol.MovePayload{
 			GameID: "game-1", Move: "e2e4", Notation: protocol.MoveNotationUCI, ExpectedVersion: new(uint64(0)),
 		},
-	})().(sentMsg)
-	if result.result.Err != nil {
-		t.Fatal(result.result.Err)
+	})().(play.SendResultMsg)
+	if result.Err != nil {
+		t.Fatal(result.Err)
 	}
 	select {
 	case request := <-received:
@@ -197,7 +176,7 @@ func TestReceiveContinuesAfterUnsupportedAndMalformedMessages(t *testing.T) {
 		_, _, _ = conn.Read(ctx)
 	})
 	for _, name := range []string{"binary", "unsupported", "malformed"} {
-		result := network.receive(network.client, 1)().(receivedMsg)
+		result := network.receive(network.client)().(receivedMsg)
 		if _, ok := errors.AsType[*messageError](result.err); !ok {
 			t.Fatalf("%s frame: expected recoverable message error, got %v", name, result.err)
 		}
@@ -205,7 +184,7 @@ func TestReceiveContinuesAfterUnsupportedAndMalformedMessages(t *testing.T) {
 			t.Fatalf("expected unsupported event, got %v", result.err)
 		}
 	}
-	result := network.receive(network.client, 1)().(receivedMsg)
+	result := network.receive(network.client)().(receivedMsg)
 	if result.err != nil {
 		t.Fatal(result.err)
 	}
@@ -218,11 +197,11 @@ func TestConnectionReportsPayloadEncodingFailure(t *testing.T) {
 	_, network := newTestConnection(t, func(ctx context.Context, conn *coderws.Conn) {
 		_, _, _ = conn.Read(ctx)
 	})
-	result := network.send(network.client, 1, play.RequestMsg{
+	result := network.send(network.client, play.RequestMsg{
 		Type: protocol.ClientMakeMove, RequestID: "move-1", Payload: make(chan int),
-	})().(sentMsg)
-	if result.result.RequestID != "move-1" || result.result.Err == nil ||
-		!strings.Contains(result.result.Err.Error(), "encode payload") {
+	})().(play.SendResultMsg)
+	if result.RequestID != "move-1" || result.Err == nil ||
+		!strings.Contains(result.Err.Error(), "encode payload") {
 		t.Fatalf("send result = %+v", result)
 	}
 }
@@ -234,7 +213,7 @@ func TestConnectionReportsHandshakeFailure(t *testing.T) {
 	defer server.Close()
 	network := newConnection("ws" + strings.TrimPrefix(server.URL, "http"))
 	defer network.Close()
-	if result := network.connect("", 1)().(connectedMsg); result.err == nil {
+	if result := network.connect()().(connectedMsg); result.err == nil {
 		t.Fatal("expected handshake failure")
 	}
 }
@@ -259,7 +238,7 @@ func newTestConnection(t *testing.T, handle func(context.Context, *coderws.Conn)
 			t.Errorf("close connection: %v", err)
 		}
 	})
-	if result := network.connect("", 1)().(connectedMsg); result.err != nil {
+	if result := network.connect()().(connectedMsg); result.err != nil {
 		t.Fatal(result.err)
 	}
 	return ctx, network

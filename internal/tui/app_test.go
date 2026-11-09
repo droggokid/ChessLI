@@ -201,7 +201,7 @@ func TestRootRoutesStateAndErrorsWhilePlayIsInactive(t *testing.T) {
 		var requestCmd tea.Cmd
 		model.play, requestCmd = model.play.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}), true)
 		request := requestCmd().(play.RequestMsg)
-		next, cmd := model.Update(receivedMsg{generation: model.generation, event: protocol.ServerEvent{
+		next, cmd := model.Update(receivedMsg{event: protocol.ServerEvent{
 			Type: protocol.ServerGameCreated, RequestID: request.RequestID,
 			Assignment: &protocol.GameCreatedPayload{GameID: "game-1", Color: protocol.ColorWhite},
 		}})
@@ -209,7 +209,7 @@ func TestRootRoutesStateAndErrorsWhilePlayIsInactive(t *testing.T) {
 			t.Fatal("receive was not rearmed after assignment")
 		}
 		model = next.(Model)
-		next, cmd = model.Update(receivedMsg{generation: model.generation, event: protocol.ServerEvent{
+		next, cmd = model.Update(receivedMsg{event: protocol.ServerEvent{
 			Type:  protocol.ServerGameInitial,
 			State: &protocol.GameStatePayload{GameID: "game-1", FEN: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", Status: protocol.GameStatusActive},
 		}})
@@ -217,7 +217,7 @@ func TestRootRoutesStateAndErrorsWhilePlayIsInactive(t *testing.T) {
 		if cmd == nil || model.active != active || !strings.Contains(model.play.View(76, true), "Your turn") {
 			t.Fatal("background initial state was not routed")
 		}
-		next, cmd = model.Update(receivedMsg{generation: model.generation, event: protocol.ServerEvent{
+		next, cmd = model.Update(receivedMsg{event: protocol.ServerEvent{
 			Type: protocol.ServerError, Error: &protocol.ErrorPayload{Code: protocol.ErrorIllegalMove, Message: "illegal move"},
 		}})
 		if cmd == nil || !strings.Contains(next.(Model).play.View(76, true), "illegal_move") {
@@ -249,7 +249,7 @@ func TestRootRoutesMatchmakingWhilePlayIsInactive(t *testing.T) {
 			{protocol.ServerEvent{Type: protocol.ServerGameInitial, State: state}, "Your turn"},
 			{protocol.ServerEvent{Type: protocol.ServerGameState, State: &presence}, "Black: online"},
 		} {
-			next, receive := model.Update(receivedMsg{generation: model.generation, event: step.event})
+			next, receive := model.Update(receivedMsg{event: step.event})
 			model = next.(Model)
 			if receive == nil || model.active != active || !strings.Contains(model.play.View(76, true), step.want) {
 				t.Fatalf("background %s was not routed: %s", step.event.Type, model.play.View(76, true))
@@ -267,15 +267,15 @@ func TestRootDistinguishesMessageErrorsFromConnectionLoss(t *testing.T) {
 	model := New(dashboard_data.Mock{}, "ws://localhost:8080/ws")
 	defer model.Close()
 	model.connectionStatus = ready
-	next, cmd := model.Update(receivedMsg{generation: model.generation, err: &messageError{Err: protocol.ErrUnsupportedEvent}})
+	next, cmd := model.Update(receivedMsg{err: &messageError{Err: protocol.ErrUnsupportedEvent}})
 	if cmd == nil || next.(Model).connectionStatus != ready {
 		t.Fatal("recoverable message error stopped reception")
 	}
-	next, cmd = next.Update(receivedMsg{generation: model.generation, event: protocol.ServerEvent{Type: protocol.ServerGameState}})
+	next, cmd = next.Update(receivedMsg{event: protocol.ServerEvent{Type: protocol.ServerGameState}})
 	if cmd == nil || next.(Model).networkErr != nil {
 		t.Fatal("successful reception did not clear the previous message error")
 	}
-	next, cmd = next.Update(receivedMsg{generation: model.generation, err: errors.New("connection lost")})
+	next, cmd = next.Update(receivedMsg{err: errors.New("connection lost")})
 	if cmd != nil || next.(Model).connectionStatus == ready || !strings.Contains(next.(Model).connectionView(), "connection lost") {
 		t.Fatal("connection failure was not displayed or stopped")
 	}
@@ -288,7 +288,7 @@ func TestRootWaitsForConnectionReadyBeforeSubmission(t *testing.T) {
 	if !strings.Contains(model.connectionView(), "Connecting to") {
 		t.Fatal("dialing was not displayed")
 	}
-	next, _ := model.Update(connectedMsg{generation: model.generation})
+	next, _ := model.Update(connectedMsg{})
 	model = next.(Model)
 	if !strings.Contains(model.connectionView(), "waiting for profile ID") {
 		t.Fatal("socket connection was mistaken for readiness")
@@ -299,7 +299,7 @@ func TestRootWaitsForConnectionReadyBeforeSubmission(t *testing.T) {
 		t.Fatal("allowed submission before connection.ready")
 	}
 	model = next.(Model)
-	next, _ = model.Update(receivedMsg{generation: model.generation, event: protocol.ServerEvent{
+	next, _ = model.Update(receivedMsg{event: protocol.ServerEvent{
 		Type: protocol.ServerConnectionReady, Ready: &protocol.ConnectionReadyPayload{ProfileID: "profile-1"},
 	}})
 	if !strings.Contains(next.(Model).connectionView(), "Connected · Profile: profile-1") {
@@ -308,16 +308,6 @@ func TestRootWaitsForConnectionReadyBeforeSubmission(t *testing.T) {
 	_, cmd = next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	if cmd == nil || cmd().(play.RequestMsg).Type != protocol.ClientCreateGame {
 		t.Fatal("connection.ready did not permit submission")
-	}
-}
-
-func TestRootIgnoresOldConnectionEvents(t *testing.T) {
-	model := New(dashboard_data.Mock{}, "ws://localhost:8080/ws")
-	defer model.Close()
-	model.generation = 2
-	next, cmd := model.Update(receivedMsg{generation: 1, event: protocol.ServerEvent{Type: protocol.ServerConnectionReady, Ready: &protocol.ConnectionReadyPayload{ProfileID: "old-profile"}}})
-	if cmd != nil || next.(Model).profileID != "" {
-		t.Fatal("old connection updated current identity or rearmed reception")
 	}
 }
 

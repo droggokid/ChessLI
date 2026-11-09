@@ -5,7 +5,8 @@ import (
 	"github.com/corentings/chess/v2"
 )
 
-func colorFromProfileID(profileID, whiteProfileID, blackProfileID identity.ProfileID) (chess.Color, error) {
+// ColorFromProfileID returns the profile's seat, or ErrNotParticipant if it has none.
+func ColorFromProfileID(profileID, whiteProfileID, blackProfileID identity.ProfileID) (chess.Color, error) {
 	switch profileID {
 	case whiteProfileID:
 		return chess.White, nil

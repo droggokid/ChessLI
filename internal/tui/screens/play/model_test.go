@@ -15,10 +15,8 @@ import (
 const initialFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 const afterE4FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
 
-func TestConnectionReadyRecoversServerAssignedGame(t *testing.T) {
-	model, request := submitText(t, &Model{}, "/create")
-	model, _ = model.Update(TimeoutMsg{RequestID: request.RequestID}, true)
-	model.input = "draft"
+func TestStartupResumesServerAssignedGame(t *testing.T) {
+	model := &Model{input: "draft"}
 	model, cmd := model.Update(protocol.ServerEvent{
 		Type: protocol.ServerConnectionReady,
 		Ready: &protocol.ConnectionReadyPayload{
@@ -39,6 +37,13 @@ func TestConnectionReadyRecoversServerAssignedGame(t *testing.T) {
 	}, true)
 	if model.gameID != "game-1" || model.input != "draft" {
 		t.Fatalf("recovered model = %+v", model)
+	}
+	if _, cmd := model.submit(true); cmd != nil {
+		t.Fatal("resume allowed submission before initial state")
+	}
+	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameInitial, State: initialState()}, true)
+	if model.action != actionIdle || model.pending != (pendingAction{}) || model.input != "draft" || model.board() == "" {
+		t.Fatalf("startup resume did not initialize game: %+v", model)
 	}
 }
 
@@ -143,7 +148,7 @@ func TestMatchmakingAssignmentWaitsForInitialStateAndAcceptsPresence(t *testing.
 	}
 }
 
-func TestMatchmakingRecoveryRequiresAnAssignedGameID(t *testing.T) {
+func TestMatchmakingDisconnectRequiresRestart(t *testing.T) {
 	for _, stage := range []string{"entry", "queued", "assigned", "initialized"} {
 		t.Run(stage, func(t *testing.T) {
 			model := activeModel(t)
@@ -170,34 +175,16 @@ func TestMatchmakingRecoveryRequiresAnAssignedGameID(t *testing.T) {
 				model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameInitial, State: state}, true)
 			}
 			model.input = "e5"
-			model, _ = model.Update(DisconnectedMsg{}, false)
+			model, cmd := model.Update(DisconnectedMsg{}, false)
+			if cmd != nil {
+				t.Fatal("disconnect started a request")
+			}
 			model, _ = model.Update(TimeoutMsg{RequestID: request.RequestID}, false)
-			model, cmd := model.Recover()
-			if stage == "entry" || stage == "queued" {
-				if cmd != nil || model.action != actionUnknown || !strings.Contains(model.View(74, true), "Restart the TUI") {
-					t.Fatal("unknown match ID requeued or resumed previous game")
-				}
-				if _, cmd := model.submit(true); cmd != nil {
-					t.Fatal("unknown match ID allowed another action")
-				}
-				return
+			if model.action == actionIdle || model.input != "e5" || !strings.Contains(model.View(74, false), "Restart") {
+				t.Fatalf("disconnect lost draft or restart requirement: %+v", model)
 			}
-			if cmd == nil {
-				t.Fatal("assigned game was not resumed")
-			}
-			resume := cmd().(RequestMsg)
-			if resume.Type != protocol.ClientResumeGame || resume.Payload != (protocol.ResumeGamePayload{GameID: "game-2"}) {
-				t.Fatalf("recovery = %+v", resume)
-			}
-			model, _ = model.Update(TimeoutMsg{RequestID: request.RequestID}, true)
-			if model.action != actionAwaiting || !model.IsPending(resume.RequestID) {
-				t.Fatal("entry deadline affected resume")
-			}
-			model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameResumed, RequestID: resume.RequestID,
-				Assignment: &protocol.GameCreatedPayload{GameID: "game-2", Color: protocol.ColorBlack}}, true)
-			model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameInitial, State: state}, true)
-			if model.action != actionIdle || model.input != "e5" || model.state != state {
-				t.Fatalf("recovered match = %+v", model)
+			if _, cmd := model.submit(true); cmd != nil {
+				t.Fatal("disconnect allowed another action")
 			}
 		})
 	}
@@ -344,7 +331,7 @@ func TestSnapshotsAcceptEqualVersionsAndRejectOlderOrOtherGames(t *testing.T) {
 	}
 }
 
-func TestUncertainOrStaleMoveRequiresRecovery(t *testing.T) {
+func TestUncertainOrStaleMoveRequiresRestart(t *testing.T) {
 	for _, cause := range []string{"timeout", "write failure", "stale version"} {
 		t.Run(cause, func(t *testing.T) {
 			model := activeModel(t)
@@ -365,18 +352,8 @@ func TestUncertainOrStaleMoveRequiresRecovery(t *testing.T) {
 			if model.state == nil || model.board() == "" {
 				t.Fatal("disconnect discarded board")
 			}
-			model, cmd := model.Recover()
-			resumed := cmd().(RequestMsg)
-			if resumed.Type != protocol.ClientResumeGame {
-				t.Fatal("recovery resent an action")
-			}
-			model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameResumed, RequestID: resumed.RequestID, Assignment: &protocol.GameCreatedPayload{GameID: "game-1", Color: protocol.ColorWhite}}, true)
-			if _, cmd := model.submit(true); cmd != nil {
-				t.Fatal("assignment cleared recovery before initial snapshot")
-			}
-			model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameInitial, State: initialState()}, true)
-			if model.IsPending(resumed.RequestID) || !strings.Contains(model.View(74, true), "Your turn") {
-				t.Fatal("initial snapshot did not finish recovery")
+			if model.input != "d4" || !strings.Contains(model.View(74, false), "Restart") {
+				t.Fatal("disconnect lost draft or restart guidance")
 			}
 		})
 	}
@@ -386,9 +363,9 @@ func TestMissingCreateResponseIsNeverRetried(t *testing.T) {
 	model := &Model{}
 	model, request := submitText(t, model, "/create")
 	model, _ = model.Update(TimeoutMsg{RequestID: request.RequestID}, true)
-	model, cmd := model.Recover()
-	if cmd != nil || !strings.Contains(model.View(74, true), "no game ID") {
-		t.Fatal("unknown create outcome must require explicit recovery")
+	model, cmd := model.submit(true)
+	if cmd != nil || !model.IsPending(request.RequestID) || !strings.Contains(model.View(74, true), "Restart") {
+		t.Fatal("unknown create outcome must require a restart")
 	}
 }
 
@@ -482,53 +459,6 @@ func TestMoveIncludesNonzeroAuthoritativeVersion(t *testing.T) {
 	}
 }
 
-func TestResumeRejectionKeepsRecoveryTargetForRetry(t *testing.T) {
-	model := &Model{}
-	model, join := submitText(t, model, "/join game-1")
-	model, _ = model.Update(TimeoutMsg{RequestID: join.RequestID}, true)
-	model, cmd := model.Recover()
-	resume := cmd().(RequestMsg)
-	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerError, RequestID: resume.RequestID,
-		Error: &protocol.ErrorPayload{Code: protocol.ErrorInvalidMessage, Message: "session already registered"}}, true)
-	if _, cmd := model.submit(true); cmd != nil {
-		t.Fatal("resume rejection enabled new actions")
-	}
-	model, cmd = model.Recover()
-	if cmd == nil {
-		t.Fatal("lost recovery target")
-	}
-	retry := cmd().(RequestMsg)
-	if retry.Type != protocol.ClientResumeGame || retry.Payload.(protocol.ResumeGamePayload).GameID != "game-1" {
-		t.Fatalf("retry = %#v", retry)
-	}
-}
-
-func TestAuthoritativeStateCanFinishRecoveryAfterResumeRejection(t *testing.T) {
-	for _, eventType := range []protocol.ServerMessageType{protocol.ServerGameInitial, protocol.ServerGameState} {
-		t.Run(string(eventType), func(t *testing.T) {
-			model := activeModel(t)
-			state := initialState()
-			if eventType == protocol.ServerGameState {
-				state.Status = protocol.GameStatusFinished
-				model, _ = model.Update(protocol.ServerEvent{Type: eventType, State: state}, true)
-			}
-			model, cmd := model.Recover()
-			resume := cmd().(RequestMsg)
-			model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerError, RequestID: resume.RequestID,
-				Error: &protocol.ErrorPayload{Code: protocol.ErrorInvalidMessage, Message: "session already registered"}}, true)
-			model, _ = model.Update(protocol.ServerEvent{Type: eventType, State: state}, true)
-			text := "e4"
-			if state.Status == protocol.GameStatusFinished {
-				text = "/create"
-			}
-			model, request := submitText(t, model, text)
-			if !model.IsPending(request.RequestID) {
-				t.Fatal("authoritative state did not release recovery")
-			}
-		})
-	}
-}
-
 func TestRepeatedFinishedSnapshotsPreserveNewInput(t *testing.T) {
 	model := activeModel(t)
 	finished := initialState()
@@ -552,7 +482,7 @@ func TestAcknowledgmentPreservesEditedInput(t *testing.T) {
 	}
 }
 
-func TestAssignmentAndRecoveryPreserveDraftInput(t *testing.T) {
+func TestJoinAssignmentPreservesDraftInput(t *testing.T) {
 	model, request := submitText(t, &Model{}, "/join game-1")
 	model.input = "e5"
 	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameJoined, RequestID: request.RequestID,
@@ -560,14 +490,6 @@ func TestAssignmentAndRecoveryPreserveDraftInput(t *testing.T) {
 	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameInitial, State: initialState()}, true)
 	if model.input != "e5" {
 		t.Fatal("join response erased draft")
-	}
-	model, cmd := model.Recover()
-	resume := cmd().(RequestMsg)
-	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameResumed, RequestID: resume.RequestID,
-		Assignment: &protocol.GameCreatedPayload{GameID: "game-1", Color: protocol.ColorBlack}}, true)
-	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameInitial, State: initialState()}, true)
-	if model.input != "e5" {
-		t.Fatal("recovery erased draft")
 	}
 }
 
@@ -584,15 +506,18 @@ func TestOpponentMoveClearsStaleTurnFeedback(t *testing.T) {
 	}
 }
 
-func TestReconnectWithoutGameClearsDisconnectedFeedback(t *testing.T) {
+func TestStartupWithoutActiveGameDoesNotResume(t *testing.T) {
 	model := &Model{input: "/create"}
 	model, cmd := model.submit(false)
 	if cmd != nil || !strings.Contains(model.View(76, false), "Disconnected") {
 		t.Fatal("disconnected submission did not show feedback")
 	}
-	model, cmd = model.Recover()
-	if cmd != nil || model.message != "" || strings.Contains(model.View(76, true), "Disconnected") {
-		t.Fatal("reconnection retained stale disconnected feedback")
+	model, cmd = model.Update(protocol.ServerEvent{
+		Type:  protocol.ServerConnectionReady,
+		Ready: &protocol.ConnectionReadyPayload{ProfileID: "player"},
+	}, true)
+	if cmd != nil || model.action != actionIdle || model.input != "/create" || strings.Contains(model.View(76, true), "Disconnected") {
+		t.Fatal("startup attempted recovery without an active game or lost draft")
 	}
 }
 
@@ -627,7 +552,7 @@ func TestLateAcknowledgmentResolvesUnknownOutcome(t *testing.T) {
 	}
 }
 
-func TestDisconnectPreservesBoardAndDraftUntilRecovery(t *testing.T) {
+func TestDisconnectPreservesBoardAndDraftUntilRestart(t *testing.T) {
 	model := activeModel(t)
 	model.input = "e4"
 	board := model.board()
@@ -643,17 +568,25 @@ func TestDisconnectPreservesBoardAndDraftUntilRecovery(t *testing.T) {
 	}
 }
 
-func TestResumeTerminalRejectionPermitsNewGame(t *testing.T) {
-	for _, code := range []protocol.ErrorCode{protocol.ErrorGameNotFound, protocol.ErrorNotPlayer} {
+func TestStartupResumeRejection(t *testing.T) {
+	for _, code := range []protocol.ErrorCode{protocol.ErrorGameNotFound, protocol.ErrorNotPlayer, protocol.ErrorInvalidMessage} {
 		t.Run(string(code), func(t *testing.T) {
-			model, join := submitText(t, &Model{}, "/join game-1")
-			model, _ = model.Update(TimeoutMsg{RequestID: join.RequestID}, true)
-			model, cmd := model.Recover()
+			model, cmd := (&Model{}).Update(protocol.ServerEvent{
+				Type:  protocol.ServerConnectionReady,
+				Ready: &protocol.ConnectionReadyPayload{ProfileID: "player", ActiveGameID: "game-1"},
+			}, true)
+			if cmd == nil {
+				t.Fatal("startup did not request resume")
+			}
 			resume := cmd().(RequestMsg)
 			model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerError, RequestID: resume.RequestID,
 				Error: &protocol.ErrorPayload{Code: code, Message: "cannot resume"}}, true)
-			if _, cmd := model.Recover(); cmd != nil {
-				t.Fatal("terminal rejection retained a recovery target")
+			if code == protocol.ErrorInvalidMessage {
+				model.input = "/create"
+				if _, cmd := model.submit(true); cmd != nil || !strings.Contains(model.View(74, true), "Restart") {
+					t.Fatal("uncertain resume rejection allowed a new game")
+				}
+				return
 			}
 			_, create := submitText(t, model, "/create")
 			if create.Type != protocol.ClientCreateGame {

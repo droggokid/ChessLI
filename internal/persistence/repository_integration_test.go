@@ -1,11 +1,11 @@
 package persistence_test
 
 import (
-	"ChessLI/internal/persistence"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -13,7 +13,8 @@ import (
 
 	domain "ChessLI/internal/game"
 	"ChessLI/internal/identity"
-	"ChessLI/internal/profile"
+	"ChessLI/internal/persistence/game"
+	"ChessLI/internal/persistence/profile"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -23,7 +24,7 @@ import (
 
 func TestPostgresProfileRoundTrip(t *testing.T) {
 	ctx, pool := testDatabase(t)
-	repository := persistence.NewProfileRepository(pool)
+	repository := profile.NewRepository(pool)
 	first, second := createProfiles(t, ctx, repository)
 	got, err := repository.GetProfileByID(ctx, first.ID)
 	if err != nil {
@@ -55,17 +56,14 @@ func TestPostgresProfileRoundTrip(t *testing.T) {
 
 func TestPostgresCompletedGameRoundTrip(t *testing.T) {
 	ctx, pool := testDatabase(t)
-	white, black := createProfiles(t, ctx, persistence.NewProfileRepository(pool))
-	repository := persistence.NewGameRepository(pool)
+	white, black := createProfiles(t, ctx, profile.NewRepository(pool))
+	repository := game.NewRepository(pool)
 	completed := completedGame(white.ID, black.ID)
-	if err := repository.CreateGame(ctx, completed); err != nil {
-		t.Fatal(err)
-	}
-	moves := []domain.Move{
+	completed.Moves = []game.Move{
 		{Ply: 1, UCI: "e2e4", WhiteRemaining: 59 * time.Second, BlackRemaining: time.Minute},
 		{Ply: 2, UCI: "e7e5", WhiteRemaining: 59 * time.Second, BlackRemaining: 58 * time.Second},
 	}
-	if err := repository.CreateMoves(ctx, completed.ID, moves); err != nil {
+	if err := repository.CreateGame(ctx, completed); err != nil {
 		t.Fatal(err)
 	}
 	got, err := repository.GetGameByID(ctx, completed.ID)
@@ -76,19 +74,13 @@ func TestPostgresCompletedGameRoundTrip(t *testing.T) {
 		t.Fatalf("completion time = %v", got.CompletedAt)
 	}
 	got.CompletedAt = completed.CompletedAt
-	if got != completed {
+	if !reflect.DeepEqual(got, completed) {
 		t.Fatalf("completed game = %+v, want %+v", got, completed)
-	}
-	gotMoves, err := repository.ListMovesByGameID(ctx, completed.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(gotMoves, moves) {
-		t.Fatalf("moves = %+v, want %+v", gotMoves, moves)
 	}
 	newer := completed
 	newer.ID = identity.NewGameID()
 	newer.CompletedAt = completed.CompletedAt.Add(time.Minute)
+	newer.Moves = nil
 	if err := repository.CreateGame(ctx, newer); err != nil {
 		t.Fatal(err)
 	}
@@ -106,11 +98,8 @@ func TestPostgresCompletedGameRoundTrip(t *testing.T) {
 	if _, err := repository.GetGameByID(ctx, identity.NewGameID()); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("missing game error = %v", err)
 	}
-	if err := repository.CreateMoves(ctx, newer.ID, nil); err != nil {
-		t.Fatal(err)
-	}
-	if empty, err := repository.ListMovesByGameID(ctx, newer.ID); err != nil || len(empty) != 0 {
-		t.Fatalf("empty move history = %+v, %v", empty, err)
+	if empty, err := repository.GetGameByID(ctx, newer.ID); err != nil || len(empty.Moves) != 0 {
+		t.Fatalf("empty move history = %+v, %v", empty.Moves, err)
 	}
 }
 
@@ -118,7 +107,7 @@ func TestPostgresRejectsDuplicateProfiles(t *testing.T) {
 	for _, field := range []string{"username", "email"} {
 		t.Run(field, func(t *testing.T) {
 			ctx, pool := testDatabase(t)
-			repository := persistence.NewProfileRepository(pool)
+			repository := profile.NewRepository(pool)
 			createProfiles(t, ctx, repository)
 			username, email := "other", "other@example.test"
 			if field == "username" {
@@ -135,41 +124,37 @@ func TestPostgresRejectsDuplicateProfiles(t *testing.T) {
 func TestPostgresRejectsInvalidCompletedGames(t *testing.T) {
 	for _, invalid := range []struct {
 		name   string
-		change func(*domain.CompletedGame)
+		change func(*game.CompletedGame)
 		code   string
 	}{
-		{"missing player", func(g *domain.CompletedGame) { g.WhiteProfileID = identity.NewProfileID() }, "23503"},
-		{"same players", func(g *domain.CompletedGame) { g.BlackProfileID = g.WhiteProfileID }, "23514"},
-		{"active game", func(g *domain.CompletedGame) { g.Outcome = domain.OutcomeNone }, "23514"},
-		{"invalid time control", func(g *domain.CompletedGame) { g.Initial = 0 }, "23514"},
-		{"missing termination", func(g *domain.CompletedGame) { g.Termination = domain.TerminationNone }, "23514"},
+		{"missing player", func(g *game.CompletedGame) { g.WhiteProfileID = identity.NewProfileID() }, "23503"},
+		{"same players", func(g *game.CompletedGame) { g.BlackProfileID = g.WhiteProfileID }, "23514"},
+		{"active game", func(g *game.CompletedGame) { g.Outcome = domain.OutcomeNone }, "23514"},
+		{"invalid time control", func(g *game.CompletedGame) { g.Initial = 0 }, "23514"},
+		{"missing termination", func(g *game.CompletedGame) { g.Termination = domain.TerminationNone }, "23514"},
 	} {
 		t.Run(invalid.name, func(t *testing.T) {
 			ctx, pool := testDatabase(t)
-			white, black := createProfiles(t, ctx, persistence.NewProfileRepository(pool))
+			white, black := createProfiles(t, ctx, profile.NewRepository(pool))
 			completed := completedGame(white.ID, black.ID)
 			invalid.change(&completed)
-			assertSQLState(t, persistence.NewGameRepository(pool).CreateGame(ctx, completed), invalid.code)
+			assertSQLState(t, game.NewRepository(pool).CreateGame(ctx, completed), invalid.code)
 		})
 	}
 }
 
-func TestPostgresRejectsInvalidMoveBatchAtomically(t *testing.T) {
+func TestPostgresRejectsInvalidGameWithMovesAtomically(t *testing.T) {
 	ctx, pool := testDatabase(t)
-	white, black := createProfiles(t, ctx, persistence.NewProfileRepository(pool))
-	repository := persistence.NewGameRepository(pool)
+	white, black := createProfiles(t, ctx, profile.NewRepository(pool))
+	repository := game.NewRepository(pool)
 	completed := completedGame(white.ID, black.ID)
-	if err := repository.CreateGame(ctx, completed); err != nil {
-		t.Fatal(err)
-	}
-	err := repository.CreateMoves(ctx, completed.ID, []domain.Move{
+	completed.Moves = []game.Move{
 		{Ply: 1, UCI: "e2e4", WhiteRemaining: time.Minute, BlackRemaining: time.Minute},
 		{Ply: 2, UCI: "e7e5", WhiteRemaining: -time.Second, BlackRemaining: time.Minute},
-	})
-	assertSQLState(t, err, "23514")
-	moves, err := repository.ListMovesByGameID(ctx, completed.ID)
-	if err != nil || len(moves) != 0 {
-		t.Fatalf("rejected batch left moves = %+v, error %v", moves, err)
+	}
+	assertSQLState(t, repository.CreateGame(ctx, completed), "23514")
+	if _, err := repository.GetGameByID(ctx, completed.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("rejected game should not exist, got error %v", err)
 	}
 }
 
@@ -233,7 +218,7 @@ func testDatabase(t *testing.T) (context.Context, *pgxpool.Pool) {
 	return ctx, pool
 }
 
-func createProfiles(t *testing.T, ctx context.Context, repository persistence.ProfileRepository) (profile.Profile, profile.Profile) {
+func createProfiles(t *testing.T, ctx context.Context, repository profile.Repository) (profile.Profile, profile.Profile) {
 	t.Helper()
 	white, err := repository.CreateProfile(ctx, "White", "white@example.test", "test-hash")
 	if err != nil {
@@ -246,8 +231,8 @@ func createProfiles(t *testing.T, ctx context.Context, repository persistence.Pr
 	return white, black
 }
 
-func completedGame(white, black identity.ProfileID) domain.CompletedGame {
-	return domain.CompletedGame{
+func completedGame(white, black identity.ProfileID) game.CompletedGame {
+	return game.CompletedGame{
 		ID: identity.NewGameID(), WhiteProfileID: white, BlackProfileID: black,
 		Initial: time.Minute, Increment: time.Second,
 		Outcome: domain.OutcomeWhiteWin, Termination: domain.TerminationResignation,

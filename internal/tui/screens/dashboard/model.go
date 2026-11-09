@@ -63,13 +63,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				return StartGameMsg{}
 			}
-
-		case "r":
-			if !m.loading {
-				m.loading = true
-				m.err = nil
-				return m, m.Init()
-			}
 		}
 	}
 
@@ -83,7 +76,7 @@ func (m Model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf(
 			"Dashboard\n\nCould not load player information:\n%v\n\n"+
-				"r: retry  Enter: open Play Chess",
+				"Enter: open Play Chess",
 			m.err,
 		)
 	}
