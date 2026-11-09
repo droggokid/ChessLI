@@ -19,11 +19,8 @@ func TestNewServerWiresDependencies(t *testing.T) {
 	if server.httpServer == nil || server.httpServer.Addr != "127.0.0.1:0" {
 		t.Fatalf("NewServer() HTTP address = %q, want %q", server.httpServer.Addr, "127.0.0.1:0")
 	}
-	if server.gameSessions == nil || server.messageHandler == nil {
+	if server.messageHandler == nil || server.messageHandler.gameSessions == nil {
 		t.Fatal("NewServer() did not initialize handler dependencies")
-	}
-	if server.messageHandler.gameSessions != server.gameSessions {
-		t.Fatal("handler and server do not share the same session registry")
 	}
 }
 
@@ -33,8 +30,8 @@ func TestServerBroadcastGameState(t *testing.T) {
 	server := NewServer("127.0.0.1:0", nil)
 	client := newQueuedSession("white")
 
-	if err := server.gameSessions.Add("game", client); err != nil {
-		t.Fatalf("GameSessions.Add() error = %v", err)
+	if err := server.messageHandler.gameSessions.Add("game", client); err != nil {
+		t.Fatalf("gameSessions.Add() error = %v", err)
 	}
 
 	server.BroadcastGameState(gameplay.GameSnapshot{
@@ -61,8 +58,8 @@ func TestServerBroadcastTerminalStateReleasesSessions(t *testing.T) {
 	white := newQueuedSession("white")
 	black := newQueuedSession("black")
 	for _, client := range []*Session{white, black} {
-		if err := server.gameSessions.Add("game", client); err != nil {
-			t.Fatalf("GameSessions.Add() error = %v", err)
+		if err := server.messageHandler.gameSessions.Add("game", client); err != nil {
+			t.Fatalf("gameSessions.Add() error = %v", err)
 		}
 	}
 
@@ -72,7 +69,7 @@ func TestServerBroadcastTerminalStateReleasesSessions(t *testing.T) {
 	})
 
 	for _, client := range []*Session{white, black} {
-		if err := server.gameSessions.Hold(client); err != nil {
+		if err := server.messageHandler.gameSessions.Hold(client); err != nil {
 			t.Fatalf("Hold() after terminal broadcast error = %v", err)
 		}
 	}

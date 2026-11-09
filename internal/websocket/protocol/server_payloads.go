@@ -10,7 +10,8 @@ type GameCreatedPayload struct {
 }
 
 type ConnectionReadyPayload struct {
-	ProfileID identity.ProfileID `json:"profileId"`
+	ProfileID    identity.ProfileID `json:"profileId"`
+	ActiveGameID identity.GameID    `json:"activeGameId,omitempty"`
 }
 
 type GameStatePayload struct {

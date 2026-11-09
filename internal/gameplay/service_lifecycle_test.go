@@ -14,7 +14,9 @@ func TestGameServiceCloseJoinsAsynchronousNotifications(t *testing.T) {
 			notified <- state
 			<-release
 		})
+		service.mu.Lock()
 		service.notifyGameExpired(GameSnapshot{GameID: "game"})
+		service.mu.Unlock()
 		if state := <-notified; state.GameID != "game" {
 			t.Fatalf("notification = %+v", state)
 		}
@@ -31,7 +33,9 @@ func TestGameServiceCloseJoinsAsynchronousNotifications(t *testing.T) {
 		}
 		close(release)
 		<-closed
+		service.mu.Lock()
 		service.notifyGameExpired(GameSnapshot{GameID: "after-close"})
+		service.mu.Unlock()
 		synctest.Wait()
 		if len(notified) != 0 {
 			t.Fatal("notification started after Close")

@@ -8,8 +8,6 @@ import (
 	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/websocket/protocol"
-
-	"github.com/corentings/chess/v2"
 )
 
 func TestMapTimeControlPreset(t *testing.T) {
@@ -99,14 +97,6 @@ func TestProtocolToGameplayMappings(t *testing.T) {
 	})
 }
 
-func TestMapColorFromServerRejectsInvalidColor(t *testing.T) {
-	t.Parallel()
-
-	if _, err := mapColorFromServer(chess.NoColor); err == nil {
-		t.Fatal("mapColorFromServer(NoColor) error = nil, want error")
-	}
-}
-
 func TestMapOutcome(t *testing.T) {
 	t.Parallel()
 
@@ -145,12 +135,12 @@ func TestMapOutcome(t *testing.T) {
 func TestGameStatePayload(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(nil, NewGameSessions())
 	state := gameplay.GameSnapshot{
 		GameID:         "game",
 		FEN:            "fen",
 		Version:        3,
 		WhiteProfileID: "white",
+		BlackProfileID: "black",
 		LastMoveSAN:    "Qh4#",
 		Outcome:        game.OutcomeBlackWin,
 		Termination:    game.TerminationCheckmate,
@@ -160,7 +150,7 @@ func TestGameStatePayload(t *testing.T) {
 		},
 	}
 
-	got := handler.gameStatePayload(state)
+	got := mapGameState(state, false, false)
 	if got.GameID != state.GameID || got.FEN != state.FEN || got.Version != state.Version || got.LastMove != state.LastMoveSAN {
 		t.Fatalf("gameStatePayload() = %+v, want snapshot values %+v", got, state)
 	}
@@ -174,13 +164,16 @@ func TestGameStatePayload(t *testing.T) {
 	if got.PendingDrawOffer == nil || got.PendingDrawOffer.OfferID != "offer" || got.PendingDrawOffer.OfferedBy != protocol.ColorWhite {
 		t.Fatalf("gameStatePayload() draw offer = %+v, want white offer", got.PendingDrawOffer)
 	}
+	state.PendingDrawOffer.OfferedBy = "black"
+	if offer := mapDrawOffer(state); offer == nil || offer.OfferedBy != protocol.ColorBlack {
+		t.Fatalf("draw offer = %+v, want black offer", offer)
+	}
 }
 
 func TestPlayerStateOmitsEmptySeat(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(nil, NewGameSessions())
-	if got := handler.playerState("game", "", protocol.ColorBlack, 10*time.Minute); got != nil {
+	if got := mapPlayerState("", protocol.ColorBlack, 10*time.Minute, false); got != nil {
 		t.Fatalf("playerState() = %+v, want nil for empty seat", got)
 	}
 }

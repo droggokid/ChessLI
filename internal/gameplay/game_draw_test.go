@@ -58,7 +58,7 @@ func TestGameDrawOfferLifecycle(t *testing.T) {
 	}
 	offerID = offered.PendingDrawOffer.OfferID
 	offered.PendingDrawOffer.OfferedBy = "tampered"
-	if got := game.snapshot().PendingDrawOffer.OfferedBy; got != "white" {
+	if got := game.snapshot(game.now()).PendingDrawOffer.OfferedBy; got != "white" {
 		t.Fatalf("Snapshot() pending offer was aliased: OfferedBy = %q", got)
 	}
 
@@ -119,7 +119,8 @@ func TestGameClearsPendingDrawOffer(t *testing.T) {
 		}
 
 		now = now.Add(time.Second)
-		if state := game.snapshot(); state.PendingDrawOffer != nil {
+		game.expire(now)
+		if state := game.snapshot(game.now()); state.PendingDrawOffer != nil {
 			t.Fatalf("timeout left pending offer %+v", state.PendingDrawOffer)
 		}
 	})

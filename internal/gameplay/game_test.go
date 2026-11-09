@@ -158,7 +158,7 @@ func TestGameMoveUpdatesAuthoritativeState(t *testing.T) {
 				t.Fatalf("Move() LastMoveSAN = %q, want %q", result.LastMoveSAN, "e4")
 			}
 
-			snapshot := game.snapshot()
+			snapshot := game.snapshot(game.now())
 			if snapshot.FEN != result.FEN {
 				t.Fatalf("Snapshot().FEN = %q, want %q", snapshot.FEN, result.FEN)
 			}
@@ -232,7 +232,7 @@ func TestGamePrivateClockStartsWhenSecondPlayerJoins(t *testing.T) {
 	}
 
 	now = now.Add(5 * time.Second)
-	snapshot := game.snapshot()
+	snapshot := game.snapshot(game.now())
 	if snapshot.WhiteRemaining != 55*time.Second {
 		t.Fatalf("WhiteRemaining = %v, want 55s", snapshot.WhiteRemaining)
 	}
@@ -270,7 +270,7 @@ func TestGameMoveCommitsClockAndIncrement(t *testing.T) {
 	}
 }
 
-func TestGameSnapshotAdjudicatesTimeout(t *testing.T) {
+func TestGameSnapshotLeavesTimeoutForExplicitExpiration(t *testing.T) {
 	t.Parallel()
 
 	base := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
@@ -281,7 +281,14 @@ func TestGameSnapshotAdjudicatesTimeout(t *testing.T) {
 	game.clock.start(now)
 
 	now = now.Add(time.Second)
-	snapshot := game.snapshot()
+	snapshot := game.snapshot(game.now())
+	if snapshot.Outcome != domain.OutcomeNone || snapshot.Version != 0 || !game.clock.running {
+		t.Fatalf("snapshot settled an expired clock: %+v", snapshot)
+	}
+	if !game.expire(now) {
+		t.Fatal("explicit expiration did not settle the clock")
+	}
+	snapshot = game.snapshot(game.now())
 
 	if snapshot.Outcome != domain.OutcomeBlackWin {
 		t.Fatalf("Outcome = %v, want %v", snapshot.Outcome, domain.OutcomeBlackWin)
@@ -315,7 +322,8 @@ func TestGameTimeoutIsDrawWhenOpponentHasBareKing(t *testing.T) {
 	game.clock.start(now)
 
 	now = now.Add(time.Second)
-	snapshot := game.snapshot()
+	game.expire(now)
+	snapshot := game.snapshot(game.now())
 	if snapshot.Outcome != domain.OutcomeDraw || snapshot.Termination != domain.TerminationTimeout {
 		t.Fatalf("timeout state = (%v, %v), want (%v, %v)", snapshot.Outcome, snapshot.Termination, domain.OutcomeDraw, domain.TerminationTimeout)
 	}

@@ -3,6 +3,7 @@ package gameplay
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -89,6 +90,56 @@ func TestGameServicePrivateGameLifecycle(t *testing.T) {
 	}
 	if state.WhiteRemaining != 10*time.Minute || state.BlackRemaining != 10*time.Minute {
 		t.Fatalf("GameState() remaining = (%v, %v), want 10m for both", state.WhiteRemaining, state.BlackRemaining)
+	}
+}
+
+func TestGameServiceConcurrentSnapshotsAndMoves(t *testing.T) {
+	service := NewGameService()
+	defer service.Close()
+	ctx := context.Background()
+	created, err := service.CreatePrivateGame(ctx, CreatePrivateCommand{
+		ProfileID: "white", Initial: time.Minute, ColorPreference: ColorWhite,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.JoinPrivateGame(ctx, JoinPrivateCommand{GameID: created.GameID, ProfileID: "black"}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	var readers sync.WaitGroup
+	defer readers.Wait()
+	for range 2 {
+		readers.Go(func() {
+			<-start
+			for range 8 {
+				state, err := service.GameState(ctx, created.GameID)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if state.GameID != created.GameID || state.FEN == "" {
+					t.Errorf("incomplete snapshot: %+v", state)
+				}
+			}
+		})
+	}
+	close(start)
+	for i, move := range []string{"e2e4", "e7e5", "g1f3", "b8c6"} {
+		player := identity.ProfileID("white")
+		if i%2 != 0 {
+			player = "black"
+		}
+		state, err := service.MakeMove(ctx, MoveCommand{
+			GameID: created.GameID, ProfileID: player, Move: move, ExpectedVersion: uint64(i),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Version != uint64(i+1) {
+			t.Fatalf("move %s returned version %d", move, state.Version)
+		}
 	}
 }
 
@@ -255,15 +306,17 @@ func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
 			service := NewGameService()
 			game := newReadyGame()
 			service.games[game.id] = game
-			game.scheduleExpiration(nil)
+			service.mu.Lock()
+			service.scheduleExpiration(game)
+			service.mu.Unlock()
 
 			if err := tt.act(service, game); err != nil {
 				t.Fatalf("terminal action error = %v", err)
 			}
 
-			game.mu.Lock()
+			service.mu.Lock()
 			timer := game.expirationTimer
-			game.mu.Unlock()
+			service.mu.Unlock()
 			if timer != nil {
 				t.Fatal("terminal action left expiration timer running")
 			}
@@ -276,29 +329,16 @@ func TestGameServiceCreatePrivateGameRejectsInvalidCommands(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		ctx     func() context.Context
 		command CreatePrivateCommand
 		wantErr error
 	}{
 		{
-			name: "canceled context",
-			ctx: func() context.Context {
-				ctx, cancel := context.WithCancel(context.Background())
-				cancel()
-				return ctx
-			},
-			command: CreatePrivateCommand{ProfileID: "player", Initial: time.Minute, ColorPreference: ColorWhite},
-			wantErr: context.Canceled,
-		},
-		{
 			name:    "invalid time control",
-			ctx:     context.Background,
 			command: CreatePrivateCommand{ProfileID: "player", Initial: 0, ColorPreference: ColorWhite},
 			wantErr: ErrInvalidTimeControl,
 		},
 		{
 			name:    "invalid color",
-			ctx:     context.Background,
 			command: CreatePrivateCommand{ProfileID: "player", Initial: time.Minute, ColorPreference: ColorPreference(99)},
 			wantErr: ErrInvalidColorPreference,
 		},
@@ -308,7 +348,7 @@ func TestGameServiceCreatePrivateGameRejectsInvalidCommands(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := NewGameService().CreatePrivateGame(tt.ctx(), tt.command)
+			_, err := NewGameService().CreatePrivateGame(context.Background(), tt.command)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("CreatePrivateGame() error = %v, want %v", err, tt.wantErr)
 			}
@@ -336,7 +376,7 @@ func TestGameServiceRejectsEmptyProfileID(t *testing.T) {
 	if _, err = service.JoinPrivateGame(context.Background(), JoinPrivateCommand{GameID: created.GameID}); !errors.Is(err, ErrInvalidProfileID) {
 		t.Fatalf("JoinPrivateGame() error = %v, want %v", err, ErrInvalidProfileID)
 	}
-	if _, err = service.EnterMatchmaking(context.Background(), NewEnterMatchmakingCommand("", time.Minute, 0)); !errors.Is(err, ErrInvalidProfileID) {
+	if _, err = service.EnterMatchmaking(context.Background(), EnterMatchmakingCommand{ProfileID: "", Initial: time.Minute, Increment: 0}); !errors.Is(err, ErrInvalidProfileID) {
 		t.Fatalf("EnterMatchmaking() error = %v, want %v", err, ErrInvalidProfileID)
 	}
 }
@@ -349,13 +389,13 @@ func TestGameServiceMatchmakingMatchesWithinPool(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	first, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("first", 3*time.Minute, 2*time.Second))
+	first, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "first", Initial: 3 * time.Minute, Increment: 2 * time.Second})
 	if err != nil {
 		t.Fatalf("first EnterMatchmaking() error = %v", err)
 	}
 	assertNoMatch(t, first.Result)
 
-	second, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("second", 3*time.Minute, 2*time.Second))
+	second, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "second", Initial: 3 * time.Minute, Increment: 2 * time.Second})
 	if err != nil {
 		t.Fatalf("second EnterMatchmaking() error = %v", err)
 	}
@@ -377,29 +417,29 @@ func TestGameServiceMatchmakingStopsCancellationCleanupAfterMatch(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	first, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("first", time.Minute, 0))
+	first, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "first", Initial: time.Minute, Increment: 0})
 	if err != nil {
 		t.Fatalf("first EnterMatchmaking() error = %v", err)
 	}
 
 	key := timeControlKey{initial: time.Minute}
-	service.mu.RLock()
-	waiting := service.waitingPlayers[key]
-	service.mu.RUnlock()
+	service.mu.Lock()
+	waiting := service.queue[key]
+	service.mu.Unlock()
 	if waiting == nil || waiting.stopCleanup == nil {
 		t.Fatal("queued player has no cancellation cleanup")
 	}
 
-	second, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("second", time.Minute, 0))
+	second, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "second", Initial: time.Minute, Increment: 0})
 	if err != nil {
 		t.Fatalf("second EnterMatchmaking() error = %v", err)
 	}
 	receiveMatch(t, first.Result)
 	receiveMatch(t, second.Result)
 
-	service.mu.RLock()
+	service.mu.Lock()
 	cleanup := waiting.stopCleanup
-	service.mu.RUnlock()
+	service.mu.Unlock()
 	if cleanup != nil {
 		t.Fatal("matched player still has a cancellation cleanup")
 	}
@@ -412,22 +452,22 @@ func TestGameServiceMatchmakingKeepsPoolsSeparate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	bullet, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("bullet-1", time.Minute, 0))
+	bullet, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "bullet-1", Initial: time.Minute, Increment: 0})
 	if err != nil {
 		t.Fatalf("bullet EnterMatchmaking() error = %v", err)
 	}
-	rapid, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("rapid-1", 10*time.Minute, 0))
+	rapid, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "rapid-1", Initial: 10 * time.Minute, Increment: 0})
 	if err != nil {
 		t.Fatalf("rapid EnterMatchmaking() error = %v", err)
 	}
 	assertNoMatch(t, bullet.Result)
 	assertNoMatch(t, rapid.Result)
 
-	bulletPeer, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("bullet-2", time.Minute, 0))
+	bulletPeer, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "bullet-2", Initial: time.Minute, Increment: 0})
 	if err != nil {
 		t.Fatalf("bullet peer EnterMatchmaking() error = %v", err)
 	}
-	rapidPeer, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("rapid-2", 10*time.Minute, 0))
+	rapidPeer, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "rapid-2", Initial: 10 * time.Minute, Increment: 0})
 	if err != nil {
 		t.Fatalf("rapid peer EnterMatchmaking() error = %v", err)
 	}
@@ -455,11 +495,11 @@ func TestGameServiceMatchmakingRejectsDuplicateProfileAcrossPools(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("player", time.Minute, 0))
+	_, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "player", Initial: time.Minute, Increment: 0})
 	if err != nil {
 		t.Fatalf("first EnterMatchmaking() error = %v", err)
 	}
-	_, err = service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("player", 10*time.Minute, 0))
+	_, err = service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "player", Initial: 10 * time.Minute, Increment: 0})
 	if !errors.Is(err, ErrAlreadyQueued) {
 		t.Fatalf("second EnterMatchmaking() error = %v, want %v", err, ErrAlreadyQueued)
 	}
@@ -470,7 +510,7 @@ func TestGameServiceMatchmakingRemovesCanceledPlayer(t *testing.T) {
 
 	service := NewGameService()
 	ctx, cancel := context.WithCancel(context.Background())
-	ticket, err := service.EnterMatchmaking(ctx, NewEnterMatchmakingCommand("player", time.Minute, 0))
+	ticket, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "player", Initial: time.Minute, Increment: 0})
 	if err != nil {
 		t.Fatalf("EnterMatchmaking() error = %v", err)
 	}
@@ -486,9 +526,9 @@ func TestGameServiceMatchmakingRemovesCanceledPlayer(t *testing.T) {
 		t.Fatal("canceled matchmaking ticket was not closed")
 	}
 
-	service.mu.RLock()
-	remaining := len(service.waitingPlayers)
-	service.mu.RUnlock()
+	service.mu.Lock()
+	remaining := len(service.queue)
+	service.mu.Unlock()
 	if remaining != 0 {
 		t.Fatalf("waiting player count = %d, want 0", remaining)
 	}
@@ -499,18 +539,10 @@ func TestGameServiceMatchmakingRejectsInvalidTimeControl(t *testing.T) {
 
 	_, err := NewGameService().EnterMatchmaking(
 		context.Background(),
-		NewEnterMatchmakingCommand("player", 0, 0),
+		EnterMatchmakingCommand{ProfileID: "player", Initial: 0, Increment: 0},
 	)
 	if !errors.Is(err, ErrInvalidTimeControl) {
 		t.Fatalf("EnterMatchmaking() error = %v, want %v", err, ErrInvalidTimeControl)
-	}
-}
-
-func TestAssignMatchmakingColorsRejectsInvalidColor(t *testing.T) {
-	t.Parallel()
-
-	if _, _, err := assignMatchmakingColors("waiting", "current", chess.NoColor); !errors.Is(err, ErrInvalidColorPreference) {
-		t.Fatalf("assignMatchmakingColors() error = %v, want %v", err, ErrInvalidColorPreference)
 	}
 }
 
@@ -536,5 +568,43 @@ func receiveMatch(t *testing.T, result <-chan GameAssignment) GameAssignment {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for match result")
 		return GameAssignment{}
+	}
+}
+
+func TestGameServiceCancellationOnlyStopsQueuedWork(t *testing.T) {
+	t.Parallel()
+	service := NewGameService()
+	defer service.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{
+		ProfileID: "white", Initial: time.Minute,
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled matchmaking error = %v, want context.Canceled", err)
+	}
+
+	created, err := service.CreatePrivateGame(ctx, CreatePrivateCommand{
+		ProfileID: "white", Initial: time.Minute, ColorPreference: ColorWhite,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.JoinPrivateGame(ctx, JoinPrivateCommand{
+		ProfileID: "black", GameID: created.GameID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.MakeMove(ctx, MoveCommand{
+		ProfileID: "white", GameID: created.GameID, Move: "e2e4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := service.GameState(ctx, created.GameID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Version != 1 || state.LastMoveSAN != "e4" {
+		t.Fatalf("state after canceled synchronous calls = %+v, want committed e4", state)
 	}
 }

@@ -5,14 +5,16 @@ include .env
 export
 endif
 
-.PHONY: help chessli reset-local-db run build test test-stack fmt fmt-check vet check test-race cover tidy clean generate mockgen run-deps stop-deps clean-deps seed-local migration migrate-up migrate-down migrate-status sqlc
+.PHONY: help chessli reset-local-db run run-tui build build-tui test test-stack fmt fmt-check vet check test-race cover tidy clean generate mockgen run-deps stop-deps clean-deps seed-local migration migrate-up migrate-down migrate-status
 
 help:
 	@echo "Available targets:"
-	@echo "  make chessli - generate, build, start PostgreSQL, migrate, and run"
+	@echo "  make chessli - build and run the WebSocket server"
 	@echo "  make reset-local-db - recreate PostgreSQL data, migrate, and seed it"
-	@echo "  make run    - run the app"
-	@echo "  make build  - build all packages"
+	@echo "  make run    - run the WebSocket server"
+	@echo "  make run-tui [PROFILE_ID=uuid] - run the terminal client"
+	@echo "  make build  - build the WebSocket server"
+	@echo "  make build-tui - build the terminal client"
 	@echo "  make test   - run tests"
 	@echo "  make test-stack - run WebSocket stack tests with the race detector"
 	@echo "  make fmt    - format Go code"
@@ -23,7 +25,7 @@ help:
 	@echo "  make cover  - report test coverage"
 	@echo "  make tidy   - tidy go.mod/go.sum"
 	@echo "  make clean  - clean Go build and test caches"
-	@echo "  make generate - regenerate Go and sqlc code"
+	@echo "  make generate - regenerate Go code"
 	@echo "  make mockgen  - print mockgen version"
 	@echo "  make run-deps  - start PostgreSQL"
 	@echo "  make stop-deps - stop PostgreSQL"
@@ -35,9 +37,7 @@ help:
 	@echo "  make migrate-status - show migration status"
 
 chessli:
-	$(MAKE) generate
 	$(MAKE) build
-	$(MAKE) run-deps
 	./bin/chessli
 
 reset-local-db:
@@ -48,9 +48,16 @@ reset-local-db:
 run:
 	go run ./cmd
 
+run-tui:
+	go run ./cmd/chessli -profile-id "$(PROFILE_ID)"
+
 build:
 	@mkdir -p bin
 	go build -o bin/chessli ./cmd
+
+build-tui:
+	@mkdir -p bin
+	go build -o bin/chessli-tui ./cmd/chessli
 
 test:
 	go test ./...
@@ -84,7 +91,6 @@ clean:
 	rm -rf bin
 
 generate:
-	$(MAKE) sqlc
 	go generate ./...
 
 mockgen:
@@ -115,7 +121,3 @@ migrate-down:
 
 migrate-status:
 	goose -dir $(MIGRATIONS_DIR) postgres "$(DATABASE_URL)" status
-
-sqlc:
-	mkdir -p internal/database/sqlc
-	sqlc generate

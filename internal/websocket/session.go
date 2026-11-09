@@ -3,8 +3,8 @@ package websocket
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -17,16 +17,6 @@ import (
 
 const outgoingBufferSize = 16
 
-var errMessageHandlerRequired = errors.New("websocket message handler is required")
-
-type sessionRunState uint32
-
-const (
-	sessionNotStarted sessionRunState = iota
-	sessionRunning
-	sessionStopped
-)
-
 // HandlerFunc processes a JSON message received from a client.
 type HandlerFunc func(
 	ctx context.Context,
@@ -37,9 +27,10 @@ type HandlerFunc func(
 // Session exchanges JSON messages over a WebSocket connection.
 // Send is safe for concurrent use; Run may be called only once.
 type Session struct {
-	profile  identity.Profile
-	conn     *coderws.Conn
-	runState atomic.Uint32
+	profileID    identity.ProfileID
+	activeGameID identity.GameID
+	conn         *coderws.Conn
+	running      atomic.Bool
 
 	outgoing chan protocol.ServerEnvelope
 
@@ -47,10 +38,10 @@ type Session struct {
 	heartbeatTimeout  time.Duration
 }
 
-// NewSession creates a Session for profile and conn.
-func NewSession(profile identity.Profile, conn *coderws.Conn) *Session {
+// NewSession creates a Session for profileID and conn.
+func NewSession(profileID identity.ProfileID, conn *coderws.Conn) *Session {
 	return &Session{
-		profile:           profile,
+		profileID:         profileID,
 		conn:              conn,
 		outgoing:          make(chan protocol.ServerEnvelope, outgoingBufferSize),
 		heartbeatInterval: heartbeatInterval,
@@ -59,17 +50,28 @@ func NewSession(profile identity.Profile, conn *coderws.Conn) *Session {
 }
 
 // Run exchanges messages until the context is canceled or an I/O loop stops.
-// It may be called only once.
+// It sends connection.ready first and joins all I/O loops before returning; call only once.
+// The server supplies a valid connection and message handler for each new session.
 func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
-	if handleMessage == nil {
-		return errMessageHandlerRequired
-	}
-	if !c.runState.CompareAndSwap(uint32(sessionNotStarted), uint32(sessionRunning)) {
-		return protocol.ErrSessionAlreadyRun
-	}
-
+	c.running.Store(true)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	defer c.running.Store(false)
+	defer c.conn.CloseNow()
+
+	// Write before starting the loops so no response can overtake connection.ready.
+	readyCtx, readyCancel := context.WithTimeout(ctx, heartbeatTimeout)
+	err := wsjson.Write(readyCtx, c.conn, protocol.ServerEnvelope{
+		Type: protocol.ServerConnectionReady,
+		Payload: protocol.ConnectionReadyPayload{
+			ProfileID:    c.profileID,
+			ActiveGameID: c.activeGameID,
+		},
+	})
+	readyCancel()
+	if err != nil {
+		return fmt.Errorf("send connection ack: %w", err)
+	}
 
 	errCh := make(chan error, 3)
 
@@ -86,7 +88,8 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 	}()
 
 	firstError := <-errCh
-	c.runState.Store(uint32(sessionStopped))
+	// Closing the socket releases the other loops before we join them.
+	c.running.Store(false)
 	cancel()
 
 	_ = c.conn.CloseNow()
@@ -136,19 +139,16 @@ func (c *Session) writeLoop(ctx context.Context) error {
 
 		case message := <-c.outgoing:
 			if err := wsjson.Write(ctx, c.conn, message); err != nil {
-				return fmt.Errorf(
-					"write websocket message: %w",
-					err,
-				)
+				return fmt.Errorf("write websocket message: %w", err)
 			}
 		}
 	}
 }
 
 // Send queues a message without allowing a slow client to block its caller.
-// It is safe for concurrent use.
+// It is safe for concurrent use; success means queued, not delivered.
 func (c *Session) Send(ctx context.Context, message protocol.ServerEnvelope) error {
-	if sessionRunState(c.runState.Load()) != sessionRunning {
+	if !c.running.Load() {
 		return protocol.ErrSessionNotRunning
 	}
 	if err := ctx.Err(); err != nil {
@@ -159,6 +159,8 @@ func (c *Session) Send(ctx context.Context, message protocol.ServerEnvelope) err
 	case c.outgoing <- message:
 		return nil
 	default:
+		slog.Warn("outgoing queue full", "event", "message.dropped", "reason", "queue_full",
+			"profile_id", c.profileID, "message_type", message.Type, "request_id", message.RequestID)
 		return protocol.ErrSessionQueueFull
 	}
 }

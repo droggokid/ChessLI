@@ -22,7 +22,7 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO completed_games (
     id, white_profile_id, black_profile_id, initial_time_ms, increment_ms,
-    outcome, termination, final_fen
+    outcome, termination, final_fen, moves
 )
 VALUES
     (
@@ -30,33 +30,27 @@ VALUES
         '00000000-0000-4000-8000-000000000001',
         '00000000-0000-4000-8000-000000000002',
         300000, 2000, 'black_win', 'checkmate',
-        'rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3'
+        'rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3',
+        '[
+            {"ply":1,"uci":"f2f3","white_remaining_ms":298790,"black_remaining_ms":300000},
+            {"ply":2,"uci":"e7e5","white_remaining_ms":298790,"black_remaining_ms":294234},
+            {"ply":3,"uci":"g2g4","white_remaining_ms":286868,"black_remaining_ms":294234},
+            {"ply":4,"uci":"d8h4","white_remaining_ms":286868,"black_remaining_ms":274834}
+        ]'::jsonb
     ),
     (
         '10000000-0000-4000-8000-000000000002',
         '00000000-0000-4000-8000-000000000002',
         '00000000-0000-4000-8000-000000000003',
         600000, 0, 'draw', 'draw_agreement',
-        'rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq - 0 2'
+        'rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq - 0 2',
+        '[
+            {"ply":1,"uci":"d2d4","white_remaining_ms":592111,"black_remaining_ms":600000},
+            {"ply":2,"uci":"d7d5","white_remaining_ms":592111,"black_remaining_ms":590222},
+            {"ply":3,"uci":"c2c4","white_remaining_ms":583333,"black_remaining_ms":590222}
+        ]'::jsonb
     )
 ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO completed_game_moves (
-    game_id,
-    ply,
-    uci,
-    white_remaining_ms,
-    black_remaining_ms
-)
-VALUES
-    ('10000000-0000-4000-8000-000000000001', 1, 'f2f3', 298790, 300000),
-    ('10000000-0000-4000-8000-000000000001', 2, 'e7e5', 298790, 294234),
-    ('10000000-0000-4000-8000-000000000001', 3, 'g2g4', 286868, 294234),
-    ('10000000-0000-4000-8000-000000000001', 4, 'd8h4', 286868, 274834),
-    ('10000000-0000-4000-8000-000000000002', 1, 'd2d4', 592111, 600000),
-    ('10000000-0000-4000-8000-000000000002', 2, 'd7d5', 592111, 590222),
-    ('10000000-0000-4000-8000-000000000002', 3, 'c2c4', 583333, 590222)
-ON CONFLICT (game_id, ply) DO NOTHING;
 
 COMMIT;
 SQL

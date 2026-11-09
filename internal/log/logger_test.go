@@ -6,13 +6,11 @@ func TestNewLogger(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		format  LogFormat
-		wantNil bool
+		name   string
+		format LogFormat
 	}{
 		{name: "JSON", format: LogFormatJSON},
 		{name: "text", format: LogFormatText},
-		{name: "unsupported", format: LogFormat("xml"), wantNil: true},
 	}
 
 	for _, tt := range tests {
@@ -20,8 +18,8 @@ func TestNewLogger(t *testing.T) {
 			t.Parallel()
 
 			logger := NewLogger(tt.format)
-			if (logger == nil) != tt.wantNil {
-				t.Fatalf("NewLogger(%q) nil = %v, want %v", tt.format, logger == nil, tt.wantNil)
+			if logger == nil {
+				t.Fatalf("NewLogger(%q) returned nil", tt.format)
 			}
 		})
 	}

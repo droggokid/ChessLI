@@ -32,19 +32,9 @@ type ResumeGameCommand struct {
 }
 
 type EnterMatchmakingCommand struct {
-	ProfileID   identity.ProfileID
-	timeControl timeControlKey
-}
-
-// NewEnterMatchmakingCommand builds a command for entering a time-control pool.
-func NewEnterMatchmakingCommand(profileID identity.ProfileID, initial time.Duration, increment time.Duration) EnterMatchmakingCommand {
-	return EnterMatchmakingCommand{
-		ProfileID: profileID,
-		timeControl: timeControlKey{
-			initial:   initial,
-			increment: increment,
-		},
-	}
+	ProfileID identity.ProfileID
+	Initial   time.Duration
+	Increment time.Duration
 }
 
 type MoveCommand struct {
