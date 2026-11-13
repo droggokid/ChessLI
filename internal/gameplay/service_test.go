@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	domain "ChessLI/internal/game"
@@ -40,33 +41,6 @@ func TestGameServiceRejectsUnknownProfile(t *testing.T) {
 	defer service.Close()
 	if err := service.ValidateProfile(t.Context(), id); !errors.Is(err, ErrProfileNotFound) {
 		t.Fatalf("ValidateProfile() = %v, want profile not found", err)
-	}
-}
-
-func TestValidateTimeControl(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		initial   time.Duration
-		increment time.Duration
-		wantErr   bool
-	}{
-		{name: "valid", initial: time.Minute, increment: time.Second},
-		{name: "zero initial", initial: 0, wantErr: true},
-		{name: "negative initial", initial: -time.Second, wantErr: true},
-		{name: "negative increment", initial: time.Minute, increment: -time.Second, wantErr: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := validateTimeControl(tt.initial, tt.increment)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateTimeControl() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
 	}
 }
 
@@ -203,43 +177,43 @@ func TestGameServiceResumeGame(t *testing.T) {
 }
 
 func TestGameServiceAutomaticallyExpiresPrivateGame(t *testing.T) {
-	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		service := newTestGameService(t)
+		defer service.Close()
 
-	service := newTestGameService(t)
-	t.Cleanup(service.Close)
+		expired := make(chan GameSnapshot, 1)
+		service.SetGameExpiredHandler(func(state GameSnapshot) {
+			expired <- state
+		})
 
-	expired := make(chan GameSnapshot, 1)
-	service.SetGameExpiredHandler(func(state GameSnapshot) {
-		expired <- state
-	})
-
-	created, err := service.CreatePrivateGame(context.Background(), CreatePrivateCommand{
-		ProfileID:       "white",
-		Initial:         20 * time.Millisecond,
-		ColorPreference: ColorWhite,
-	})
-	if err != nil {
-		t.Fatalf("CreatePrivateGame() error = %v", err)
-	}
-
-	if _, err = service.JoinPrivateGame(context.Background(), JoinPrivateCommand{
-		GameID:    created.GameID,
-		ProfileID: "black",
-	}); err != nil {
-		t.Fatalf("JoinPrivateGame() error = %v", err)
-	}
-
-	select {
-	case state := <-expired:
-		if state.Outcome != domain.OutcomeBlackWin || state.Termination != domain.TerminationTimeout {
-			t.Fatalf("expired state = (%v, %v), want (%v, %v)", state.Outcome, state.Termination, domain.OutcomeBlackWin, domain.TerminationTimeout)
+		created, err := service.CreatePrivateGame(t.Context(), CreatePrivateCommand{
+			ProfileID:       "white",
+			Initial:         20 * time.Millisecond,
+			ColorPreference: ColorWhite,
+		})
+		if err != nil {
+			t.Fatalf("CreatePrivateGame() error = %v", err)
 		}
-		if state.Version != 1 || state.WhiteRemaining != 0 {
-			t.Fatalf("expired state version/time = (%d, %v), want (1, 0)", state.Version, state.WhiteRemaining)
+
+		if _, err = service.JoinPrivateGame(t.Context(), JoinPrivateCommand{
+			GameID:    created.GameID,
+			ProfileID: "black",
+		}); err != nil {
+			t.Fatalf("JoinPrivateGame() error = %v", err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("game did not expire automatically")
-	}
+
+		select {
+		case state := <-expired:
+			if state.Outcome != domain.OutcomeBlackWin || state.Termination != domain.TerminationTimeout {
+				t.Fatalf("expired state = (%v, %v), want (%v, %v)", state.Outcome, state.Termination, domain.OutcomeBlackWin, domain.TerminationTimeout)
+			}
+			if state.Version != 1 || state.WhiteRemaining != 0 {
+				t.Fatalf("expired state version/time = (%d, %v), want (1, 0)", state.Version, state.WhiteRemaining)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("game did not expire automatically")
+		}
+	})
 }
 
 func TestGameServiceNotifiesTimeoutDetectedByCommandsOrState(t *testing.T) {
@@ -297,58 +271,11 @@ func TestGameServiceNotifiesTimeoutDetectedByCommandsOrState(t *testing.T) {
 				t.Fatal("timeout did not notify")
 			}
 			_ = tt.act(service, game.id)
+			service.Close()
 			select {
 			case state := <-expired:
 				t.Fatalf("duplicate timeout notification = %+v", state)
 			default:
-			}
-		})
-	}
-}
-
-func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
-	tests := []struct {
-		name string
-		act  func(*GameService, *game) error
-	}{
-		{
-			name: "resign",
-			act: func(service *GameService, game *game) error {
-				_, err := service.Resign(context.Background(), ResignCommand{GameID: game.id, ProfileID: "white"})
-				return err
-			},
-		},
-		{
-			name: "accept draw",
-			act: func(service *GameService, game *game) error {
-				state, err := service.OfferDraw(context.Background(), OfferDrawCommand{GameID: game.id, ProfileID: "white"})
-				if err != nil {
-					return err
-				}
-				_, err = service.AcceptDraw(context.Background(), DrawOfferResponseCommand{GameID: game.id, ProfileID: "black", OfferID: state.PendingDrawOffer.OfferID})
-				return err
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			service := newTestGameService(t)
-			game := newReadyGame()
-			service.games[game.id] = game
-			service.mu.Lock()
-			service.scheduleExpiration(game)
-			service.mu.Unlock()
-
-			if err := tt.act(service, game); err != nil {
-				t.Fatalf("terminal action error = %v", err)
-			}
-
-			service.mu.Lock()
-			timer := game.expirationTimer
-			service.mu.Unlock()
-			if timer != nil {
-				t.Fatal("terminal action left expiration timer running")
 			}
 		})
 	}
@@ -412,67 +339,44 @@ func TestGameServiceRejectsEmptyProfileID(t *testing.T) {
 }
 
 func TestGameServiceMatchmakingMatchesWithinPool(t *testing.T) {
-	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		service := newTestGameService(t)
+		service.pickColor = func() chess.Color { return chess.White }
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	service := newTestGameService(t)
-	service.pickColor = func() chess.Color { return chess.White }
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+		first, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "first", Initial: 3 * time.Minute, Increment: 2 * time.Second})
+		if err != nil {
+			t.Fatalf("first EnterMatchmaking() error = %v", err)
+		}
+		assertNoMatch(t, first.Result)
 
-	first, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "first", Initial: 3 * time.Minute, Increment: 2 * time.Second})
-	if err != nil {
-		t.Fatalf("first EnterMatchmaking() error = %v", err)
-	}
-	assertNoMatch(t, first.Result)
+		second, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "second", Initial: 3 * time.Minute, Increment: 2 * time.Second})
+		if err != nil {
+			t.Fatalf("second EnterMatchmaking() error = %v", err)
+		}
 
-	second, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "second", Initial: 3 * time.Minute, Increment: 2 * time.Second})
-	if err != nil {
-		t.Fatalf("second EnterMatchmaking() error = %v", err)
-	}
+		firstResult := receiveMatch(t, first.Result)
+		secondResult := receiveMatch(t, second.Result)
+		if firstResult.GameID == "" || firstResult.GameID != secondResult.GameID {
+			t.Fatalf("match game IDs = (%q, %q), want same non-empty ID", firstResult.GameID, secondResult.GameID)
+		}
+		if firstResult.Color != chess.White || secondResult.Color != chess.Black {
+			t.Fatalf("match colors = (%v, %v), want (%v, %v)", firstResult.Color, secondResult.Color, chess.White, chess.Black)
+		}
 
-	firstResult := receiveMatch(t, first.Result)
-	secondResult := receiveMatch(t, second.Result)
-	if firstResult.GameID == "" || firstResult.GameID != secondResult.GameID {
-		t.Fatalf("match game IDs = (%q, %q), want same non-empty ID", firstResult.GameID, secondResult.GameID)
-	}
-	if firstResult.Color != chess.White || secondResult.Color != chess.Black {
-		t.Fatalf("match colors = (%v, %v), want (%v, %v)", firstResult.Color, secondResult.Color, chess.White, chess.Black)
-	}
-}
-
-func TestGameServiceMatchmakingStopsCancellationCleanupAfterMatch(t *testing.T) {
-	t.Parallel()
-
-	service := newTestGameService(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	first, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "first", Initial: time.Minute, Increment: 0})
-	if err != nil {
-		t.Fatalf("first EnterMatchmaking() error = %v", err)
-	}
-
-	key := timeControlKey{initial: time.Minute}
-	service.mu.Lock()
-	waiting := service.queue[key]
-	service.mu.Unlock()
-	if waiting == nil || waiting.stopCleanup == nil {
-		t.Fatal("queued player has no cancellation cleanup")
-	}
-
-	second, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "second", Initial: time.Minute, Increment: 0})
-	if err != nil {
-		t.Fatalf("second EnterMatchmaking() error = %v", err)
-	}
-	receiveMatch(t, first.Result)
-	receiveMatch(t, second.Result)
-
-	service.mu.Lock()
-	cleanup := waiting.stopCleanup
-	service.mu.Unlock()
-	if cleanup != nil {
-		t.Fatal("matched player still has a cancellation cleanup")
-	}
+		cancel()
+		synctest.Wait()
+		for _, profileID := range []identity.ProfileID{"first", "second"} {
+			if service.ActiveGame(profileID) != firstResult.GameID {
+				t.Fatalf("cancellation released matched player %q", profileID)
+			}
+		}
+		state, err := service.GameState(t.Context(), firstResult.GameID)
+		if err != nil || state.Outcome != domain.OutcomeNone {
+			t.Fatalf("cancellation changed matched game: %+v, %v", state, err)
+		}
+	})
 }
 
 func TestGameServiceMatchmakingKeepsPoolsSeparate(t *testing.T) {
@@ -636,5 +540,330 @@ func TestGameServiceCancellationOnlyStopsQueuedWork(t *testing.T) {
 	}
 	if state.Version != 1 || state.LastMoveSAN != "e4" {
 		t.Fatalf("state after canceled synchronous calls = %+v, want committed e4", state)
+	}
+}
+
+func TestGameServiceConcurrentCreateReservesProfileOnce(t *testing.T) {
+	s := newTestGameService(t)
+	defer s.Close()
+	start := make(chan struct{})
+	results := make(chan error, 16)
+	for range cap(results) {
+		go func() {
+			<-start
+			_, err := s.CreatePrivateGame(context.Background(), CreatePrivateCommand{
+				ProfileID: "player", Initial: time.Minute, ColorPreference: ColorWhite,
+			})
+			results <- err
+		}()
+	}
+	close(start)
+	successes := 0
+	for range cap(results) {
+		if err := <-results; err == nil {
+			successes++
+		} else if !errors.Is(err, ErrAlreadyInGame) {
+			t.Fatalf("CreatePrivateGame() error = %v", err)
+		}
+	}
+	if successes != 1 || len(s.games) != 1 || s.ActiveGame("player") == "" {
+		t.Fatalf("successes/games/active = %d/%d/%q", successes, len(s.games), s.ActiveGame("player"))
+	}
+}
+
+func TestGameServiceAdmissionAcrossModes(t *testing.T) {
+	s := newTestGameService(t)
+	defer s.Close()
+	ctx := context.Background()
+	create := func(profile identity.ProfileID) (GameAssignment, error) {
+		return s.CreatePrivateGame(ctx, CreatePrivateCommand{
+			ProfileID: profile, Initial: time.Minute, ColorPreference: ColorWhite,
+		})
+	}
+	host, err := create("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if _, err = s.EnterMatchmaking(queued, EnterMatchmakingCommand{ProfileID: "player", Initial: time.Minute}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = create("player"); !errors.Is(err, ErrAlreadyQueued) {
+		t.Fatalf("queued create error = %v", err)
+	}
+	if _, err = s.JoinPrivateGame(ctx, JoinPrivateCommand{GameID: host.GameID, ProfileID: "player"}); !errors.Is(err, ErrAlreadyQueued) {
+		t.Fatalf("queued join error = %v", err)
+	}
+	cancel()
+	created, err := create("player")
+	if err != nil {
+		t.Fatalf("create after cancellation: %v", err)
+	}
+	if s.ActiveGame("player") != created.GameID {
+		t.Fatal("private creator has no active game")
+	}
+	if _, err = s.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "player", Initial: time.Minute}); !errors.Is(err, ErrAlreadyInGame) {
+		t.Fatalf("private to matchmaking error = %v", err)
+	}
+	if _, err = s.JoinPrivateGame(ctx, JoinPrivateCommand{GameID: host.GameID, ProfileID: "player"}); !errors.Is(err, ErrAlreadyInGame) {
+		t.Fatalf("active join error = %v", err)
+	}
+	if _, err = s.JoinPrivateGame(ctx, JoinPrivateCommand{GameID: host.GameID, ProfileID: "joiner"}); err != nil {
+		t.Fatal(err)
+	}
+	if s.ActiveGame("joiner") != host.GameID {
+		t.Fatal("private joiner has no active game")
+	}
+	first, err := s.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "first", Initial: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "second", Initial: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := receiveMatch(t, first.Result)
+	receiveMatch(t, second.Result)
+	if s.ActiveGame("first") != match.GameID || s.ActiveGame("second") != match.GameID {
+		t.Fatal("matchmaking did not reserve both profiles")
+	}
+	if _, err = create("first"); !errors.Is(err, ErrAlreadyInGame) {
+		t.Fatalf("matchmaking to private error = %v", err)
+	}
+}
+
+func TestGameServiceActiveGameReleasesFinishedOrExpired(t *testing.T) {
+	for _, name := range []string{"resigned", "expired"} {
+		t.Run(name, func(t *testing.T) {
+			s := newTestGameService(t)
+			defer s.Close()
+			g := newReadyGame()
+			s.games[g.id] = g
+			s.profileGames["white"], s.profileGames["black"] = g.id, g.id
+			if name == "expired" {
+				g.now = func() time.Time { return g.clock.turnStartedAt.Add(10 * time.Minute) }
+			} else if _, err := s.Resign(context.Background(), ResignCommand{GameID: g.id, ProfileID: "white"}); err != nil {
+				t.Fatal(err)
+			}
+			if s.ActiveGame("white") != "" || s.ActiveGame("black") != "" {
+				t.Fatal("finished or elapsed game still reserves profiles")
+			}
+			if _, err := s.CreatePrivateGame(context.Background(), CreatePrivateCommand{
+				ProfileID: "white", Initial: time.Minute, ColorPreference: ColorWhite,
+			}); err != nil {
+				t.Fatalf("create after finish or expiry: %v", err)
+			}
+		})
+	}
+}
+
+func TestGameServiceCloseJoinsAsynchronousNotifications(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		service := newTestGameService(t)
+		notified := make(chan GameSnapshot, 2)
+		release := make(chan struct{})
+		service.SetGameExpiredHandler(func(state GameSnapshot) {
+			notified <- state
+			<-release
+		})
+		service.mu.Lock()
+		service.notifyGameExpired(GameSnapshot{GameID: "game"})
+		service.mu.Unlock()
+		if state := <-notified; state.GameID != "game" {
+			t.Fatalf("notification = %+v", state)
+		}
+		closed := make(chan struct{})
+		go func() {
+			service.Close()
+			close(closed)
+		}()
+		synctest.Wait()
+		select {
+		case <-closed:
+			t.Error("Close returned while a notification handler was still running")
+		default:
+		}
+		close(release)
+		<-closed
+		service.mu.Lock()
+		service.notifyGameExpired(GameSnapshot{GameID: "after-close"})
+		service.mu.Unlock()
+		synctest.Wait()
+		if len(notified) != 0 {
+			t.Fatal("notification started after Close")
+		}
+	})
+}
+
+func TestGameServiceCompletionCapturesMovesAndFinalClocks(t *testing.T) {
+	repository := persistence.NewMockGameRepository(gomock.NewController(t))
+	service := NewGameService(repository, newTestProfileRepository(t))
+	defer service.Close()
+	g := newGame("game", "white", "black", time.Minute, time.Second)
+	now := time.Now()
+	g.now = func() time.Time { return now }
+	g.clock.start(now)
+	service.games[g.id] = g
+	completed := make(chan persistence.CompletedGame, 2)
+	repository.EXPECT().CreateGame(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, record persistence.CompletedGame) error {
+		// Reentry proves database work runs outside the gameplay lock.
+		if _, err := service.GameState(t.Context(), record.ID); err != nil {
+			t.Error(err)
+		}
+		completed <- record
+		return nil
+	})
+	now = now.Add(2 * time.Second)
+	if _, err := service.MakeMove(t.Context(), MoveCommand{
+		GameID: g.id, ProfileID: "white", Move: "e4", Notation: MoveNotationSAN,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(3 * time.Second)
+	state, err := service.Resign(t.Context(), ResignCommand{GameID: g.id, ProfileID: "black"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.Close()
+	record := <-completed
+	if record.ID != g.id || record.InitialTimeMS != 60000 || record.IncrementMS != 1000 ||
+		record.FinalFEN != state.FEN || !record.CompletedAt.Equal(now) ||
+		record.WhiteRemainingMS != 59000 || record.BlackRemainingMS != 57000 {
+		t.Fatalf("completed record = %+v", record)
+	}
+	if len(record.Moves) != 1 || record.Moves[0].UCI != "e2e4" || record.Moves[0].Ply != 1 ||
+		record.Moves[0].BlackRemainingMS != 60000 {
+		t.Fatalf("recorded moves = %+v", record.Moves)
+	}
+	record.Moves[0].UCI = "changed"
+	if g.moves[0].UCI != "e2e4" || len(completed) != 0 {
+		t.Fatal("completion was not detached or was notified more than once")
+	}
+}
+
+func TestGameServiceCompletionIncludesAutomaticTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		repository := persistence.NewMockGameRepository(gomock.NewController(t))
+		service := NewGameService(repository, newTestProfileRepository(t))
+		defer service.Close()
+		completed := make(chan persistence.CompletedGame, 1)
+		repository.EXPECT().CreateGame(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, record persistence.CompletedGame) error {
+			completed <- record
+			return nil
+		})
+		assignment, err := service.CreatePrivateGame(t.Context(), CreatePrivateCommand{
+			ProfileID: "white", Initial: time.Second, ColorPreference: ColorWhite,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		started := time.Now()
+		if _, err := service.JoinPrivateGame(t.Context(), JoinPrivateCommand{
+			GameID: assignment.GameID, ProfileID: "black",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		record := <-completed
+		if record.Termination != domain.TerminationTimeout || record.WhiteRemainingMS != 0 ||
+			!record.CompletedAt.Equal(started.Add(time.Second)) || len(record.Moves) != 0 {
+			t.Fatalf("timeout record = %+v", record)
+		}
+	})
+}
+
+func TestGameServiceRetriesSaveWithoutBlockingFinalState(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		repository := persistence.NewMockGameRepository(gomock.NewController(t))
+		started := make(chan struct{})
+		first := repository.EXPECT().CreateGame(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, _ persistence.CompletedGame) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		})
+		repository.EXPECT().CreateGame(gomock.Any(), gomock.Any()).Return(nil).After(first)
+		service := NewGameService(repository, newTestProfileRepository(t))
+		defer service.Close()
+		g := newReadyGame()
+		service.games[g.id] = g
+		state, err := service.Resign(t.Context(), ResignCommand{GameID: g.id, ProfileID: "white"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		if state.Outcome != domain.OutcomeBlackWin {
+			t.Fatalf("resignation outcome = %s", state.Outcome)
+		}
+		if _, err := service.GameState(t.Context(), g.id); err != nil {
+			t.Fatal(err)
+		}
+		// Close waits through the timed-out write and the successful retry.
+		service.Close()
+	})
+}
+
+func TestGameServiceIgnoresStaleTimerAfterMoveFinishOrClose(t *testing.T) {
+	for _, action := range []string{"move", "resign", "accept draw", "close"} {
+		t.Run(action, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				service := newTestGameService(t)
+				defer service.Close()
+				g := newReadyGame()
+				now := time.Now()
+				g.now = func() time.Time { return now }
+				g.clock = newGameClock(time.Minute, 0)
+				g.clock.start(now)
+				service.games[g.id] = g
+				notified := false
+				service.SetGameExpiredHandler(func(GameSnapshot) { notified = true })
+				service.mu.Lock()
+				service.scheduleExpiration(g)
+				id := g.expirationID
+				deadline, _ := g.clock.deadline(g.engine.Position().Turn())
+				service.mu.Unlock()
+				switch action {
+				case "move":
+					if _, err := service.MakeMove(context.Background(), MoveCommand{GameID: g.id, ProfileID: "white", Move: "e2e4"}); err != nil {
+						t.Fatal(err)
+					}
+				case "resign":
+					if _, err := service.Resign(context.Background(), ResignCommand{GameID: g.id, ProfileID: "white"}); err != nil {
+						t.Fatal(err)
+					}
+				case "accept draw":
+					state, err := service.OfferDraw(t.Context(), OfferDrawCommand{GameID: g.id, ProfileID: "white"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := service.AcceptDraw(t.Context(), DrawOfferResponseCommand{GameID: g.id, ProfileID: "black", OfferID: state.PendingDrawOffer.OfferID}); err != nil {
+						t.Fatal(err)
+					}
+				case "close":
+					service.Close()
+				}
+				service.mu.Lock()
+				retainedTimer := g.expirationTimer != nil
+				now = deadline
+				service.mu.Unlock()
+				if action != "move" && retainedTimer {
+					t.Fatal("finished or closed game retained its expiration timer")
+				}
+				service.expireFromTimer(g, id)
+				synctest.Wait()
+				service.mu.Lock()
+				outcome := g.outcome
+				service.mu.Unlock()
+				want := domain.OutcomeNone
+				if action == "resign" {
+					want = domain.OutcomeBlackWin
+				}
+				if action == "accept draw" {
+					want = domain.OutcomeDraw
+				}
+				if outcome != want || notified {
+					t.Fatal("stale timer expired the game")
+				}
+			})
+		})
 	}
 }

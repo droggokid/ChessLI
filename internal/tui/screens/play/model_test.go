@@ -2,6 +2,7 @@ package play
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,7 +10,6 @@ import (
 	"ChessLI/internal/websocket/protocol"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 const initialFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -239,6 +239,7 @@ func TestCreateWaitsForAuthoritativeInitialState(t *testing.T) {
 func TestJoinWaitsForInitialState(t *testing.T) {
 	model := &Model{}
 	model, request := submitText(t, model, "/join game-1")
+	model.input = "e5"
 	model, _ = model.Update(protocol.ServerEvent{
 		Type: protocol.ServerGameJoined, RequestID: request.RequestID,
 		Assignment: &protocol.GameCreatedPayload{GameID: "game-1", Color: protocol.ColorBlack},
@@ -247,7 +248,7 @@ func TestJoinWaitsForInitialState(t *testing.T) {
 		t.Fatal("join completed before initial state")
 	}
 	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameInitial, State: initialState()}, true)
-	if model.pending.id != "" || model.board() == "" || model.color != protocol.ColorBlack {
+	if model.pending.id != "" || model.board() == "" || model.color != protocol.ColorBlack || model.input != "e5" {
 		t.Fatal("initial state did not complete join")
 	}
 	if !strings.HasPrefix(model.board(), " H G F E D C B A") {
@@ -257,17 +258,21 @@ func TestJoinWaitsForInitialState(t *testing.T) {
 
 func TestMoveUsesLatestVersionAndWaitsForCorrelatedResponse(t *testing.T) {
 	for _, notation := range []struct {
-		text string
-		want protocol.MoveNotation
+		text    string
+		want    protocol.MoveNotation
+		version uint64
 	}{
-		{"e4", protocol.MoveNotationSAN}, {"e2e4", protocol.MoveNotationUCI}, {"a7a8q", protocol.MoveNotationUCI},
+		{"e4", protocol.MoveNotationSAN, 0}, {"e2e4", protocol.MoveNotationUCI, 7}, {"a7a8q", protocol.MoveNotationUCI, 0},
 	} {
 		t.Run(notation.text, func(t *testing.T) {
 			model := activeModel(t)
+			current := initialState()
+			current.Version = notation.version
+			model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameState, State: current}, true)
 			originalBoard := model.board()
 			model, request := submitText(t, model, notation.text)
 			payload := request.Payload.(protocol.MovePayload)
-			if payload.ExpectedVersion == nil || *payload.ExpectedVersion != 0 || payload.Notation != notation.want {
+			if payload.ExpectedVersion == nil || *payload.ExpectedVersion != notation.version || payload.Notation != notation.want {
 				t.Fatalf("move = %#v", payload)
 			}
 			model, _ = model.Update(SendResultMsg{RequestID: request.RequestID}, true)
@@ -285,13 +290,13 @@ func TestMoveUsesLatestVersionAndWaitsForCorrelatedResponse(t *testing.T) {
 				t.Fatal("unrelated error cleared pending move")
 			}
 			state := initialState()
-			state.Version, state.FEN, state.LastMove = 1, afterE4FEN, "e4"
+			state.Version, state.FEN, state.LastMove = notation.version+1, afterE4FEN, "e4"
 			model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameState, State: state}, true)
 			if !model.IsPending(request.RequestID) {
 				t.Fatal("uncorrelated broadcast cleared pending move")
 			}
 			model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameState, RequestID: request.RequestID, State: state}, true)
-			if model.pending.id != "" || model.board() == originalBoard || !reflect.DeepEqual(model.moves, []string{"v1 e4"}) {
+			if model.pending.id != "" || model.board() == originalBoard || !reflect.DeepEqual(model.moves, []string{fmt.Sprintf("v%d e4", state.Version)}) || model.input != "d4" {
 				t.Fatalf("confirmed move not applied: %#v", model)
 			}
 		})
@@ -447,18 +452,6 @@ func submitText(t *testing.T, model *Model, text string) (*Model, RequestMsg) {
 	return model, request
 }
 
-func TestMoveIncludesNonzeroAuthoritativeVersion(t *testing.T) {
-	model := activeModel(t)
-	state := initialState()
-	state.Version = 7
-	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameState, State: state}, true)
-	_, request := submitText(t, model, "e4")
-	move := request.Payload.(protocol.MovePayload)
-	if move.ExpectedVersion == nil || *move.ExpectedVersion != 7 {
-		t.Fatalf("version = %v, want 7", move.ExpectedVersion)
-	}
-}
-
 func TestRepeatedFinishedSnapshotsPreserveNewInput(t *testing.T) {
 	model := activeModel(t)
 	finished := initialState()
@@ -468,28 +461,6 @@ func TestRepeatedFinishedSnapshotsPreserveNewInput(t *testing.T) {
 	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameState, State: finished}, true)
 	if model.input != "/create" {
 		t.Fatal("repeated terminal snapshot erased new input")
-	}
-}
-
-func TestAcknowledgmentPreservesEditedInput(t *testing.T) {
-	model, request := submitText(t, activeModel(t), "e4")
-	model.input = "Nf3"
-	state := initialState()
-	state.Version, state.FEN, state.LastMove = 1, afterE4FEN, "e4"
-	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameState, RequestID: request.RequestID, State: state}, true)
-	if model.pending.id != "" || model.input != "Nf3" {
-		t.Fatalf("acknowledgment lost edited input: pending=%+v input=%q", model.pending, model.input)
-	}
-}
-
-func TestJoinAssignmentPreservesDraftInput(t *testing.T) {
-	model, request := submitText(t, &Model{}, "/join game-1")
-	model.input = "e5"
-	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameJoined, RequestID: request.RequestID,
-		Assignment: &protocol.GameCreatedPayload{GameID: "game-1", Color: protocol.ColorBlack}}, true)
-	model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerGameInitial, State: initialState()}, true)
-	if model.input != "e5" {
-		t.Fatal("join response erased draft")
 	}
 }
 
@@ -608,18 +579,5 @@ func TestRecentMovesRetainOnlyDisplayedEntries(t *testing.T) {
 	}
 	if !reflect.DeepEqual(model.moves, []string{"v3 move", "v4 move", "v5 move", "v6 move"}) {
 		t.Fatalf("recent moves = %v", model.moves)
-	}
-}
-
-func TestViewKeepsLongInputCursorVisibleAndAlignsBoard(t *testing.T) {
-	model := activeModel(t)
-	model.input = strings.Repeat("界", 60) + "e2e4"
-	view := model.View(74, true)
-	input := strings.Split(view, "\n")[1]
-	if lipgloss.Width(input) > 74 || !strings.HasSuffix(input, "e2e4▏") {
-		t.Fatalf("input overflowed or hid cursor: %q", input)
-	}
-	if !strings.HasPrefix(model.board(), " A B C D E F G H\n8") {
-		t.Fatalf("board labels do not align: %s", model.board())
 	}
 }

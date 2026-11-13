@@ -1,39 +1,27 @@
-package websocket
+package stack
 
 import (
 	"context"
 	"encoding/json"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"ChessLI/internal/gameplay"
 	"ChessLI/internal/identity"
+	"ChessLI/internal/persistence"
+	"ChessLI/internal/websocket"
 	"ChessLI/internal/websocket/protocol"
 
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"go.uber.org/mock/gomock"
 )
 
-func TestServerHealthEndpoints(t *testing.T) {
-	server := NewServer("", newTestGameService(t))
-
-	for _, path := range []string{"/healthz", "/readyz"} {
-		t.Run(path, func(t *testing.T) {
-			response := httptest.NewRecorder()
-			server.httpServer.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
-			if response.Code != http.StatusOK {
-				t.Fatalf("GET %s status = %d, want %d", path, response.Code, http.StatusOK)
-			}
-		})
-	}
-}
-
 func TestWebSocketStackMalformedJSONThenGameFlow(t *testing.T) {
-	server, url := startStackServer(t)
-	defer shutdownStackServer(t, server)
+	_, url := startStackServer(t)
 
 	white := dialStackClient(t, url)
 	defer white.CloseNow()
@@ -44,7 +32,7 @@ func TestWebSocketStackMalformedJSONThenGameFlow(t *testing.T) {
 		t.Fatal("connection.ready returned an empty profile ID")
 	}
 
-	if err := white.Write(context.Background(), coderws.MessageText, []byte(`{"type":`)); err != nil {
+	if err := white.Write(t.Context(), coderws.MessageText, []byte(`{"type":`)); err != nil {
 		t.Fatalf("Write(malformed JSON) error = %v", err)
 	}
 	invalid := readStackEnvelope(t, white, protocol.ServerError)
@@ -106,29 +94,8 @@ func TestWebSocketStackShutdownClosesConnection(t *testing.T) {
 	}
 }
 
-func TestWebSocketStackReusesProfileFromQuery(t *testing.T) {
-	server, endpoint := startStackServer(t)
-	defer shutdownStackServer(t, server)
-
-	first := dialStackClient(t, endpoint)
-	defer first.CloseNow()
-	ready := readStackEnvelope(t, first, protocol.ServerConnectionReady)
-	var firstPayload protocol.ConnectionReadyPayload
-	decodeStackPayload(t, ready, &firstPayload)
-
-	second := dialStackClient(t, endpoint+"?profileId="+string(firstPayload.ProfileID))
-	defer second.CloseNow()
-	ready = readStackEnvelope(t, second, protocol.ServerConnectionReady)
-	var secondPayload protocol.ConnectionReadyPayload
-	decodeStackPayload(t, ready, &secondPayload)
-	if secondPayload.ProfileID != firstPayload.ProfileID {
-		t.Fatalf("reconnected profile ID = %q, want %q", secondPayload.ProfileID, firstPayload.ProfileID)
-	}
-}
-
 func TestWebSocketStackBroadcastsDisconnectAndResumeState(t *testing.T) {
-	server, endpoint := startStackServer(t)
-	defer shutdownStackServer(t, server)
+	_, endpoint := startStackServer(t)
 
 	white, black, gameID, blackProfileID := startStackGame(t, endpoint)
 	defer white.CloseNow()
@@ -140,7 +107,12 @@ func TestWebSocketStackBroadcastsDisconnectAndResumeState(t *testing.T) {
 
 	reconnected := dialStackClient(t, endpoint+"?profileId="+string(blackProfileID))
 	defer reconnected.CloseNow()
-	readStackEnvelope(t, reconnected, protocol.ServerConnectionReady)
+	ready := readStackEnvelope(t, reconnected, protocol.ServerConnectionReady)
+	var resumedProfile protocol.ConnectionReadyPayload
+	decodeStackPayload(t, ready, &resumedProfile)
+	if resumedProfile.ProfileID != blackProfileID || resumedProfile.ActiveGameID != gameID {
+		t.Fatalf("reconnected identity/game = %+v, want %s/%s", resumedProfile, blackProfileID, gameID)
+	}
 	writeStackEnvelope(t, reconnected, protocol.ClientEnvelope{
 		Type:      protocol.ClientResumeGame,
 		RequestID: "resume",
@@ -154,8 +126,7 @@ func TestWebSocketStackBroadcastsDisconnectAndResumeState(t *testing.T) {
 }
 
 func TestWebSocketStackReusesSessionsAfterGameEnds(t *testing.T) {
-	server, endpoint := startStackServer(t)
-	defer shutdownStackServer(t, server)
+	_, endpoint := startStackServer(t)
 
 	white, black, gameID, _ := startStackGame(t, endpoint)
 	defer white.CloseNow()
@@ -187,8 +158,7 @@ func TestWebSocketStackReusesSessionsAfterGameEnds(t *testing.T) {
 }
 
 func TestWebSocketStackResumesFinishedGameWithoutOccupyingSession(t *testing.T) {
-	server, endpoint := startStackServer(t)
-	defer shutdownStackServer(t, server)
+	_, endpoint := startStackServer(t)
 
 	white, black, gameID, blackProfileID := startStackGame(t, endpoint)
 	defer white.CloseNow()
@@ -222,21 +192,8 @@ func TestWebSocketStackResumesFinishedGameWithoutOccupyingSession(t *testing.T) 
 	readStackEnvelope(t, reconnected, protocol.ServerMatchmakingEntered)
 }
 
-func TestWebSocketStackHeartbeatRemovesUnresponsiveSession(t *testing.T) {
-	server, endpoint := startStackServerWithHeartbeat(t, 100*time.Millisecond, 100*time.Millisecond)
-	defer shutdownStackServer(t, server)
-
-	white, black, _, _ := startStackGame(t, endpoint)
-	defer white.CloseNow()
-	defer black.CloseNow()
-
-	disconnected := readStackEnvelope(t, white, protocol.ServerGameState)
-	assertStackConnected(t, disconnected, true, false)
-}
-
 func TestWebSocketStackMatchmakingPublishesBothPlayersPresence(t *testing.T) {
-	server, endpoint := startStackServer(t)
-	defer shutdownStackServer(t, server)
+	_, endpoint := startStackServer(t)
 	first, second := dialStackClient(t, endpoint), dialStackClient(t, endpoint)
 	defer first.CloseNow()
 	defer second.CloseNow()
@@ -274,25 +231,33 @@ func TestWebSocketStackMatchmakingPublishesBothPlayersPresence(t *testing.T) {
 	}
 }
 
-func startStackServer(t *testing.T) (*Server, string) {
+func startStackServer(t *testing.T) (*websocket.Server, string) {
 	t.Helper()
-	return startStackServerWithHeartbeat(t, heartbeatInterval, heartbeatTimeout)
-}
-
-func startStackServerWithHeartbeat(t *testing.T, interval, timeout time.Duration) (*Server, string) {
-	t.Helper()
-	games := newTestGameService(t)
+	repository := persistence.NewMockGameRepository(gomock.NewController(t))
+	repository.EXPECT().CreateGame(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	profiles := persistence.NewMockProfileRepository(gomock.NewController(t))
+	profiles.EXPECT().GetProfileByID(gomock.Any(), gomock.Any()).Return(persistence.Profile{}, nil).AnyTimes()
+	games := gameplay.NewGameService(repository, profiles)
 	t.Cleanup(games.Close)
-	server := NewServer("", games)
+	server := websocket.NewServer("", games)
 	games.SetGameExpiredHandler(server.BroadcastGameState)
-	server.heartbeatInterval = interval
-	server.heartbeatTimeout = timeout
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("Listen() error = %v", err)
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = listener.Close() })
-	go func() { _ = server.httpServer.Serve(listener) }()
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(t.Context(), listener) }()
+	t.Cleanup(func() {
+		shutdownStackServer(t, server)
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("serve stack: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("stack server did not stop")
+		}
+	})
 	return server, "ws://" + listener.Addr().String() + "/ws"
 }
 
@@ -326,7 +291,7 @@ func startStackGame(t *testing.T, endpoint string) (*coderws.Conn, *coderws.Conn
 	return white, black, createdPayload.GameID, readyPayload.ProfileID
 }
 
-func shutdownStackServer(t *testing.T, server *Server) {
+func shutdownStackServer(t *testing.T, server *websocket.Server) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -354,7 +319,7 @@ func dialStackClient(t *testing.T, url string) *coderws.Conn {
 
 func writeStackEnvelope(t *testing.T, conn *coderws.Conn, message protocol.ClientEnvelope) {
 	t.Helper()
-	if err := wsjson.Write(context.Background(), conn, message); err != nil {
+	if err := wsjson.Write(t.Context(), conn, message); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
 }

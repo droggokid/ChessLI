@@ -8,45 +8,19 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
+
 	coderws "github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 )
 
-func TestServerShutdownCancelsBlockedConnectionReady(t *testing.T) {
-	server := NewServer("", newTestGameService(t))
-	serverConn, peer := net.Pipe()
-	defer peer.Close()
-	defer serverConn.Close()
-	writing := make(chan struct{}, 1)
-	w := &pipeResponseWriter{
-		ResponseRecorder: httptest.NewRecorder(),
-		conn:             &observedWriteConn{Conn: serverConn, writing: writing},
-	}
-	r := websocketUpgradeRequest()
-	done := make(chan struct{})
-	go func() {
-		server.handleConnection(w, r)
-		close(done)
-	}()
-	t.Cleanup(func() { _ = peer.Close(); <-done })
-	select {
-	case <-writing:
-	case <-time.After(time.Second):
-		t.Fatal("connection.ready write did not start")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
-		t.Fatalf("shutdown did not cancel blocked connection.ready: %v", err)
-	}
-}
-
-func TestSessionBoundsConnectionReadyWrite(t *testing.T) {
+func TestIntegrationSessionBoundsConnectionReadyWrite(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		serverConn, peer := net.Pipe()
 		defer serverConn.Close()
@@ -102,4 +76,40 @@ func websocketUpgradeRequest() *http.Request {
 	r.Header.Set("Sec-WebSocket-Version", "13")
 	r.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
 	return r
+}
+
+func TestIntegrationSessionHeartbeatClosesUnresponsiveConnection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	done := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			done <- err
+			return
+		}
+		session := NewSession(identity.NewProfileID(), conn)
+		session.heartbeatInterval = 50 * time.Millisecond
+		session.heartbeatTimeout = 50 * time.Millisecond
+		done <- session.Run(ctx, func(context.Context, *Session, json.RawMessage) error { return nil })
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(cancel)
+	peer, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = peer.CloseNow() })
+	var ready protocol.ServerEnvelope
+	if err := wsjson.Read(ctx, peer, &ready); err != nil || ready.Type != protocol.ServerConnectionReady {
+		t.Fatalf("connection.ready = %+v, %v", ready, err)
+	}
+	// Stop reading so the peer cannot process or answer the heartbeat ping.
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("unresponsive session error = %v, want heartbeat deadline", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("heartbeat did not close the unresponsive session")
+	}
 }

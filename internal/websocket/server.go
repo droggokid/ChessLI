@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -23,7 +24,7 @@ const (
 )
 
 // Server accepts and manages WebSocket client connections.
-// Run must be called at most once.
+// Call Run or Serve at most once.
 type Server struct {
 	httpServer *http.Server
 
@@ -75,10 +76,26 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 // Run serves WebSocket connections until the context is canceled or serving fails.
 func (s *Server) Run(ctx context.Context) error {
+	address := s.httpServer.Addr
+	if address == "" {
+		address = ":http"
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		s.cancelConnections()
+		s.messageHandler.Close()
+		return fmt.Errorf("listen for websocket connections: %w", err)
+	}
+	return s.Serve(ctx, listener)
+}
+
+// Serve serves connections on listener, which is closed when serving stops.
+// Cancellation shuts down the server and joins its connections, as with Run.
+func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	serverError := make(chan error, 1)
 
 	go func() {
-		serverError <- s.httpServer.ListenAndServe()
+		serverError <- s.httpServer.Serve(listener)
 	}()
 
 	select {

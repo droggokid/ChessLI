@@ -346,15 +346,17 @@ pending records have no crash recovery. Stored games survive restart, while acti
 games, clocks, and matchmaking remain in memory. Dashboard and History are still
 placeholders; stored history is available through the repository methods.
 
-Repository integration tests are skipped unless `CHESSLI_TEST_DATABASE_URL` is set:
+Run repository integration tests with a test database:
 
 ```sh
-CHESSLI_TEST_DATABASE_URL='postgres://app:app@localhost:5432/app?sslmode=disable' go test -race ./internal/persistence/... -count=1
+CHESSLI_TEST_DATABASE_URL='postgres://app:app@localhost:5432/app?sslmode=disable' make test-integration
 ```
 
 Use a test database whose user can create schemas. Each test creates a unique
 schema, applies the migrations, and drops the schema and records at cleanup.
-CI runs these tests against PostgreSQL 17 along with the full race suite.
+CI runs these tests against PostgreSQL 17 in its integration job. See
+[test suite organization](docs/adr/0001-test-suite-organization.md) for the unit,
+integration, and stack conventions and commands.
 
 The initial migration now stores moves inside completed games. Databases created
 from the previous schema need to be recreated to use it. For disposable local

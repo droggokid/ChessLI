@@ -1,7 +1,10 @@
 package gameplay
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -361,4 +364,197 @@ func TestGameMoveReturnsTimeoutStateWithoutApplyingMove(t *testing.T) {
 
 func newReadyGame() *game {
 	return newGame("game", "white", "black", 10*time.Minute, 0)
+}
+
+func TestGameDrawOfferLifecycle(t *testing.T) {
+	base := time.Date(2026, time.September, 9, 12, 0, 0, 0, time.UTC)
+	now := base
+	game := newReadyGame()
+	game.now = func() time.Time { return now }
+
+	if _, err := game.offerDraw(OfferDrawCommand{GameID: game.id, ProfileID: "spectator"}); !errors.Is(err, ErrNotParticipant) {
+		t.Fatalf("OfferDraw() spectator error = %v, want %v", err, ErrNotParticipant)
+	}
+
+	offered, err := game.offerDraw(OfferDrawCommand{GameID: game.id, ProfileID: "white"})
+	if err != nil {
+		t.Fatalf("OfferDraw() error = %v", err)
+	}
+	if offered.Version != 0 || offered.PendingDrawOffer == nil {
+		t.Fatalf("OfferDraw() state = %+v, want pending offer at unchanged version", offered)
+	}
+	offerID := offered.PendingDrawOffer.OfferID
+	if _, err = game.offerDraw(OfferDrawCommand{GameID: game.id, ProfileID: "black"}); !errors.Is(err, ErrDrawOfferPending) {
+		t.Fatalf("OfferDraw() pending-offer error = %v, want %v", err, ErrDrawOfferPending)
+	}
+
+	if _, err = game.acceptDraw(DrawOfferResponseCommand{GameID: game.id, ProfileID: "white", OfferID: offerID}); !errors.Is(err, ErrCannotRespondToOwnDrawOffer) {
+		t.Fatalf("AcceptDraw() own-offer error = %v, want %v", err, ErrCannotRespondToOwnDrawOffer)
+	}
+	if _, err = game.acceptDraw(DrawOfferResponseCommand{GameID: game.id, ProfileID: "black", OfferID: "stale"}); !errors.Is(err, ErrStaleDrawOffer) {
+		t.Fatalf("AcceptDraw() stale-offer error = %v, want %v", err, ErrStaleDrawOffer)
+	}
+
+	declined, err := game.declineDraw(DrawOfferResponseCommand{GameID: game.id, ProfileID: "black", OfferID: offerID})
+	if err != nil {
+		t.Fatalf("DeclineDraw() error = %v", err)
+	}
+	if declined.Version != 0 || declined.PendingDrawOffer != nil {
+		t.Fatalf("DeclineDraw() state = %+v, want cleared offer at unchanged version", declined)
+	}
+	if _, err = game.declineDraw(DrawOfferResponseCommand{GameID: game.id, ProfileID: "black", OfferID: offerID}); !errors.Is(err, ErrDrawOfferNotFound) {
+		t.Fatalf("DeclineDraw() missing-offer error = %v, want %v", err, ErrDrawOfferNotFound)
+	}
+	if _, err = game.offerDraw(OfferDrawCommand{GameID: game.id, ProfileID: "white"}); !errors.Is(err, ErrDrawOfferCooldown) {
+		t.Fatalf("OfferDraw() cooldown error = %v, want %v", err, ErrDrawOfferCooldown)
+	}
+
+	now = now.Add(drawOfferCooldown)
+	offered, err = game.offerDraw(OfferDrawCommand{GameID: game.id, ProfileID: "white"})
+	if err != nil {
+		t.Fatalf("OfferDraw() after cooldown error = %v", err)
+	}
+	offerID = offered.PendingDrawOffer.OfferID
+	offered.PendingDrawOffer.OfferedBy = "tampered"
+	if got := game.snapshot(game.now()).PendingDrawOffer.OfferedBy; got != "white" {
+		t.Fatalf("Snapshot() pending offer was aliased: OfferedBy = %q", got)
+	}
+
+	accepted, err := game.acceptDraw(DrawOfferResponseCommand{GameID: game.id, ProfileID: "black", OfferID: offerID})
+	if err != nil {
+		t.Fatalf("AcceptDraw() error = %v", err)
+	}
+	if accepted.Version != 1 || accepted.Outcome != domain.OutcomeDraw || accepted.Termination != domain.TerminationDrawAgreement || accepted.PendingDrawOffer != nil {
+		t.Fatalf("AcceptDraw() state = %+v, want finished draw at version 1", accepted)
+	}
+}
+
+func TestGameClearsPendingDrawOffer(t *testing.T) {
+	tests := []struct {
+		name string
+		act  func(*game) (GameSnapshot, error)
+	}{
+		{
+			name: "move",
+			act: func(game *game) (GameSnapshot, error) {
+				return game.move(MoveCommand{GameID: game.id, ProfileID: "white", Move: "e2e4", Notation: MoveNotationUCI})
+			},
+		},
+		{
+			name: "resignation",
+			act: func(game *game) (GameSnapshot, error) {
+				return game.resign(ResignCommand{GameID: game.id, ProfileID: "black"})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			game := newReadyGame()
+			if _, err := game.offerDraw(OfferDrawCommand{GameID: game.id, ProfileID: "white"}); err != nil {
+				t.Fatalf("OfferDraw() error = %v", err)
+			}
+
+			state, err := tt.act(game)
+			if err != nil {
+				t.Fatalf("action error = %v", err)
+			}
+			if state.PendingDrawOffer != nil {
+				t.Fatalf("action left pending offer %+v", state.PendingDrawOffer)
+			}
+		})
+	}
+
+	t.Run("timeout", func(t *testing.T) {
+		base := time.Date(2026, time.September, 9, 12, 0, 0, 0, time.UTC)
+		now := base
+		game := newGame("game", "white", "black", time.Second, 0)
+		game.now = func() time.Time { return now }
+		game.clock = newGameClock(time.Second, 0)
+		game.clock.start(now)
+		if _, err := game.offerDraw(OfferDrawCommand{GameID: game.id, ProfileID: "white"}); err != nil {
+			t.Fatalf("OfferDraw() error = %v", err)
+		}
+
+		now = now.Add(time.Second)
+		game.expire(now)
+		if state := game.snapshot(game.now()); state.PendingDrawOffer != nil {
+			t.Fatalf("timeout left pending offer %+v", state.PendingDrawOffer)
+		}
+	})
+}
+
+func TestGameLogsCompletionOnce(t *testing.T) {
+	for _, ending := range []domain.Termination{
+		domain.TerminationCheckmate, domain.TerminationResignation,
+		domain.TerminationDrawAgreement, domain.TerminationTimeout,
+	} {
+		t.Run(string(ending), func(t *testing.T) {
+			var output bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			g := newReadyGame()
+			switch ending {
+			case domain.TerminationCheckmate:
+				for i, move := range []string{"f2f3", "e7e5", "g2g4", "d8h4"} {
+					player := identity.ProfileID("white")
+					if i%2 == 1 {
+						player = "black"
+					}
+					if _, err := g.move(MoveCommand{ProfileID: player, Move: move, ExpectedVersion: uint64(i)}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			case domain.TerminationResignation:
+				if _, err := g.resign(ResignCommand{ProfileID: "white"}); err != nil {
+					t.Fatal(err)
+				}
+			case domain.TerminationDrawAgreement:
+				state, err := g.offerDraw(OfferDrawCommand{ProfileID: "white"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := g.acceptDraw(DrawOfferResponseCommand{ProfileID: "black", OfferID: state.PendingDrawOffer.OfferID}); err != nil {
+					t.Fatal(err)
+				}
+			case domain.TerminationTimeout:
+				now := g.clock.turnStartedAt.Add(time.Hour)
+				g.now = func() time.Time { return now }
+				g.expire(now)
+			}
+			state := g.snapshot(g.now())
+			for range 2 {
+				if _, err := g.resume("white"); err != nil {
+					t.Fatal(err)
+				}
+				g.snapshot(g.now())
+			}
+			finished := 0
+			for _, line := range bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n")) {
+				if len(line) == 0 {
+					continue
+				}
+				var event struct {
+					Event       string
+					GameID      identity.GameID `json:"game_id"`
+					Outcome     domain.Outcome
+					Termination domain.Termination
+					Version     uint64
+				}
+				if err := json.Unmarshal(line, &event); err != nil {
+					t.Fatal(err)
+				}
+				if event.Event == "game.finished" {
+					finished++
+					if event.GameID != g.id || event.Outcome != state.Outcome || event.Termination != ending || event.Version != state.Version {
+						t.Fatalf("completion event = %+v, state = %+v", event, state)
+					}
+				}
+			}
+			if finished != 1 {
+				t.Fatalf("completion events = %d, want one despite repeated reads", finished)
+			}
+		})
+	}
 }

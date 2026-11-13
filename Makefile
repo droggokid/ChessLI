@@ -5,7 +5,7 @@ include .env
 export
 endif
 
-.PHONY: help chessli reset-local-db run run-tui build build-tui test test-stack fmt fmt-check vet check test-race cover tidy clean generate mockgen run-deps stop-deps clean-deps seed-local migration migrate-up migrate-down migrate-status
+.PHONY: help chessli reset-local-db run run-tui build build-tui test test-unit test-integration test-stack fmt fmt-check vet check test-race cover tidy clean generate mockgen run-deps stop-deps clean-deps seed-local migration migrate-up migrate-down migrate-status
 
 help:
 	@echo "Available targets:"
@@ -16,7 +16,9 @@ help:
 	@echo "  make build  - build the WebSocket server"
 	@echo "  make build-tui - build the terminal client"
 	@echo "  make test   - run tests"
-	@echo "  make test-stack - run WebSocket stack tests with the race detector"
+	@echo "  make test-unit - run unit tests with the race detector"
+	@echo "  make test-integration - run integration tests with the race detector (test database required)"
+	@echo "  make test-stack - run WebSocket and TUI stack tests with the race detector"
 	@echo "  make fmt    - format Go code"
 	@echo "  make fmt-check - verify Go formatting"
 	@echo "  make vet    - run go vet"
@@ -62,8 +64,15 @@ build-tui:
 test:
 	go test ./...
 
+test-unit:
+	go test -race -skip '^TestIntegration' ./internal/... ./cmd/...
+
+test-integration:
+	@test -n "$(CHESSLI_TEST_DATABASE_URL)" || (echo "Set CHESSLI_TEST_DATABASE_URL to a PostgreSQL test database."; exit 1)
+	go test -count=1 -race -run '^TestIntegration' ./internal/... ./tests/integration/...
+
 test-stack:
-	go test -count=1 -race ./internal/websocket -run '^TestWebSocketStack'
+	go test -count=1 -race ./tests/stack/...
 
 fmt:
 	go fmt ./...

@@ -1,4 +1,4 @@
-package websocket
+package stack
 
 import (
 	"context"
@@ -15,8 +15,7 @@ import (
 )
 
 func TestTUIStartsWithSuppliedProfileID(t *testing.T) {
-	server, address := startStackServer(t)
-	t.Cleanup(func() { shutdownStackServer(t, server) })
+	_, address := startStackServer(t)
 	const profileID = "12345678-1234-1234-1234-123456789012"
 	client := startTUI(t, address+"?profileId="+profileID)
 	if got := profileFromView(t, client.await(t, "Connected · Profile:")); got != profileID {
@@ -25,8 +24,7 @@ func TestTUIStartsWithSuppliedProfileID(t *testing.T) {
 }
 
 func TestTUITwoClientsCreateJoinMoveReconnectAndResign(t *testing.T) {
-	server, address := startStackServer(t)
-	t.Cleanup(func() { shutdownStackServer(t, server) })
+	_, address := startStackServer(t)
 	white := startTUI(t, address)
 	black := startTUI(t, address)
 	whiteProfile := profileFromView(t, white.await(t, "Connected · Profile:"))
@@ -80,8 +78,7 @@ func TestTUITwoClientsCreateJoinMoveReconnectAndResign(t *testing.T) {
 }
 
 func TestTUITwoClientsMatchMoveReconnectAndResign(t *testing.T) {
-	server, address := startStackServer(t)
-	t.Cleanup(func() { shutdownStackServer(t, server) })
+	_, address := startStackServer(t)
 	first, second := startTUI(t, address), startTUI(t, address)
 	first.await(t, "Connected · Profile:")
 	second.await(t, "Connected · Profile:")

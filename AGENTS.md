@@ -8,7 +8,8 @@ live games, clocks, and matchmaking; `game` and `identity` hold shared domain
 types; `websocket` serves connections and `websocket/protocol` defines
 the wire contract. `tui` contains the client, `persistence` the storage
 adapters and their game/profile storage models, and `database` the schema migrations.
-Tests live beside the code; runnable examples are in `demo/`.
+Tests follow [ADR-0001](docs/adr/0001-test-suite-organization.md). Runnable
+examples are in `demo/`.
 
 Run commands from the repository root:
 
@@ -17,6 +18,9 @@ make run         # run the server
 make run-tui     # run the terminal client; optional PROFILE_ID=uuid
 make build       # build the server (build-tui for the client)
 make test        # go test ./...
+make test-unit   # unit tests with the race detector
+make test-integration # integration tests; requires CHESSLI_TEST_DATABASE_URL
+make test-stack  # WebSocket/TUI stack tests with the race detector
 make test-race   # go test -race ./...
 make fmt         # format Go code
 make vet         # go vet ./...

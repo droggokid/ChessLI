@@ -4,20 +4,52 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
+
 	coderws "github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 )
 
-func TestConnectionCloseLogs(t *testing.T) {
+func TestIntegrationServerShutdownCancelsBlockedConnectionReady(t *testing.T) {
+	server := NewServer("", newTestGameService(t))
+	serverConn, peer := net.Pipe()
+	defer peer.Close()
+	defer serverConn.Close()
+	writing := make(chan struct{}, 1)
+	w := &pipeResponseWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+		conn:             &observedWriteConn{Conn: serverConn, writing: writing},
+	}
+	r := websocketUpgradeRequest()
+	done := make(chan struct{})
+	go func() {
+		server.handleConnection(w, r)
+		close(done)
+	}()
+	t.Cleanup(func() { _ = peer.Close(); <-done })
+	select {
+	case <-writing:
+	case <-time.After(time.Second):
+		t.Fatal("connection.ready write did not start")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown did not cancel blocked connection.ready: %v", err)
+	}
+}
+
+func TestIntegrationConnectionCloseLogs(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		code   coderws.StatusCode
@@ -46,9 +78,17 @@ func TestConnectionCloseLogs(t *testing.T) {
 				server.connections.Wait()
 				httpServer.Close()
 			}()
-			client := dialStackClient(t, "ws"+strings.TrimPrefix(httpServer.URL, "http"))
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"?profileId="+string(identity.NewProfileID()), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 			defer client.CloseNow()
-			readStackEnvelope(t, client, protocol.ServerConnectionReady)
+			var ready protocol.ServerEnvelope
+			if err := wsjson.Read(ctx, client, &ready); err != nil || ready.Type != protocol.ServerConnectionReady {
+				t.Fatalf("connection.ready = %+v, %v", ready, err)
+			}
 			if tt.code == -1 {
 				_ = client.CloseNow()
 			} else {
@@ -83,33 +123,5 @@ func TestConnectionCloseLogs(t *testing.T) {
 				break
 			}
 		})
-	}
-}
-
-func TestFullQueueLogsMetadataWithoutPayload(t *testing.T) {
-	var output bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-	client := newQueuedSession("player")
-	for len(client.outgoing) < cap(client.outgoing) {
-		client.outgoing <- protocol.ServerEnvelope{}
-	}
-	err := client.Send(context.Background(), protocol.ServerEnvelope{
-		Type: protocol.ServerGameState, RequestID: "request", Payload: "private-payload",
-	})
-	if !errors.Is(err, protocol.ErrSessionQueueFull) {
-		t.Fatal(err)
-	}
-	var event map[string]any
-	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
-		t.Fatalf("decode queue warning: %v", err)
-	}
-	if event["event"] != "message.dropped" || event["level"] != "WARN" || event["profile_id"] != "player" ||
-		event["request_id"] != "request" || event["message_type"] != string(protocol.ServerGameState) || event["reason"] != "queue_full" {
-		t.Fatalf("queue warning = %+v", event)
-	}
-	if strings.Contains(output.String(), "private-payload") {
-		t.Fatal("queue warning included the message payload")
 	}
 }

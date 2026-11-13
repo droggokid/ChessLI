@@ -55,18 +55,6 @@ func TestServerRejectsInvalidConnectionProfiles(t *testing.T) {
 	}
 }
 
-func TestNewServerWiresDependencies(t *testing.T) {
-	t.Parallel()
-
-	server := NewServer("127.0.0.1:0", nil)
-	if server.httpServer == nil || server.httpServer.Addr != "127.0.0.1:0" {
-		t.Fatalf("NewServer() HTTP address = %q, want %q", server.httpServer.Addr, "127.0.0.1:0")
-	}
-	if server.messageHandler == nil || server.messageHandler.gameSessions == nil {
-		t.Fatal("NewServer() did not initialize handler dependencies")
-	}
-}
-
 func TestServerBroadcastGameState(t *testing.T) {
 	t.Parallel()
 
@@ -139,6 +127,21 @@ func TestIsExpectedClose(t *testing.T) {
 
 			if got := isExpectedClose(tt.err); got != tt.want {
 				t.Fatalf("isExpectedClose() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestServerHealthEndpoints(t *testing.T) {
+	server := NewServer("", nil)
+	t.Cleanup(server.cancelConnections)
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want %d", path, response.Code, http.StatusOK)
 			}
 		})
 	}

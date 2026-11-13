@@ -1,4 +1,4 @@
-package persistence_test
+package integration_test
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestPostgresProfileRoundTrip(t *testing.T) {
+func TestIntegrationPostgresProfileRoundTrip(t *testing.T) {
 	ctx, pool := testDatabase(t)
 	repository := persistence.NewProfileRepository(pool)
 	first, second := createProfiles(t, ctx, repository)
@@ -53,7 +53,7 @@ func TestPostgresProfileRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPostgresCompletedGameRoundTrip(t *testing.T) {
+func TestIntegrationPostgresCompletedGameRoundTrip(t *testing.T) {
 	ctx, pool := testDatabase(t)
 	white, black := createProfiles(t, ctx, persistence.NewProfileRepository(pool))
 	repository := persistence.NewGameRepository(pool)
@@ -105,7 +105,7 @@ func TestPostgresCompletedGameRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPostgresRejectsDuplicateProfiles(t *testing.T) {
+func TestIntegrationPostgresRejectsDuplicateProfiles(t *testing.T) {
 	for _, field := range []string{"username", "email"} {
 		t.Run(field, func(t *testing.T) {
 			ctx, pool := testDatabase(t)
@@ -123,7 +123,7 @@ func TestPostgresRejectsDuplicateProfiles(t *testing.T) {
 	}
 }
 
-func TestPostgresRejectsInvalidCompletedGames(t *testing.T) {
+func TestIntegrationPostgresRejectsInvalidCompletedGames(t *testing.T) {
 	for _, invalid := range []struct {
 		name   string
 		change func(*persistence.CompletedGame)
@@ -146,7 +146,7 @@ func TestPostgresRejectsInvalidCompletedGames(t *testing.T) {
 	}
 }
 
-func TestPostgresRejectsInvalidGameWithMovesAtomically(t *testing.T) {
+func TestIntegrationPostgresRejectsInvalidGameWithMovesAtomically(t *testing.T) {
 	ctx, pool := testDatabase(t)
 	white, black := createProfiles(t, ctx, persistence.NewProfileRepository(pool))
 	repository := persistence.NewGameRepository(pool)
@@ -201,7 +201,7 @@ func testDatabase(t *testing.T) (context.Context, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	migrations, err := filepath.Glob("../database/migrations/*.sql")
+	migrations, err := filepath.Glob("../../internal/database/migrations/*.sql")
 	if err != nil || len(migrations) == 0 {
 		t.Fatalf("find migrations: %v", err)
 	}
