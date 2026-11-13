@@ -204,3 +204,17 @@ func (mr *MockGameServiceMockRecorder) ResumeGame(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResumeGame", reflect.TypeOf((*MockGameService)(nil).ResumeGame), arg0, arg1)
 }
+
+// ValidateProfile mocks base method.
+func (m *MockGameService) ValidateProfile(arg0 context.Context, arg1 identity.ProfileID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ValidateProfile", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ValidateProfile indicates an expected call of ValidateProfile.
+func (mr *MockGameServiceMockRecorder) ValidateProfile(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateProfile", reflect.TypeOf((*MockGameService)(nil).ValidateProfile), arg0, arg1)
+}

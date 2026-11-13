@@ -3,6 +3,7 @@ package gameplay
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	domain "ChessLI/internal/game"
@@ -14,20 +15,24 @@ import (
 // game holds synchronous rules and state. GameService serializes all access,
 // including timer metadata; game methods do not lock or start background work.
 type game struct {
-	now                func() time.Time
-	expirationTimer    *time.Timer
-	expirationID       uint64
-	expirationNotified bool
-	id                 identity.GameID
-	version            uint64
-	whiteProfileID     identity.ProfileID
-	blackProfileID     identity.ProfileID
-	engine             *chess.Game
-	lastMoveSAN        string
-	clock              gameClock
-	outcome            domain.Outcome
-	termination        domain.Termination
-	drawOffers         drawOfferState
+	now                 func() time.Time
+	expirationTimer     *time.Timer
+	expirationID        uint64
+	expirationNotified  bool
+	id                  identity.GameID
+	version             uint64
+	whiteProfileID      identity.ProfileID
+	blackProfileID      identity.ProfileID
+	engine              *chess.Game
+	lastMoveSAN         string
+	clock               gameClock
+	outcome             domain.Outcome
+	termination         domain.Termination
+	initial             time.Duration
+	completedAt         time.Time
+	completionScheduled bool
+	moves               []RecordedMove
+	drawOffers          drawOfferState
 }
 
 // newGame returns state with the standard starting position and the supplied
@@ -41,6 +46,7 @@ func newGame(id identity.GameID, white identity.ProfileID, black identity.Profil
 		blackProfileID: black,
 		engine:         chess.NewGame(),
 		clock:          newGameClock(initialTime, increment),
+		initial:        initialTime,
 		drawOffers: drawOfferState{
 			lastOfferedAt: make(map[identity.ProfileID]time.Time, 2),
 		},
@@ -81,6 +87,7 @@ func (g *game) move(command MoveCommand) (GameSnapshot, error) {
 	}
 
 	san := chess.AlgebraicNotation{}.Encode(position, move)
+	uci := chess.UCINotation{}.Encode(position, move)
 	mover := position.Turn()
 
 	if err = g.engine.Move(move, nil); err != nil {
@@ -88,6 +95,12 @@ func (g *game) move(command MoveCommand) (GameSnapshot, error) {
 	}
 
 	g.clock.completeMove(now, mover)
+	g.moves = append(g.moves, RecordedMove{
+		Ply:            len(g.moves) + 1,
+		UCI:            uci,
+		WhiteRemaining: g.clock.whiteRemaining,
+		BlackRemaining: g.clock.blackRemaining,
+	})
 	g.syncOutcomeFromEngine()
 
 	g.version++
@@ -95,7 +108,7 @@ func (g *game) move(command MoveCommand) (GameSnapshot, error) {
 	g.drawOffers.pending = nil
 	if g.outcome != domain.OutcomeNone {
 		g.clock.stop(now, g.engine.Position().Turn())
-		g.logFinished()
+		g.finish(now)
 	}
 
 	return g.snapshot(now), nil
@@ -179,7 +192,7 @@ func (g *game) resign(command ResignCommand) (GameSnapshot, error) {
 	g.version++
 	g.clock.stop(now, g.engine.Position().Turn())
 	g.drawOffers.pending = nil
-	g.logFinished()
+	g.finish(now)
 
 	return g.snapshot(now), nil
 }
@@ -225,7 +238,7 @@ func (g *game) acceptDraw(command DrawOfferResponseCommand) (GameSnapshot, error
 	g.clock.stop(now, g.engine.Position().Turn())
 	g.version++
 	g.drawOffers.pending = nil
-	g.logFinished()
+	g.finish(now)
 
 	return g.snapshot(now), nil
 }
@@ -262,6 +275,7 @@ func (g *game) syncOutcomeFromEngine() {
 
 func (g *game) expire(now time.Time) bool {
 	active := g.engine.Position().Turn()
+	deadline, _ := g.clock.deadline(active)
 
 	loser, expired := g.clock.expire(now, active)
 	if !expired {
@@ -280,15 +294,33 @@ func (g *game) expire(now time.Time) bool {
 	g.termination = domain.TerminationTimeout
 	g.version++
 	g.drawOffers.pending = nil
-	g.logFinished()
+	g.finish(deadline)
 
 	return true
 }
 
 // Log the transition itself so repeated snapshots and broadcasts cannot count it twice.
-func (g *game) logFinished() {
+func (g *game) finish(now time.Time) {
+	g.completedAt = now
 	slog.Info("game finished", "event", "game.finished", "game_id", g.id,
 		"outcome", g.outcome, "termination", g.termination, "version", g.version)
+}
+
+func (g *game) completedGame() CompletedGame {
+	return CompletedGame{
+		ID:             g.id,
+		WhiteProfileID: g.whiteProfileID,
+		BlackProfileID: g.blackProfileID,
+		Initial:        g.initial,
+		Increment:      g.clock.increment,
+		Outcome:        g.outcome,
+		Termination:    g.termination,
+		FinalFEN:       g.engine.FEN(),
+		WhiteRemaining: g.clock.whiteRemaining,
+		BlackRemaining: g.clock.blackRemaining,
+		CompletedAt:    g.completedAt,
+		Moves:          slices.Clone(g.moves),
+	}
 }
 
 // hasMatingMaterial reports the minimum FIDE requirement for a timeout

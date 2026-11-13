@@ -22,6 +22,7 @@ func TestLoad(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv(logFormatEnvironment, test.value)
+			t.Setenv(databaseURLEnvironment, "postgres://localhost/chessli")
 
 			config, err := Load()
 			if test.wantError {
@@ -37,5 +38,13 @@ func TestLoad(t *testing.T) {
 				t.Fatalf("Load().LogFormat = %q, want %q", config.LogFormat, test.want)
 			}
 		})
+	}
+}
+
+func TestLoadRequiresDatabaseURL(t *testing.T) {
+	t.Setenv(logFormatEnvironment, "json")
+	t.Setenv(databaseURLEnvironment, "")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() accepted a missing database URL")
 	}
 }

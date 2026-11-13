@@ -10,7 +10,7 @@ import (
 )
 
 func TestGameServiceConcurrentCreateReservesProfileOnce(t *testing.T) {
-	s := NewGameService()
+	s := newTestGameService(t)
 	defer s.Close()
 	start := make(chan struct{})
 	results := make(chan error, 16)
@@ -38,7 +38,7 @@ func TestGameServiceConcurrentCreateReservesProfileOnce(t *testing.T) {
 }
 
 func TestGameServiceAdmissionAcrossModes(t *testing.T) {
-	s := NewGameService()
+	s := newTestGameService(t)
 	defer s.Close()
 	ctx := context.Background()
 	create := func(profile identity.ProfileID) (GameAssignment, error) {
@@ -102,7 +102,7 @@ func TestGameServiceAdmissionAcrossModes(t *testing.T) {
 func TestGameServiceActiveGameReleasesFinishedOrExpired(t *testing.T) {
 	for _, name := range []string{"resigned", "expired"} {
 		t.Run(name, func(t *testing.T) {
-			s := NewGameService()
+			s := newTestGameService(t)
 			defer s.Close()
 			g := newReadyGame()
 			s.games[g.id] = g

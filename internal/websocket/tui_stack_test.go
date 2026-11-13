@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ChessLI/internal/dashboard_data"
+	"ChessLI/internal/identity"
 	"ChessLI/internal/tui"
 
 	tea "charm.land/bubbletea/v2"
@@ -171,6 +172,9 @@ type tuiSession struct {
 
 func startTUI(t *testing.T, address string) *tuiSession {
 	t.Helper()
+	if !strings.Contains(address, "?") {
+		address += "?profileId=" + string(identity.NewProfileID())
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	views := make(chan string, 128)
 	model := tui.New(dashboard_data.Mock{}, address)

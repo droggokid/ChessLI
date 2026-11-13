@@ -65,6 +65,8 @@ CREATE TABLE completed_games (
         'insufficient_material'
     )),
     final_fen TEXT NOT NULL,
+    white_remaining_ms BIGINT NOT NULL CHECK (white_remaining_ms BETWEEN 0 AND 9223372036854),
+    black_remaining_ms BIGINT NOT NULL CHECK (black_remaining_ms BETWEEN 0 AND 9223372036854),
     moves JSONB NOT NULL DEFAULT '[]'::jsonb
         CHECK (completed_game_moves_valid(moves)),
     completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

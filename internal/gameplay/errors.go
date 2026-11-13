@@ -23,4 +23,5 @@ var (
 	ErrStaleDrawOffer              = errors.New("stale draw offer")
 	ErrCannotRespondToOwnDrawOffer = errors.New("cannot respond to own draw offer")
 	ErrInvalidProfileID            = errors.New("invalid profile ID")
+	ErrProfileNotFound             = errors.New("profile not found")
 )

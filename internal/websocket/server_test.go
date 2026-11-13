@@ -3,14 +3,57 @@ package websocket
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
+	"ChessLI/internal/persistence"
 	"ChessLI/internal/websocket/protocol"
 
 	coderws "github.com/coder/websocket"
+	"go.uber.org/mock/gomock"
 )
+
+func newTestGameService(t *testing.T) *gameplay.GameService {
+	t.Helper()
+	repository := persistence.NewMockGameRepository(gomock.NewController(t))
+	repository.EXPECT().CreateGame(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	profiles := persistence.NewMockProfileRepository(gomock.NewController(t))
+	profiles.EXPECT().GetProfileByID(gomock.Any(), gomock.Any()).Return(persistence.Profile{}, nil).AnyTimes()
+	service := gameplay.NewGameService(repository, profiles)
+	t.Cleanup(service.Close)
+	return service
+}
+
+func TestServerRejectsInvalidConnectionProfiles(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		query  string
+		err    error
+		status int
+	}{
+		{name: "missing ID", status: http.StatusBadRequest},
+		{name: "invalid ID", query: "?profileId=invalid", status: http.StatusBadRequest},
+		{name: "unknown profile", query: "?profileId=00000000-0000-4000-8000-000000000001", err: gameplay.ErrProfileNotFound, status: http.StatusNotFound},
+		{name: "database unavailable", query: "?profileId=00000000-0000-4000-8000-000000000001", err: errors.New("database unavailable"), status: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			games := gameplay.NewMockGameService(gomock.NewController(t))
+			if test.err != nil {
+				games.EXPECT().ValidateProfile(gomock.Any(), gomock.Any()).Return(test.err)
+			}
+			server := NewServer("", games)
+			t.Cleanup(server.cancelConnections)
+			response := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ws"+test.query, nil))
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d", response.Code, test.status)
+			}
+		})
+	}
+}
 
 func TestNewServerWiresDependencies(t *testing.T) {
 	t.Parallel()

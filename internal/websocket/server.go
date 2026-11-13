@@ -130,14 +130,22 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 	s.connections.Add(1)
 	defer s.connections.Done()
 
-	profileID := identity.NewProfileID()
-	if rawProfileID := r.URL.Query().Get("profileId"); rawProfileID != "" {
-		var err error
-		profileID, err = identity.ParseProfileID(rawProfileID)
-		if err != nil {
-			http.Error(w, "invalid profile ID", http.StatusBadRequest)
-			return
-		}
+	profileID, err := identity.ParseProfileID(r.URL.Query().Get("profileId"))
+	if err != nil {
+		http.Error(w, "a valid profileId is required", http.StatusBadRequest)
+		return
+	}
+	lookupCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	err = s.gameService.ValidateProfile(lookupCtx, profileID)
+	cancel()
+	if errors.Is(err, gameplay.ErrProfileNotFound) {
+		http.Error(w, "profile not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		slog.Error("validate connection profile", "event", "connection.profile_failed", "profile_id", profileID, "error", err)
+		http.Error(w, "profile lookup unavailable", http.StatusServiceUnavailable)
+		return
 	}
 
 	conn, err := coderws.Accept(w, r, nil)

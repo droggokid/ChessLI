@@ -64,6 +64,18 @@ needed. For protocol changes, check the examples in `README.md` and
 - Prefer the standard library and existing dependencies.
 - Do not expose third-party types from public APIs unless intentional.
 
+## Skill coordination
+
+- Use Modern Go for Go-specific language and style guidance.
+- Use Clean Code for readability and maintainability when relevant.
+- Use Documentation and ADRs for comments and documentation.
+- Prefer idiomatic Go over language-agnostic Clean Code rules.
+- Treat numeric limits and TDD recommendations as optional heuristics.
+- Comment on intent, invariants, and non-obvious decisions,
+  not code that is already self-explanatory.
+- Never refactor unrelated code just to satisfy a skill.
+- All skills must respect the global edit approval requirements.
+
 ## Verification and communication
 
 Use Go's testing package for meaningful behavior tests with clear fixtures.

@@ -18,9 +18,11 @@ type keeps its methods in one file; helper files contain independent functions.
 | Membership, presence, and state publication | `internal/websocket/game_sessions.go` |
 
 Wire decoding and mapping stay in `internal/websocket`; payload types live in
-`protocol/`. Persistence lives in `internal/persistence/game` and
-`internal/persistence/profile`. Each package owns its repository, mock, and stored
-models, using pgx pools and Squirrel query builders. A completed game includes its
+`protocol/`. Persistence lives in `internal/persistence`, with `GameRepository`
+and `ProfileRepository` interfaces, implementations ending in `Impl`, generated
+mocks, and database DTOs. The executable injects these repositories into gameplay;
+gameplay explicitly maps its domain records to persistence DTOs. The repositories
+use pgx pools and Squirrel query builders. A completed game includes its
 ordered moves in a JSONB array and is saved in one insert. Live gameplay remains
 in memory.
 
@@ -38,8 +40,8 @@ flowchart LR
     GS -.->|Async timeout notification| H
 ```
 
-See [architecture decisions](docs/adr/), [connection recovery](docs/connection-lifecycle.md),
-and the [future roadmap](docs/roadmap.md).
+See [connection recovery](docs/connection-lifecycle.md) and the
+[future roadmap](docs/roadmap.md).
 
 ## System sequence
 
@@ -77,18 +79,24 @@ sequenceDiagram
 
 ## Terminal client
 
-`make chessli` builds and runs the server. Gameplay runs in memory, so normal
-startup does not require PostgreSQL or code generation. Run `make generate`
-explicitly when generated code needs updating; `make run-deps` starts PostgreSQL
-and applies migrations when working with persistence.
+`make chessli` builds and runs the server. PostgreSQL is required, and startup
+checks the connection. Set `DATABASE_URL` in `.env` using `.env.example` as a
+template, then run `make run-deps` and `make seed-local`. Run `make generate`
+explicitly when generated code needs updating. An existing database must be
+recreated to pick up changes to the initial migration.
 
-Start the server with `go run ./cmd`, then run `go run ./cmd/chessli` in two
-other terminals. The TUI connects to `ws://localhost:8080/ws` and displays its
-server-assigned profile ID separately from the mocked dashboard profile.
-To start with an existing identity, run `make run-tui PROFILE_ID=YOUR_PROFILE_UUID`
-or `go run ./cmd/chessli -profile-id YOUR_PROFILE_UUID`. Omit the ID to create a
-new identity. The server validates the UUID and supplies any unfinished game's ID;
-the TUI automatically resumes it. Save the displayed profile ID to return later.
+Start the server with `make run`, then run the following commands in two other
+terminals, using the seeded development profiles:
+
+```sh
+make run-tui PROFILE_ID=00000000-0000-4000-8000-000000000001
+make run-tui PROFILE_ID=00000000-0000-4000-8000-000000000002
+```
+
+The TUI connects to `ws://localhost:8080/ws` and displays its profile ID separately
+from the mocked dashboard profile. Connections require an existing profile's UUID;
+registration and login are separate future work. The server supplies any unfinished
+game's ID, and the TUI automatically resumes it.
 Use a terminal of at least 80 columns by 24 rows; smaller terminals show a
 resize prompt instead of a clipped board. Dashboard sample data is labeled
 in the client, and History shows an unavailable state.
@@ -146,18 +154,20 @@ Start the server from the repository root:
 make run
 ```
 
-`GET /healthz` and `GET /readyz` return `200 OK`. `readyz` is currently a
-placeholder; add dependency checks only when the server gains dependencies.
+`GET /healthz` and `GET /readyz` return `200 OK` once the server is listening.
+Startup checks PostgreSQL; `readyz` does not continuously probe the database.
 
 Open two more terminals and connect both players:
 
 ```sh
-websocat ws://localhost:8080/ws
+websocat 'ws://localhost:8080/ws?profileId=00000000-0000-4000-8000-000000000001'
+websocat 'ws://localhost:8080/ws?profileId=00000000-0000-4000-8000-000000000002'
 ```
 
 Each connection receives a `connection.ready` `profileId` and an optional
 `activeGameId`. Reconnect with `?profileId=PROFILE_ID`, then send `game.resume`
-for that game. The TUI does this automatically. It is placeholder identity, not
+for that game. The TUI does this automatically. The profile must exist in the
+database; supplying its ID is still development-only identification, without
 authentication. A profile may have only one unfinished game across private games
 and matchmaking, including across connections.
 
@@ -313,6 +323,8 @@ for local reading. Filter on `event`, not the human-readable `msg`.
 | `game.player_disconnected` | A connection is removed from its game; includes `game_id`, `profile_id`, and `server_shutdown` to distinguish server shutdown from an individual disconnect. |
 | `game.finished` | One completion event per game transition, with `game_id`, `outcome`, `termination`, and final `version`. Reads and reconnects do not repeat it. |
 | `message.dropped` | A full outgoing queue; includes `profile_id`, `request_id`, `message_type`, and `reason=queue_full`. |
+| `game.persisted` | Completed game, moves, and final clocks saved to PostgreSQL. |
+| `game.persistence_retry`, `game.persistence_failed` | A save is being retried, or all three attempts failed; includes `game_id` and the error. |
 
 Lifecycle events use INFO. Full queues, rejected upgrades (`connection.rejected`),
 timeouts, and unexpected disconnects use WARN. Unexpected application failures
@@ -327,9 +339,14 @@ dashboards; they do not provide durable game history or delivery acknowledgement
 
 ## Repository integration tests
 
-The application currently runs entirely in memory. Repository integration tests
-exercise the existing PostgreSQL adapters without wiring them into the server.
-They are skipped unless `CHESSLI_TEST_DATABASE_URL` is set:
+The application saves completed games asynchronously. Each save has up to three
+attempts, with a three-second timeout per attempt and one second between attempts.
+Shutdown waits for these writes before closing the pool. Failed saves are logged;
+pending records have no crash recovery. Stored games survive restart, while active
+games, clocks, and matchmaking remain in memory. Dashboard and History are still
+placeholders; stored history is available through the repository methods.
+
+Repository integration tests are skipped unless `CHESSLI_TEST_DATABASE_URL` is set:
 
 ```sh
 CHESSLI_TEST_DATABASE_URL='postgres://app:app@localhost:5432/app?sslmode=disable' go test -race ./internal/persistence/... -count=1

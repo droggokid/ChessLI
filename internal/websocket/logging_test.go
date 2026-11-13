@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"ChessLI/internal/gameplay"
 	"ChessLI/internal/websocket/protocol"
 	coderws "github.com/coder/websocket"
 )
@@ -34,7 +33,7 @@ func TestConnectionCloseLogs(t *testing.T) {
 			previous := slog.Default()
 			slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
 			t.Cleanup(func() { slog.SetDefault(previous) })
-			games := gameplay.NewGameService()
+			games := newTestGameService(t)
 			defer games.Close()
 			server := NewServer("", games)
 			finished := make(chan struct{})

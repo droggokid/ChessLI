@@ -13,7 +13,7 @@ func TestGameServiceIgnoresStaleTimerAfterMoveFinishOrClose(t *testing.T) {
 	for _, action := range []string{"move", "resign", "close"} {
 		t.Run(action, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				service := NewGameService()
+				service := newTestGameService(t)
 				defer service.Close()
 				g := newReadyGame()
 				now := time.Now()

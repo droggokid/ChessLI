@@ -12,14 +12,18 @@ make run
 Open a terminal for each required client:
 
 ```sh
-websocat ws://localhost:8080/ws
+websocat 'ws://localhost:8080/ws?profileId=00000000-0000-4000-8000-000000000001'
+websocat 'ws://localhost:8080/ws?profileId=00000000-0000-4000-8000-000000000002'
 ```
 
 Each WebSocket connection receives a `connection.ready` payload containing a
 profile ID and an optional `activeGameId`. A profile may participate in only one
 unfinished game across private games, matchmaking, and connections. Reuse that ID as the
-`profileId` query parameter when reconnecting to resume as the same placeholder
-player. This is development-only identity, not authentication. Once a game's
+`profileId` query parameter when reconnecting to resume as the same player.
+Run `make run-deps` and `make seed-local` first with `DATABASE_URL` configured.
+The profile must exist: a missing or malformed ID receives HTTP 400, an unknown
+profile receives HTTP 404, and a failed profile lookup receives HTTP 503 before
+the WebSocket upgrade. This is development-only identity, not authentication. Once a game's
 final state is queued for delivery, its live connections can start or join
 another game. Open a fresh connection or restart the server when a scenario
 requires a clean game.

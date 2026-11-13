@@ -9,9 +9,39 @@ import (
 
 	domain "ChessLI/internal/game"
 	"ChessLI/internal/identity"
+	"ChessLI/internal/persistence"
 
 	"github.com/corentings/chess/v2"
+	"go.uber.org/mock/gomock"
 )
+
+func newTestGameService(t *testing.T) *GameService {
+	t.Helper()
+	repository := persistence.NewMockGameRepository(gomock.NewController(t))
+	repository.EXPECT().CreateGame(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	service := NewGameService(repository, newTestProfileRepository(t))
+	t.Cleanup(service.Close)
+	return service
+}
+
+func newTestProfileRepository(t *testing.T) *persistence.MockProfileRepository {
+	t.Helper()
+	repository := persistence.NewMockProfileRepository(gomock.NewController(t))
+	repository.EXPECT().GetProfileByID(gomock.Any(), gomock.Any()).Return(persistence.Profile{}, nil).AnyTimes()
+	return repository
+}
+
+func TestGameServiceRejectsUnknownProfile(t *testing.T) {
+	profiles := persistence.NewMockProfileRepository(gomock.NewController(t))
+	id := identity.NewProfileID()
+	profiles.EXPECT().GetProfileByID(gomock.Any(), id).Return(persistence.Profile{}, persistence.ErrProfileNotFound)
+	repository := persistence.NewMockGameRepository(gomock.NewController(t))
+	service := NewGameService(repository, profiles)
+	defer service.Close()
+	if err := service.ValidateProfile(t.Context(), id); !errors.Is(err, ErrProfileNotFound) {
+		t.Fatalf("ValidateProfile() = %v, want profile not found", err)
+	}
+}
 
 func TestValidateTimeControl(t *testing.T) {
 	t.Parallel()
@@ -43,7 +73,7 @@ func TestValidateTimeControl(t *testing.T) {
 func TestGameServicePrivateGameLifecycle(t *testing.T) {
 	t.Parallel()
 
-	service := NewGameService()
+	service := newTestGameService(t)
 	creator := identity.ProfileID("creator")
 	joiner := identity.ProfileID("joiner")
 
@@ -94,7 +124,7 @@ func TestGameServicePrivateGameLifecycle(t *testing.T) {
 }
 
 func TestGameServiceConcurrentSnapshotsAndMoves(t *testing.T) {
-	service := NewGameService()
+	service := newTestGameService(t)
 	defer service.Close()
 	ctx := context.Background()
 	created, err := service.CreatePrivateGame(ctx, CreatePrivateCommand{
@@ -146,7 +176,7 @@ func TestGameServiceConcurrentSnapshotsAndMoves(t *testing.T) {
 func TestGameServiceResumeGame(t *testing.T) {
 	t.Parallel()
 
-	service := NewGameService()
+	service := newTestGameService(t)
 	game := newReadyGame()
 	service.games[game.id] = game
 
@@ -175,7 +205,7 @@ func TestGameServiceResumeGame(t *testing.T) {
 func TestGameServiceAutomaticallyExpiresPrivateGame(t *testing.T) {
 	t.Parallel()
 
-	service := NewGameService()
+	service := newTestGameService(t)
 	t.Cleanup(service.Close)
 
 	expired := make(chan GameSnapshot, 1)
@@ -245,7 +275,7 @@ func TestGameServiceNotifiesTimeoutDetectedByCommandsOrState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewGameService()
+			service := newTestGameService(t)
 			game := newReadyGame()
 			now := time.Now()
 			game.now = func() time.Time { return now }
@@ -303,7 +333,7 @@ func TestGameServiceTerminalActionsStopExpirationTimer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewGameService()
+			service := newTestGameService(t)
 			game := newReadyGame()
 			service.games[game.id] = game
 			service.mu.Lock()
@@ -348,7 +378,7 @@ func TestGameServiceCreatePrivateGameRejectsInvalidCommands(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := NewGameService().CreatePrivateGame(context.Background(), tt.command)
+			_, err := newTestGameService(t).CreatePrivateGame(context.Background(), tt.command)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("CreatePrivateGame() error = %v, want %v", err, tt.wantErr)
 			}
@@ -359,7 +389,7 @@ func TestGameServiceCreatePrivateGameRejectsInvalidCommands(t *testing.T) {
 func TestGameServiceRejectsEmptyProfileID(t *testing.T) {
 	t.Parallel()
 
-	service := NewGameService()
+	service := newTestGameService(t)
 	created, err := service.CreatePrivateGame(context.Background(), CreatePrivateCommand{
 		Initial: time.Minute, ColorPreference: ColorWhite,
 	})
@@ -384,7 +414,7 @@ func TestGameServiceRejectsEmptyProfileID(t *testing.T) {
 func TestGameServiceMatchmakingMatchesWithinPool(t *testing.T) {
 	t.Parallel()
 
-	service := NewGameService()
+	service := newTestGameService(t)
 	service.pickColor = func() chess.Color { return chess.White }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -413,7 +443,7 @@ func TestGameServiceMatchmakingMatchesWithinPool(t *testing.T) {
 func TestGameServiceMatchmakingStopsCancellationCleanupAfterMatch(t *testing.T) {
 	t.Parallel()
 
-	service := NewGameService()
+	service := newTestGameService(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -448,7 +478,7 @@ func TestGameServiceMatchmakingStopsCancellationCleanupAfterMatch(t *testing.T) 
 func TestGameServiceMatchmakingKeepsPoolsSeparate(t *testing.T) {
 	t.Parallel()
 
-	service := NewGameService()
+	service := newTestGameService(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -491,7 +521,7 @@ func TestGameServiceMatchmakingKeepsPoolsSeparate(t *testing.T) {
 func TestGameServiceMatchmakingRejectsDuplicateProfileAcrossPools(t *testing.T) {
 	t.Parallel()
 
-	service := NewGameService()
+	service := newTestGameService(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -508,7 +538,7 @@ func TestGameServiceMatchmakingRejectsDuplicateProfileAcrossPools(t *testing.T) 
 func TestGameServiceMatchmakingRemovesCanceledPlayer(t *testing.T) {
 	t.Parallel()
 
-	service := NewGameService()
+	service := newTestGameService(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	ticket, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "player", Initial: time.Minute, Increment: 0})
 	if err != nil {
@@ -537,7 +567,7 @@ func TestGameServiceMatchmakingRemovesCanceledPlayer(t *testing.T) {
 func TestGameServiceMatchmakingRejectsInvalidTimeControl(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewGameService().EnterMatchmaking(
+	_, err := newTestGameService(t).EnterMatchmaking(
 		context.Background(),
 		EnterMatchmakingCommand{ProfileID: "player", Initial: 0, Increment: 0},
 	)
@@ -573,7 +603,7 @@ func receiveMatch(t *testing.T, result <-chan GameAssignment) GameAssignment {
 
 func TestGameServiceCancellationOnlyStopsQueuedWork(t *testing.T) {
 	t.Parallel()
-	service := NewGameService()
+	service := newTestGameService(t)
 	defer service.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

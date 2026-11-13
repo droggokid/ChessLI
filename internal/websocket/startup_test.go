@@ -12,14 +12,13 @@ import (
 	"testing/synctest"
 	"time"
 
-	"ChessLI/internal/gameplay"
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
 	coderws "github.com/coder/websocket"
 )
 
 func TestServerShutdownCancelsBlockedConnectionReady(t *testing.T) {
-	server := NewServer("", gameplay.NewGameService())
+	server := NewServer("", newTestGameService(t))
 	serverConn, peer := net.Pipe()
 	defer peer.Close()
 	defer serverConn.Close()
@@ -97,7 +96,7 @@ func (c *observedWriteConn) Write(p []byte) (int, error) {
 }
 
 func websocketUpgradeRequest() *http.Request {
-	r := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	r := httptest.NewRequest(http.MethodGet, "/ws?profileId=00000000-0000-4000-8000-000000000001", nil)
 	r.Header.Set("Connection", "Upgrade")
 	r.Header.Set("Upgrade", "websocket")
 	r.Header.Set("Sec-WebSocket-Version", "13")

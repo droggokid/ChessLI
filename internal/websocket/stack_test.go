@@ -6,10 +6,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"ChessLI/internal/gameplay"
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
 
@@ -18,7 +18,7 @@ import (
 )
 
 func TestServerHealthEndpoints(t *testing.T) {
-	server := NewServer("", gameplay.NewGameService())
+	server := NewServer("", newTestGameService(t))
 
 	for _, path := range []string{"/healthz", "/readyz"} {
 		t.Run(path, func(t *testing.T) {
@@ -281,7 +281,7 @@ func startStackServer(t *testing.T) (*Server, string) {
 
 func startStackServerWithHeartbeat(t *testing.T, interval, timeout time.Duration) (*Server, string) {
 	t.Helper()
-	games := gameplay.NewGameService()
+	games := newTestGameService(t)
 	t.Cleanup(games.Close)
 	server := NewServer("", games)
 	games.SetGameExpiredHandler(server.BroadcastGameState)
@@ -337,6 +337,9 @@ func shutdownStackServer(t *testing.T, server *Server) {
 
 func dialStackClient(t *testing.T, url string) *coderws.Conn {
 	t.Helper()
+	if !strings.Contains(url, "?") {
+		url += "?profileId=" + string(identity.NewProfileID())
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	conn, response, err := coderws.Dial(ctx, url, nil)

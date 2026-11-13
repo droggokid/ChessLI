@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/rand/v2"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	domain "ChessLI/internal/game"
 	"ChessLI/internal/identity"
+	"ChessLI/internal/persistence"
 
 	"github.com/corentings/chess/v2"
 )
@@ -19,6 +21,7 @@ import (
 // Implementations must support concurrent calls. Synchronous in-memory operations
 // finish once admitted; context cancellation controls queued matchmaking work.
 type Service interface {
+	ValidateProfile(context.Context, identity.ProfileID) error
 	ActiveGame(profileID identity.ProfileID) identity.GameID
 	CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (GameAssignment, error)
 	JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (GameAssignment, error)
@@ -43,13 +46,24 @@ type GameService struct {
 	profileGames  map[identity.ProfileID]identity.GameID
 	pickColor     func() chess.Color // Always White or Black.
 	onGameExpired func(GameSnapshot)
+	repository    persistence.GameRepository
+	profiles      persistence.ProfileRepository
 	notifications sync.WaitGroup
 	closed        bool
 }
 
-// NewGameService returns an empty, in-memory gameplay service.
-func NewGameService() *GameService {
+// NewGameService returns an empty gameplay service backed by repository.
+// A repository is required.
+func NewGameService(repository persistence.GameRepository, profiles persistence.ProfileRepository) *GameService {
+	if repository == nil {
+		panic("gameplay: GameRepository is required")
+	}
+	if profiles == nil {
+		panic("gameplay: ProfileRepository is required")
+	}
 	return &GameService{
+		repository:   repository,
+		profiles:     profiles,
 		queue:        make(matchQueue),
 		games:        make(map[identity.GameID]*game),
 		profileGames: make(map[identity.ProfileID]identity.GameID),
@@ -60,6 +74,18 @@ func NewGameService() *GameService {
 			return chess.Black
 		},
 	}
+}
+
+// ValidateProfile checks the durable player identity before connection admission.
+func (s *GameService) ValidateProfile(ctx context.Context, profileID identity.ProfileID) error {
+	if err := validateProfileID(profileID); err != nil {
+		return err
+	}
+	_, err := s.profiles.GetProfileByID(ctx, profileID)
+	if errors.Is(err, persistence.ErrProfileNotFound) {
+		return ErrProfileNotFound
+	}
+	return err
 }
 
 // SetGameExpiredHandler sets the handler called asynchronously when a game clock expires.
@@ -190,7 +216,7 @@ func (s *GameService) ResumeGame(_ context.Context, command ResumeGameCommand) (
 	if err != nil {
 		return GameSnapshot{}, err
 	}
-	defer s.notifyExpiration(game)
+	defer s.notifyFinished(game)
 
 	state, err := game.resume(command.ProfileID)
 	if err == nil {
@@ -284,7 +310,7 @@ func (s *GameService) MakeMove(_ context.Context, command MoveCommand) (GameSnap
 		return GameSnapshot{}, err
 	}
 
-	defer s.notifyExpiration(game)
+	defer s.notifyFinished(game)
 
 	state, err := game.move(command)
 	if err != nil {
@@ -307,7 +333,7 @@ func (s *GameService) GameState(_ context.Context, gameID identity.GameID) (Game
 	now := game.now()
 	game.expire(now)
 	state := game.snapshot(now)
-	s.notifyExpiration(game)
+	s.notifyFinished(game)
 	return state, nil
 }
 
@@ -320,7 +346,7 @@ func (s *GameService) Resign(_ context.Context, command ResignCommand) (GameSnap
 	if err != nil {
 		return GameSnapshot{}, err
 	}
-	defer s.notifyExpiration(game)
+	defer s.notifyFinished(game)
 
 	snapshot, err := game.resign(command)
 	if err != nil {
@@ -340,7 +366,7 @@ func (s *GameService) OfferDraw(_ context.Context, command OfferDrawCommand) (Ga
 	if err != nil {
 		return GameSnapshot{}, err
 	}
-	defer s.notifyExpiration(game)
+	defer s.notifyFinished(game)
 
 	return game.offerDraw(command)
 }
@@ -354,7 +380,7 @@ func (s *GameService) AcceptDraw(_ context.Context, command DrawOfferResponseCom
 	if err != nil {
 		return GameSnapshot{}, err
 	}
-	defer s.notifyExpiration(game)
+	defer s.notifyFinished(game)
 
 	snapshot, err := game.acceptDraw(command)
 	if err != nil {
@@ -374,12 +400,12 @@ func (s *GameService) DeclineDraw(_ context.Context, command DrawOfferResponseCo
 	if err != nil {
 		return GameSnapshot{}, err
 	}
-	defer s.notifyExpiration(game)
+	defer s.notifyFinished(game)
 
 	return game.declineDraw(command)
 }
 
-// Close stops pending expiration timers and waits for notification handlers.
+// Close stops pending expiration timers and waits for notifications and saves.
 // Call it after application operations have stopped, never from a notification handler.
 func (s *GameService) Close() {
 	s.mu.Lock()
@@ -421,16 +447,45 @@ func (s *GameService) expireFromTimer(game *game, expirationID uint64) {
 	}
 	game.expirationTimer = nil
 	game.expire(game.now())
-	s.notifyExpiration(game)
+	s.notifyFinished(game)
 }
 
-func (s *GameService) notifyExpiration(game *game) {
+func (s *GameService) notifyFinished(game *game) {
+	if game.outcome == domain.OutcomeNone {
+		return
+	}
+	if !game.completionScheduled && !s.closed {
+		game.completionScheduled = true
+		record := completedGameDTO(game.completedGame())
+		s.notifications.Go(func() { s.saveCompletedGame(record) })
+	}
 	if game.termination != domain.TerminationTimeout || game.expirationNotified {
 		return
 	}
 	game.expirationNotified = true
 	s.stopExpiration(game)
 	s.notifyGameExpired(game.snapshot(game.now()))
+}
+
+func (s *GameService) saveCompletedGame(record persistence.CompletedGame) {
+	for attempt := 1; attempt <= 3; attempt++ {
+		// A disconnected player cannot cancel persistence of a committed result.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := s.repository.CreateGame(ctx, record)
+		cancel()
+		if err == nil {
+			slog.Info("completed game saved", "event", "game.persisted", "game_id", record.ID)
+			return
+		}
+		if attempt == 3 {
+			slog.Error("save completed game", "event", "game.persistence_failed", "game_id", record.ID,
+				"attempts", attempt, "error", err)
+			return
+		}
+		slog.Warn("retry completed game save", "event", "game.persistence_retry", "game_id", record.ID,
+			"attempt", attempt, "error", err)
+		time.Sleep(time.Second)
+	}
 }
 
 func (s *GameService) stopExpiration(game *game) {

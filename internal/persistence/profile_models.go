@@ -1,4 +1,4 @@
-package profile
+package persistence
 
 import (
 	"ChessLI/internal/identity"

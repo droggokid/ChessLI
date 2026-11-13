@@ -22,7 +22,7 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO completed_games (
     id, white_profile_id, black_profile_id, initial_time_ms, increment_ms,
-    outcome, termination, final_fen, moves
+    outcome, termination, final_fen, white_remaining_ms, black_remaining_ms, moves
 )
 VALUES
     (
@@ -31,6 +31,7 @@ VALUES
         '00000000-0000-4000-8000-000000000002',
         300000, 2000, 'black_win', 'checkmate',
         'rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3',
+        286868, 274834,
         '[
             {"ply":1,"uci":"f2f3","white_remaining_ms":298790,"black_remaining_ms":300000},
             {"ply":2,"uci":"e7e5","white_remaining_ms":298790,"black_remaining_ms":294234},
@@ -44,6 +45,7 @@ VALUES
         '00000000-0000-4000-8000-000000000003',
         600000, 0, 'draw', 'draw_agreement',
         'rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq - 0 2',
+        583333, 590222,
         '[
             {"ply":1,"uci":"d2d4","white_remaining_ms":592111,"black_remaining_ms":600000},
             {"ply":2,"uci":"d7d5","white_remaining_ms":592111,"black_remaining_ms":590222},

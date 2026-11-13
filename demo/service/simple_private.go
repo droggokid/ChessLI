@@ -5,21 +5,41 @@ import (
 	"fmt"
 	"time"
 
+	"ChessLI/internal/config"
 	"ChessLI/internal/gameplay"
 	"ChessLI/internal/identity"
+	"ChessLI/internal/persistence"
 
 	"github.com/corentings/chess/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
 	ctx := context.Background()
 
-	service := gameplay.NewGameService()
+	conf, err := config.Load()
+	if err != nil {
+		fmt.Printf("couldn't load configuration: %v\n", err)
+		return
+	}
+	startupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(startupCtx, conf.DatabaseURL)
+	if err != nil {
+		fmt.Printf("couldn't configure database: %v\n", err)
+		return
+	}
+	defer pool.Close()
+	if err := pool.Ping(startupCtx); err != nil {
+		fmt.Printf("couldn't connect to database: %v\n", err)
+		return
+	}
+	service := gameplay.NewGameService(persistence.NewGameRepository(pool), persistence.NewProfileRepository(pool))
 	defer service.Close()
 
 	t := time.Minute * 10
 
-	createCommand := gameplay.CreatePrivateCommand{ProfileID: identity.NewProfileID(), Initial: t, Increment: 0, ColorPreference: gameplay.ColorRandom}
+	createCommand := gameplay.CreatePrivateCommand{ProfileID: identity.ProfileID("00000000-0000-4000-8000-000000000001"), Initial: t, Increment: 0, ColorPreference: gameplay.ColorRandom}
 
 	createResult, err := service.CreatePrivateGame(ctx, createCommand)
 	if err != nil {
@@ -27,7 +47,7 @@ func main() {
 		return
 	}
 
-	joinCommand := gameplay.JoinPrivateCommand{ProfileID: identity.NewProfileID(), GameID: createResult.GameID}
+	joinCommand := gameplay.JoinPrivateCommand{ProfileID: identity.ProfileID("00000000-0000-4000-8000-000000000002"), GameID: createResult.GameID}
 
 	joinResult, err := service.JoinPrivateGame(ctx, joinCommand)
 	if err != nil {

@@ -1,4 +1,4 @@
-package profile
+package persistence
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 )
 
 func TestRepositoryRejectsInvalidProfileID(t *testing.T) {
-	repository := NewRepository(nil)
+	repository := NewProfileRepository(nil)
 
 	if _, err := repository.GetProfileByID(context.Background(), identity.ProfileID("invalid")); err == nil {
 		t.Fatal("GetProfileByID() error = nil, want invalid profile ID error")

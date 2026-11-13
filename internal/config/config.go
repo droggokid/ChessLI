@@ -10,6 +10,7 @@ import (
 const (
 	logFormatEnvironment     = "CHESSLI_LOG_FORMAT"
 	serverAddressEnvironment = "CHESSLI_SERVER_ADDRESS"
+	databaseURLEnvironment   = "DATABASE_URL"
 	defaultServerAddress     = ":8080"
 )
 
@@ -17,6 +18,7 @@ const (
 type Config struct {
 	LogFormat     log.LogFormat
 	ServerAddress string
+	DatabaseURL   string
 }
 
 // Load reads environment configuration, applying defaults and validating the log format.
@@ -30,10 +32,15 @@ func Load() (Config, error) {
 	if serverAddress == "" {
 		serverAddress = defaultServerAddress
 	}
+	databaseURL := strings.TrimSpace(os.Getenv(databaseURLEnvironment))
+	if databaseURL == "" {
+		return Config{}, fmt.Errorf("%s is required", databaseURLEnvironment)
+	}
 
 	return Config{
 		LogFormat:     logFormat,
 		ServerAddress: serverAddress,
+		DatabaseURL:   databaseURL,
 	}, nil
 }
 

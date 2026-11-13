@@ -1,15 +1,16 @@
 # Roadmap
 
 These are future directions, not implemented features. Current behavior and
-commands are in [README](../README.md); architecture decisions are in [ADRs](adr/).
+commands are in [README](../README.md).
 
 ## Durable identities and history
 
-The PostgreSQL schema and game/profile repositories exist. Next, wire them into
-the application with an identity and authorization policy. Save completed games
-with their moves and expose history after restart. Storage failures must not
-undo a result or prevent final-state delivery; retry and retention need their
-own decisions. Unfinished games currently remain in memory only.
+Game and profile repositories are injected into gameplay. Connections validate
+existing development profiles, and completed games are saved with their moves and
+final clocks independently of final-state delivery. Saves have three bounded
+attempts; failed or pending saves have no crash recovery. Authentication,
+authorization, stronger retention, and exposing history after restart remain
+future work. Unfinished games remain in memory only.
 
 The first history milestone is a real dashboard, searchable game history, and
 stepping through a selected game's moves. Dashboard statistics and History are

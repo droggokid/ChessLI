@@ -1,8 +1,9 @@
-package profile
+package persistence
 
 import (
 	"ChessLI/internal/identity"
 	"context"
+	"errors"
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
@@ -11,27 +12,29 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=repository.go -destination=repository_mock.go -package=profile
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=profile_repository.go -destination=profile_repository_mock.go -package=persistence
 
-type Repository interface {
+var ErrProfileNotFound = errors.New("profile not found")
+
+type ProfileRepository interface {
 	CreateProfile(ctx context.Context, username, email, passwordHash string) (Profile, error)
 	GetProfileByID(ctx context.Context, iid identity.ProfileID) (Profile, error)
 	GetProfilesByIDs(ctx context.Context, ids []identity.ProfileID) ([]Profile, error)
 	GetCredentialByEmail(ctx context.Context, email string) (LoginCredential, error)
 }
 
-type RepositoryImpl struct {
+type ProfileRepositoryImpl struct {
 	db   *pgxpool.Pool
 	psql sq.StatementBuilderType
 }
 
-// NewRepository returns a profile repository backed by db.
-func NewRepository(db *pgxpool.Pool) *RepositoryImpl {
-	return &RepositoryImpl{db: db, psql: sq.StatementBuilder.PlaceholderFormat(sq.Dollar)}
+// NewProfileRepository returns a profile repository backed by db.
+func NewProfileRepository(db *pgxpool.Pool) *ProfileRepositoryImpl {
+	return &ProfileRepositoryImpl{db: db, psql: sq.StatementBuilder.PlaceholderFormat(sq.Dollar)}
 }
 
 // CreateProfile stores a new profile with the supplied password hash.
-func (r *RepositoryImpl) CreateProfile(ctx context.Context, username, email, passwordHash string) (Profile, error) {
+func (r *ProfileRepositoryImpl) CreateProfile(ctx context.Context, username, email, passwordHash string) (Profile, error) {
 	query, args, err := r.psql.Insert("profiles").
 		Columns("id", "username", "email", "password_hash").
 		Values(uuid.New(), username, email, passwordHash).
@@ -45,7 +48,7 @@ func (r *RepositoryImpl) CreateProfile(ctx context.Context, username, email, pas
 }
 
 // GetProfileByID returns a profile by ID.
-func (r *RepositoryImpl) GetProfileByID(ctx context.Context, id identity.ProfileID) (Profile, error) {
+func (r *ProfileRepositoryImpl) GetProfileByID(ctx context.Context, id identity.ProfileID) (Profile, error) {
 	profileID, err := uuid.Parse(string(id))
 	if err != nil {
 		return Profile{}, fmt.Errorf("parse profile ID: %w", err)
@@ -57,11 +60,15 @@ func (r *RepositoryImpl) GetProfileByID(ctx context.Context, id identity.Profile
 		return Profile{}, err
 	}
 
-	return scanProfile(r.db.QueryRow(ctx, query, args...))
+	profile, err := scanProfile(r.db.QueryRow(ctx, query, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Profile{}, fmt.Errorf("%w: %w", ErrProfileNotFound, err)
+	}
+	return profile, err
 }
 
 // GetProfilesByIDs returns matching profiles ordered by ID, omitting missing IDs.
-func (r *RepositoryImpl) GetProfilesByIDs(ctx context.Context, ids []identity.ProfileID) ([]Profile, error) {
+func (r *ProfileRepositoryImpl) GetProfilesByIDs(ctx context.Context, ids []identity.ProfileID) ([]Profile, error) {
 	profileIDs := make([]uuid.UUID, len(ids))
 	for i, id := range ids {
 		profileID, err := uuid.Parse(string(id))
@@ -87,7 +94,7 @@ func (r *RepositoryImpl) GetProfilesByIDs(ctx context.Context, ids []identity.Pr
 }
 
 // GetCredentialByEmail returns login credentials using a case-insensitive email lookup.
-func (r *RepositoryImpl) GetCredentialByEmail(ctx context.Context, email string) (LoginCredential, error) {
+func (r *ProfileRepositoryImpl) GetCredentialByEmail(ctx context.Context, email string) (LoginCredential, error) {
 	query, args, err := r.psql.Select("id", "password_hash").From("profiles").
 		Where("LOWER(email) = LOWER(?)", email).ToSql()
 	if err != nil {

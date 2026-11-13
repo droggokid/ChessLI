@@ -19,7 +19,7 @@ import (
 
 func TestHandlerAutomaticallyPublishesTimeoutAndReleasesSessions(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		games := gameplay.NewGameService()
+		games := newTestGameService(t)
 		defer games.Close()
 		server := NewServer("", games)
 		defer server.cancelConnections()
@@ -91,7 +91,7 @@ func TestHandlerTerminalStateReachesPeerWhenSourceStops(t *testing.T) {
 func TestAdmissionPublishesPresenceWhenSourceQueueIsFull(t *testing.T) {
 	for _, action := range []string{"join", "resume", "match"} {
 		t.Run(action, func(t *testing.T) {
-			games := gameplay.NewGameService()
+			games := newTestGameService(t)
 			t.Cleanup(games.Close)
 			ctx := context.Background()
 			created, err := games.CreatePrivateGame(ctx, gameplay.CreatePrivateCommand{

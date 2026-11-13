@@ -15,7 +15,7 @@ import (
 
 func TestHandlerCloseWaitsForMatchmakingCleanup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		games := gameplay.NewGameService()
+		games := newTestGameService(t)
 		defer games.Close()
 		registry := newGameSessions()
 		handler := newHandler(games, registry)
