@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"ChessLI/internal/game"
@@ -366,7 +365,7 @@ func TestHandlerMakeMoveBroadcastsAuthoritativeResult(t *testing.T) {
 	}
 }
 
-func TestAwaitMatchRegistersAndInitializesSession(t *testing.T) {
+func TestMatchAdmissionRegistersAndInitializesSession(t *testing.T) {
 	t.Parallel()
 
 	state := gameplay.GameSnapshot{
@@ -389,19 +388,12 @@ func TestAwaitMatchRegistersAndInitializesSession(t *testing.T) {
 		t.Fatalf("Hold(black) error = %v", err)
 	}
 
-	whiteResults := matchResults(gameplay.GameAssignment{GameID: "game", Color: chess.White})
-	blackResults := matchResults(gameplay.GameAssignment{GameID: "game", Color: chess.Black})
-	done := make(chan struct{}, 2)
-	go func() {
-		handler.awaitMatch(context.Background(), white, "white-request", gameplay.MatchTicket{Result: whiteResults})
-		done <- struct{}{}
-	}()
-	go func() {
-		handler.awaitMatch(context.Background(), black, "black-request", gameplay.MatchTicket{Result: blackResults})
-		done <- struct{}{}
-	}()
-	<-done
-	<-done
+	if err := handler.admitMatch(t.Context(), white, "white-request", "game"); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.admitMatch(t.Context(), black, "black-request", "game"); err != nil {
+		t.Fatal(err)
+	}
 
 	for name, session := range map[string]*Session{"white": white, "black": black} {
 		matched := receiveEnvelope(t, session)
@@ -443,7 +435,7 @@ func TestAwaitMatchRegistersAndInitializesSession(t *testing.T) {
 	}
 }
 
-func TestAwaitMatchStopsWhenInitialStateFails(t *testing.T) {
+func TestMatchAdmissionStopsWhenInitialStateFails(t *testing.T) {
 	t.Parallel()
 
 	service := gameplay.NewMockGameService(gomock.NewController(t))
@@ -455,9 +447,7 @@ func TestAwaitMatchStopsWhenInitialStateFails(t *testing.T) {
 	if err := registry.Add("game", peer); err != nil {
 		t.Fatalf("Add(peer) error = %v", err)
 	}
-	results := matchResults(gameplay.GameAssignment{GameID: "game", Color: chess.White})
-
-	handler.awaitMatch(context.Background(), client, "request", gameplay.MatchTicket{Result: results})
+	handler.admitMatch(t.Context(), client, "request", "game")
 
 	failed := receiveEnvelope(t, client)
 	payload, ok := failed.Payload.(protocol.ErrorPayload)
@@ -510,45 +500,85 @@ func TestHandlerRejectsGameAdmissionWhileBusy(t *testing.T) {
 	}
 }
 
-func matchResults(result gameplay.GameAssignment) <-chan gameplay.GameAssignment {
-	results := make(chan gameplay.GameAssignment, 1)
-	results <- result
-	close(results)
-	return results
-}
-
-func TestHandlerCloseJoinsMatchAdmission(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		service := gameplay.NewMockGameService(gomock.NewController(t))
-		service.EXPECT().EnterMatchmaking(gomock.Any(), gomock.Any()).Return(gameplay.MatchTicket{Result: matchResults(gameplay.GameAssignment{GameID: "game", Color: chess.White})}, nil)
-		started, release := make(chan struct{}), make(chan struct{})
-		service.EXPECT().GameState(gomock.Any(), gomock.Any()).DoAndReturn(func(context.Context, identity.GameID) (gameplay.GameSnapshot, error) {
-			close(started)
-			<-release
-			return gameplay.GameSnapshot{GameID: "game", WhiteProfileID: "white", BlackProfileID: "black"}, nil
-		})
-		handler := newHandler(service, newGameSessions())
-		client := newQueuedSession("white")
-		if err := handler.Handle(context.Background(), client, json.RawMessage(`{"type":"matchmaking.enter","payload":{"timeControl":"1+0"}}`)); err != nil {
+func TestHandlerMatchmakingPublishesBothEntriesBeforeReturning(t *testing.T) {
+	service := gameplay.NewMockGameService(gomock.NewController(t))
+	first, second := new(gameplay.MatchmakingEntry), new(gameplay.MatchmakingEntry)
+	service.EXPECT().EnterMatchmaking(gomock.Any(), gameplay.EnterMatchmakingCommand{ProfileID: "white", Initial: time.Minute}).Return(gameplay.MatchmakingResult{Entry: first}, nil)
+	service.EXPECT().EnterMatchmaking(gomock.Any(), gameplay.EnterMatchmakingCommand{ProfileID: "black", Initial: time.Minute}).Return(gameplay.MatchmakingResult{Entry: second, Opponent: first, GameID: "game"}, nil)
+	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(gameplay.GameSnapshot{GameID: "game", WhiteProfileID: "white", BlackProfileID: "black"}, nil).Times(2)
+	handler := newHandler(service, newGameSessions())
+	white, black := newQueuedSession("white"), newQueuedSession("black")
+	for _, client := range []*Session{white, black} {
+		raw := json.RawMessage(`{"type":"matchmaking.enter","requestId":"` + string(client.profileID) + `","payload":{"timeControl":"1+0"}}`)
+		if err := handler.Handle(t.Context(), client, raw); err != nil {
 			t.Fatal(err)
 		}
-		<-started
-		closed := make(chan struct{})
-		go func() { handler.Close(); close(closed) }()
-		synctest.Wait()
-		select {
-		case <-closed:
-			t.Error("Close returned before matchmaking admission")
-		default:
+	}
+	for _, client := range []*Session{white, black} {
+		for _, want := range []protocol.ServerMessageType{protocol.ServerMatchmakingEntered, protocol.ServerMatchFound, protocol.ServerGameInitial} {
+			got := receiveEnvelope(t, client)
+			if got.Type != want {
+				t.Fatalf("%s response = %s, want %s", client.profileID, got.Type, want)
+			}
+			if want != protocol.ServerGameInitial && got.RequestID != string(client.profileID) {
+				t.Fatalf("assignment lost entry request ID: %+v", got)
+			}
 		}
-		close(release)
-		<-closed
-		receiveEnvelope(t, client) // matchmaking.entered
-		receiveEnvelope(t, client) // matchmaking.found
-		if got := receiveEnvelope(t, client); got.Type != protocol.ServerGameInitial {
-			t.Fatalf("last response = %+v", got)
+	}
+	if len(handler.pending) != 0 {
+		t.Fatal("matched entries remained pending")
+	}
+}
+
+func TestHandlerMatchmakingCancelsUnacknowledgedEntry(t *testing.T) {
+	service := gameplay.NewMockGameService(gomock.NewController(t))
+	entry := new(gameplay.MatchmakingEntry)
+	service.EXPECT().EnterMatchmaking(gomock.Any(), gomock.Any()).Return(gameplay.MatchmakingResult{Entry: entry}, nil)
+	service.EXPECT().CancelMatchmaking(entry)
+	registry := newGameSessions()
+	handler := newHandler(service, registry)
+	client := newQueuedSession("player")
+	for len(client.outgoing) < cap(client.outgoing) {
+		client.outgoing <- protocol.ServerEnvelope{}
+	}
+	err := handler.Handle(t.Context(), client, json.RawMessage(`{"type":"matchmaking.enter","payload":{"timeControl":"1+0"}}`))
+	if !errors.Is(err, protocol.ErrSessionQueueFull) {
+		t.Fatalf("admission error = %v, want queue full", err)
+	}
+	if len(handler.pending) != 0 || registry.IsBusy(client) {
+		t.Fatal("unacknowledged entry retained a session reservation")
+	}
+}
+
+func TestHandlerMatchmakingPublishesPeerAfterSourceCancellation(t *testing.T) {
+	service := gameplay.NewMockGameService(gomock.NewController(t))
+	first, second := new(gameplay.MatchmakingEntry), new(gameplay.MatchmakingEntry)
+	service.EXPECT().EnterMatchmaking(gomock.Any(), gameplay.EnterMatchmakingCommand{ProfileID: "white", Initial: time.Minute}).Return(gameplay.MatchmakingResult{Entry: first}, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	service.EXPECT().EnterMatchmaking(gomock.Any(), gameplay.EnterMatchmakingCommand{ProfileID: "black", Initial: time.Minute}).DoAndReturn(
+		func(context.Context, gameplay.EnterMatchmakingCommand) (gameplay.MatchmakingResult, error) {
+			cancel()
+			return gameplay.MatchmakingResult{Entry: second, Opponent: first, GameID: "game"}, nil
+		})
+	service.EXPECT().GameState(gomock.Any(), identity.GameID("game")).Return(gameplay.GameSnapshot{GameID: "game", WhiteProfileID: "white", BlackProfileID: "black"}, nil)
+	handler := newHandler(service, newGameSessions())
+	white, black := newQueuedSession("white"), newQueuedSession("black")
+	raw := json.RawMessage(`{"type":"matchmaking.enter","requestId":"match","payload":{"timeControl":"1+0"}}`)
+	if err := handler.Handle(t.Context(), white, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Handle(ctx, black, raw); !errors.Is(err, context.Canceled) {
+		t.Fatalf("admission error = %v, want canceled", err)
+	}
+	for _, want := range []protocol.ServerMessageType{protocol.ServerMatchmakingEntered, protocol.ServerMatchFound, protocol.ServerGameInitial} {
+		if got := receiveEnvelope(t, white); got.Type != want {
+			t.Fatalf("surviving peer response = %s, want %s", got.Type, want)
 		}
-	})
+	}
+	if len(handler.pending) != 0 || handler.gameSessions.IsBusy(black) {
+		t.Fatal("canceled source retained a reservation")
+	}
 }
 
 func TestHandlerTerminalStateReachesPeerWhenSourceStops(t *testing.T) {
@@ -636,7 +666,7 @@ func TestResumePublishesPresenceAfterRequestCancellation(t *testing.T) {
 	}
 }
 
-func TestAwaitMatchFinishedGameIsReadOnly(t *testing.T) {
+func TestMatchAdmissionFinishedGameIsReadOnly(t *testing.T) {
 	service := gameplay.NewMockGameService(gomock.NewController(t))
 	state := gameplay.GameSnapshot{
 		GameID: "game", WhiteProfileID: "white", BlackProfileID: "black",
@@ -651,9 +681,7 @@ func TestAwaitMatchFinishedGameIsReadOnly(t *testing.T) {
 	if err := registry.Add("game", peer); err != nil {
 		t.Fatal(err)
 	}
-	newHandler(service, registry).awaitMatch(context.Background(), client, "match", gameplay.MatchTicket{
-		Result: matchResults(gameplay.GameAssignment{GameID: "game", Color: chess.White}),
-	})
+	newHandler(service, registry).admitMatch(t.Context(), client, "match", "game")
 	if got := receiveEnvelope(t, client); got.Type != protocol.ServerMatchFound {
 		t.Fatalf("first response = %+v", got)
 	}

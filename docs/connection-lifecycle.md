@@ -42,9 +42,12 @@ not requeue it. Pairing commits a game whose clock starts immediately, and each
 client receives `matchmaking.found` followed by `game.initial`. The first initial
 state may show the other player offline until its registration is published.
 
-This example admits the first client before the second; either order is valid.
-Each client always gets its entry acknowledgement before assignment and initial
-state. Waiters acquire the dispatch mutex before registration and publication.
+The handler keeps each queued entry's session and request ID. The second entry
+returns the committed game and both entry handles directly; the handler publishes
+the waiting player's assignment, then the arriving player's, under its dispatch
+mutex. Each client gets its entry acknowledgement before assignment and initial
+state. Disconnect explicitly cancels its queue entry. A canceled connection
+context also makes an entry ineligible for pairing before disconnect cleanup runs.
 
 ```mermaid
 sequenceDiagram
@@ -55,20 +58,20 @@ sequenceDiagram
 
     A->>H: matchmaking.enter
     H->>S: EnterMatchmaking
-    S-->>H: Pending ticket
+    S-->>H: Queued entry handle
     H-->>A: matchmaking.entered
-    Note over H: Waiter retains reservation and waits outside dispatch mutex
+    Note over H: Retain entry, session, and request ID; return without a waiter
     alt First client disconnects before pairing
         A->>H: Connection ends
-        Note over H,S: Cancellation ends the waiter and removes the queue entry
+        H->>S: CancelMatchmaking(entry)
         H->>H: Release session reservation
     else Second client enters the same pool
         B->>H: matchmaking.enter
         H->>S: EnterMatchmaking
-        S->>S: Create game, start clock, fill both buffered tickets
-        S-->>H: Ready ticket
+        S->>S: Create game and start clock
+        S-->>H: Game ID and both entry handles
         H-->>B: matchmaking.entered
-        Note over H: Each waiter reads current state and registers its player
+        Note over H: Read current state and register each live player
         H-->>A: matchmaking.found (gameId, color)
         H-->>A: game.initial (opponent initially offline)
         H-->>B: matchmaking.found (gameId, opposite color)
@@ -90,5 +93,5 @@ if the source response fails. Terminal publication releases sessions for another
 game. See [delivery decisions](adr/0003-message-delivery-semantics.md).
 
 A server restart loses live games, matchmaking entries, and sessions. Persistence
-adapters exist but are not wired into gameplay. Component ownership and shutdown
-are described in [ADR 0002](adr/0002-lifecycle-and-cancellation.md).
+adapters exist but are not wired into gameplay. Matchmaking ownership and
+cancellation are described in [ADR 0002](adr/0002-matchmaking-admission-ownership.md).

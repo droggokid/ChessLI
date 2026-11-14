@@ -17,17 +17,16 @@ const afterE4FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
 
 func TestStartupResumesServerAssignedGame(t *testing.T) {
 	model := &Model{input: "draft"}
-	model, cmd := model.Update(protocol.ServerEvent{
+	model, resume := model.Update(protocol.ServerEvent{
 		Type: protocol.ServerConnectionReady,
 		Ready: &protocol.ConnectionReadyPayload{
 			ProfileID: "player", ActiveGameID: "game-1",
 		},
 	}, true)
-	if cmd == nil {
+	if resume == nil {
 		t.Fatal("connection.ready did not request recovery")
 	}
-	resume, ok := cmd().(RequestMsg)
-	if !ok || resume.Type != protocol.ClientResumeGame ||
+	if resume.Type != protocol.ClientResumeGame ||
 		resume.Payload != (protocol.ResumeGamePayload{GameID: "game-1"}) {
 		t.Fatalf("recovery request = %+v", resume)
 	}
@@ -438,18 +437,14 @@ func activeModel(t *testing.T) *Model {
 	return model
 }
 
-func submitText(t *testing.T, model *Model, text string) (*Model, RequestMsg) {
+func submitText(t *testing.T, model *Model, text string) (*Model, Request) {
 	t.Helper()
 	model.input = text
-	model, cmd := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}), true)
-	if cmd == nil {
+	model, request := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}), true)
+	if request == nil {
 		t.Fatalf("no request for %q: %s", text, model.View(74, true))
 	}
-	request, ok := cmd().(RequestMsg)
-	if !ok {
-		t.Fatalf("unexpected command for %q", text)
-	}
-	return model, request
+	return model, *request
 }
 
 func TestRepeatedFinishedSnapshotsPreserveNewInput(t *testing.T) {
@@ -542,14 +537,13 @@ func TestDisconnectPreservesBoardAndDraftUntilRestart(t *testing.T) {
 func TestStartupResumeRejection(t *testing.T) {
 	for _, code := range []protocol.ErrorCode{protocol.ErrorGameNotFound, protocol.ErrorNotPlayer, protocol.ErrorInvalidMessage} {
 		t.Run(string(code), func(t *testing.T) {
-			model, cmd := (&Model{}).Update(protocol.ServerEvent{
+			model, resume := (&Model{}).Update(protocol.ServerEvent{
 				Type:  protocol.ServerConnectionReady,
 				Ready: &protocol.ConnectionReadyPayload{ProfileID: "player", ActiveGameID: "game-1"},
 			}, true)
-			if cmd == nil {
+			if resume == nil {
 				t.Fatal("startup did not request resume")
 			}
-			resume := cmd().(RequestMsg)
 			model, _ = model.Update(protocol.ServerEvent{Type: protocol.ServerError, RequestID: resume.RequestID,
 				Error: &protocol.ErrorPayload{Code: code, Message: "cannot resume"}}, true)
 			if code == protocol.ErrorInvalidMessage {

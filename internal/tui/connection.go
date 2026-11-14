@@ -114,7 +114,7 @@ func (c *connection) receive(client *websocket.Conn) tea.Cmd {
 }
 
 // send reports socket write success, not server acceptance.
-func (c *connection) send(client *websocket.Conn, request play.RequestMsg) tea.Cmd {
+func (c *connection) send(client *websocket.Conn, request play.Request) tea.Cmd {
 	return func() tea.Msg {
 		if !c.begin() {
 			return play.SendResultMsg{RequestID: request.RequestID, Err: context.Canceled}

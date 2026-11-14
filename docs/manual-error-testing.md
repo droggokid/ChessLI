@@ -87,7 +87,7 @@ also clears timeout feedback and retires the entry deadline; that timer must
 remain harmless while queued, after assignment, and after initial state.
 Drafts edited after admission must survive assignment and initialization.
 
-Disconnect cancels a waiting matchmaking ticket. Reopening the client must not
+Disconnect cancels a waiting matchmaking entry. Reopening the client must not
 automatically requeue or resume a finished game. If a match committed just before
 disconnect, the server's profile lookup supplies its ID even if the assignment
 response was lost; the client resumes it and waits for its initial state.

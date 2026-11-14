@@ -86,28 +86,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.networkErr = nil
-		var cmd tea.Cmd
 		if msg.event.Ready != nil {
 			m.connectionStatus = ready
 			m.profileID = msg.event.Ready.ProfileID
-			m.play, cmd = m.play.Update(msg.event, true)
 			if msg.event.Ready.ActiveGameID != "" {
 				m.active = playScreen
 			}
-		} else {
-			m.play, cmd = m.play.Update(msg.event, m.connectionStatus == ready)
 		}
+		cmd := m.updatePlay(msg.event)
 		return m, tea.Batch(m.network.receive(m.client), cmd)
-
-	case play.RequestMsg:
-		if !m.play.IsPending(msg.RequestID) {
-			return m, nil
-		}
-		if m.connectionStatus != ready || m.client == nil {
-			m.play, _ = m.play.Update(play.SendResultMsg{RequestID: msg.RequestID, Err: errors.New("disconnected")}, false)
-			return m, nil
-		}
-		return m, tea.Batch(m.network.send(m.client, msg), m.network.responseDeadline(msg.RequestID))
 
 	case play.SendResultMsg:
 		if msg.Err != nil {
@@ -115,22 +102,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.connectionStatus = disconnected
 			m.play, _ = m.play.Update(play.DisconnectedMsg{}, false)
 		}
-		var cmd tea.Cmd
-		m.play, cmd = m.play.Update(msg, m.connectionStatus == ready)
+		cmd := m.updatePlay(msg)
 		return m, cmd
 
 	case play.TimeoutMsg:
-		var cmd tea.Cmd
-		m.play, cmd = m.play.Update(msg, m.connectionStatus == ready)
+		cmd := m.updatePlay(msg)
 		return m, cmd
 
 	case tea.WindowSizeMsg:
 		m.width = max(msg.Width, 0)
 		m.height = max(msg.Height, 0)
-		return m, nil
-
-	case dashboard.StartGameMsg:
-		m.active = playScreen
 		return m, nil
 
 	case dashboard.LoadedMsg:
@@ -156,10 +137,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.active = (m.active + screenCount - 1) % screenCount
 			return m, nil
 
+		case "enter":
+			if m.active == dashboardScreen {
+				m.active = playScreen
+				return m, nil
+			}
+
 		case "esc":
 			if m.active == playScreen && m.play.HasInput() {
-				var cmd tea.Cmd
-				m.play, cmd = m.play.Update(msg, m.connectionStatus == ready)
+				cmd := m.updatePlay(msg)
 				return m, cmd
 			}
 			if m.active != dashboardScreen {
@@ -170,8 +156,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.active == playScreen {
-		var cmd tea.Cmd
-		m.play, cmd = m.play.Update(msg, m.connectionStatus == ready)
+		cmd := m.updatePlay(msg)
 		return m, cmd
 	}
 
@@ -182,6 +167,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *Model) updatePlay(msg tea.Msg) tea.Cmd {
+	var request *play.Request
+	m.play, request = m.play.Update(msg, m.connectionStatus == ready)
+	if request == nil || !m.play.IsPending(request.RequestID) {
+		return nil
+	}
+	if m.connectionStatus != ready || m.client == nil {
+		m.play, _ = m.play.Update(play.SendResultMsg{RequestID: request.RequestID, Err: errors.New("disconnected")}, false)
+		return nil
+	}
+	return tea.Batch(m.network.send(m.client, *request), m.network.responseDeadline(request.RequestID))
 }
 
 func (m Model) View() tea.View {

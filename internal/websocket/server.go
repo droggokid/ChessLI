@@ -83,7 +83,6 @@ func (s *Server) Run(ctx context.Context) error {
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		s.cancelConnections()
-		s.messageHandler.Close()
 		return fmt.Errorf("listen for websocket connections: %w", err)
 	}
 	return s.Serve(ctx, listener)
@@ -102,7 +101,6 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	case err := <-serverError:
 		s.cancelConnections()
 		s.connections.Wait()
-		s.messageHandler.Close()
 
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -118,7 +116,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	}
 }
 
-// Shutdown cancels connections and joins them and their match waiters, bounded by ctx.
+// Shutdown cancels connections and joins them, including queue cleanup, bounded by ctx.
 func (s *Server) Shutdown(ctx context.Context) error {
 	httpError := s.httpServer.Shutdown(ctx)
 
@@ -126,7 +124,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	go func() {
 		s.connections.Wait()
-		s.messageHandler.Close()
 		close(connectionsClosed)
 	}()
 

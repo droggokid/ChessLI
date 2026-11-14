@@ -129,7 +129,7 @@ func TestIntegrationSendIncludesExpectedVersionZero(t *testing.T) {
 		}
 		received <- request
 	})
-	result := network.send(network.client, play.RequestMsg{
+	result := network.send(network.client, play.Request{
 		Type: protocol.ClientMakeMove, RequestID: "move-1", Payload: protocol.MovePayload{
 			GameID: "game-1", Move: "e2e4", Notation: protocol.MoveNotationUCI, ExpectedVersion: new(uint64(0)),
 		},
@@ -154,6 +154,70 @@ func TestIntegrationSendIncludesExpectedVersionZero(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("server did not receive request:", ctx.Err())
+	}
+}
+
+func TestIntegrationRootSendsPlayRequests(t *testing.T) {
+	for _, kind := range []protocol.ClientMessageType{protocol.ClientCreateGame, protocol.ClientResumeGame} {
+		t.Run(string(kind), func(t *testing.T) {
+			received := make(chan protocol.ClientEnvelope, 1)
+			ctx, network := newTestConnection(t, func(ctx context.Context, conn *coderws.Conn) {
+				_, data, err := conn.Read(ctx)
+				if err != nil {
+					t.Errorf("server read: %v", err)
+					return
+				}
+				var request protocol.ClientEnvelope
+				if err := json.Unmarshal(data, &request); err != nil {
+					t.Errorf("decode request: %v", err)
+					return
+				}
+				received <- request
+			})
+			model := Model{play: &play.Model{}, network: network, client: network.client}
+			model.active = historyScreen
+			ready := &protocol.ConnectionReadyPayload{ProfileID: "profile-1"}
+			if kind == protocol.ClientResumeGame {
+				ready.ActiveGameID = "game-1"
+			}
+			next, cmd := model.Update(receivedMsg{event: protocol.ServerEvent{
+				Type: protocol.ServerConnectionReady, Ready: ready,
+			}})
+			if kind == protocol.ClientCreateGame {
+				model = next.(Model)
+				model.active = playScreen
+				next, _ = model.Update(tea.PasteMsg{Content: "/create"})
+				next, cmd = next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+			} else {
+				if next.(Model).active != playScreen {
+					t.Fatal("startup recovery did not open Play")
+				}
+				batch, ok := cmd().(tea.BatchMsg)
+				if !ok || len(batch) != 2 {
+					t.Fatal("startup did not schedule receiving and recovery")
+				}
+				cmd = batch[1]
+			}
+			if cmd == nil {
+				t.Fatal("missing request commands")
+			}
+			batch, ok := cmd().(tea.BatchMsg)
+			if !ok || len(batch) != 2 {
+				t.Fatal("request did not directly schedule send and response deadline")
+			}
+			result := batch[0]().(play.SendResultMsg)
+			if result.Err != nil {
+				t.Fatal(result.Err)
+			}
+			select {
+			case request := <-received:
+				if request.Type != kind || request.RequestID != result.RequestID || !next.(Model).play.IsPending(request.RequestID) {
+					t.Fatalf("unexpected request: %+v", request)
+				}
+			case <-ctx.Done():
+				t.Fatal("server did not receive request:", ctx.Err())
+			}
+		})
 	}
 }
 

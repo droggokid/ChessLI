@@ -12,7 +12,7 @@ import (
 	"github.com/corentings/chess/v2"
 )
 
-type RequestMsg struct {
+type Request struct {
 	Type      protocol.ClientMessageType
 	RequestID string
 	Payload   any
@@ -60,7 +60,7 @@ type Model struct {
 func (m *Model) HasInput() bool                  { return m.input != "" }
 func (m *Model) IsPending(requestID string) bool { return m.pending.id == requestID && requestID != "" }
 
-func (m *Model) Update(msg tea.Msg, ready bool) (*Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg, ready bool) (*Model, *Request) {
 	switch msg := msg.(type) {
 	case DisconnectedMsg:
 		if m.pending.id != "" {
@@ -109,7 +109,7 @@ func (m *Model) Update(msg tea.Msg, ready bool) (*Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) submit(ready bool) (*Model, tea.Cmd) {
+func (m *Model) submit(ready bool) (*Model, *Request) {
 	text := strings.TrimSpace(m.input)
 	if text == "" {
 		return m, nil
@@ -177,17 +177,16 @@ func (m *Model) submit(ready bool) (*Model, tea.Cmd) {
 	})
 }
 
-func (m *Model) request(kind protocol.ClientMessageType, gameID identity.GameID, payload any) (*Model, tea.Cmd) {
+func (m *Model) request(kind protocol.ClientMessageType, gameID identity.GameID, payload any) (*Model, *Request) {
 	m.sequence++
 	id := fmt.Sprintf("tui-%d", m.sequence)
 	m.pending = pendingAction{id: id, kind: kind, gameID: gameID, input: m.input}
 	m.action = actionAwaiting
 	m.message = ""
-	request := RequestMsg{Type: kind, RequestID: id, Payload: payload}
-	return m, func() tea.Msg { return request }
+	return m, &Request{Type: kind, RequestID: id, Payload: payload}
 }
 
-func (m *Model) event(event protocol.ServerEvent) (*Model, tea.Cmd) {
+func (m *Model) event(event protocol.ServerEvent) (*Model, *Request) {
 	if event.Ready != nil {
 		// The server knows the game even when its creation response was lost.
 		m.clearPending()

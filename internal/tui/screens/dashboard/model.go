@@ -14,8 +14,6 @@ type Source interface {
 	Load(context.Context) (dashboard_data.Overview, error)
 }
 
-type StartGameMsg struct{}
-
 type LoadedMsg struct {
 	Data dashboard_data.Overview
 	Err  error
@@ -56,14 +54,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.data = msg.Data
 		}
 		return m, nil
-
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "enter":
-			return m, func() tea.Msg {
-				return StartGameMsg{}
-			}
-		}
 	}
 
 	return m, nil

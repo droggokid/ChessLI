@@ -70,6 +70,18 @@ func (mr *MockGameServiceMockRecorder) ActiveGame(profileID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveGame", reflect.TypeOf((*MockGameService)(nil).ActiveGame), profileID)
 }
 
+// CancelMatchmaking mocks base method.
+func (m *MockGameService) CancelMatchmaking(entry *MatchmakingEntry) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "CancelMatchmaking", entry)
+}
+
+// CancelMatchmaking indicates an expected call of CancelMatchmaking.
+func (mr *MockGameServiceMockRecorder) CancelMatchmaking(entry any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelMatchmaking", reflect.TypeOf((*MockGameService)(nil).CancelMatchmaking), entry)
+}
+
 // CreatePrivateGame mocks base method.
 func (m *MockGameService) CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (GameAssignment, error) {
 	m.ctrl.T.Helper()
@@ -101,10 +113,10 @@ func (mr *MockGameServiceMockRecorder) DeclineDraw(arg0, arg1 any) *gomock.Call 
 }
 
 // EnterMatchmaking mocks base method.
-func (m *MockGameService) EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error) {
+func (m *MockGameService) EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchmakingResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "EnterMatchmaking", ctx, command)
-	ret0, _ := ret[0].(MatchTicket)
+	ret0, _ := ret[0].(MatchmakingResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

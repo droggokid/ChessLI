@@ -2,6 +2,7 @@ package tui
 
 import (
 	"ChessLI/internal/dashboard_data"
+	"ChessLI/internal/tui/screens/dashboard"
 	"ChessLI/internal/tui/screens/play"
 	"ChessLI/internal/websocket/protocol"
 	"errors"
@@ -10,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/coder/websocket"
 )
 
 func TestNavigation(t *testing.T) {
@@ -43,6 +45,18 @@ func TestNavigation(t *testing.T) {
 			key:  tea.Key{Code: tea.KeyEscape},
 			want: dashboardScreen,
 		},
+		{
+			name: "enter stays in play",
+			from: playScreen,
+			key:  tea.Key{Code: tea.KeyEnter},
+			want: playScreen,
+		},
+		{
+			name: "enter stays in history",
+			from: historyScreen,
+			key:  tea.Key{Code: tea.KeyEnter},
+			want: historyScreen,
+		},
 	}
 
 	for _, tt := range tests {
@@ -59,16 +73,25 @@ func TestNavigation(t *testing.T) {
 }
 
 func TestDashboardEnterOpensPlay(t *testing.T) {
-	next, cmd := New(dashboard_data.Mock{}, "ws://localhost:8080/ws").Update(
-		tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}),
-	)
-	if cmd == nil {
-		t.Fatal("Enter did not produce a command")
-	}
-
-	next, _ = next.Update(cmd())
-	if got := next.(Model).active; got != playScreen {
-		t.Fatalf("active screen = %v, want Play Chess", got)
+	for _, state := range []string{"loading", "loaded", "error"} {
+		t.Run(state, func(t *testing.T) {
+			model := New(dashboard_data.Mock{}, "ws://localhost:8080/ws")
+			t.Cleanup(func() { _ = model.Close() })
+			if state != "loading" {
+				loaded := dashboard.LoadedMsg{}
+				if state == "error" {
+					loaded.Err = errors.New("unavailable")
+				}
+				model.dashboard, _ = model.dashboard.Update(loaded)
+			}
+			next, cmd := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+			if cmd != nil {
+				t.Fatal("navigation produced a command")
+			}
+			if got := next.(Model).active; got != playScreen {
+				t.Fatalf("active screen = %v, want Play Chess", got)
+			}
+		})
 	}
 }
 
@@ -198,9 +221,8 @@ func TestRootRoutesStateAndErrorsWhilePlayIsInactive(t *testing.T) {
 		model.active = active
 		model.connectionStatus = ready
 		model.play, _ = model.play.Update(tea.PasteMsg{Content: "/create"}, true)
-		var requestCmd tea.Cmd
-		model.play, requestCmd = model.play.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}), true)
-		request := requestCmd().(play.RequestMsg)
+		var request *play.Request
+		model.play, request = model.play.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}), true)
 		next, cmd := model.Update(receivedMsg{event: protocol.ServerEvent{
 			Type: protocol.ServerGameCreated, RequestID: request.RequestID,
 			Assignment: &protocol.GameCreatedPayload{GameID: "game-1", Color: protocol.ColorWhite},
@@ -232,9 +254,8 @@ func TestRootRoutesMatchmakingWhilePlayIsInactive(t *testing.T) {
 		t.Cleanup(func() { _ = model.Close() })
 		model.active, model.connectionStatus = active, ready
 		model.play, _ = model.play.Update(tea.PasteMsg{Content: "/match"}, true)
-		var cmd tea.Cmd
-		model.play, cmd = model.play.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}), true)
-		request := cmd().(play.RequestMsg)
+		var request *play.Request
+		model.play, request = model.play.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}), true)
 		state := &protocol.GameStatePayload{GameID: "game-1", FEN: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", Status: protocol.GameStatusActive}
 		presence := *state
 		presence.Black = &protocol.PlayerState{Color: protocol.ColorBlack, Connected: true}
@@ -288,7 +309,7 @@ func TestRootWaitsForConnectionReadyBeforeSubmission(t *testing.T) {
 	if !strings.Contains(model.connectionView(), "Connecting to") {
 		t.Fatal("dialing was not displayed")
 	}
-	next, _ := model.Update(connectedMsg{})
+	next, _ := model.Update(connectedMsg{client: new(websocket.Conn)})
 	model = next.(Model)
 	if !strings.Contains(model.connectionView(), "waiting for profile ID") {
 		t.Fatal("socket connection was mistaken for readiness")
@@ -306,8 +327,11 @@ func TestRootWaitsForConnectionReadyBeforeSubmission(t *testing.T) {
 		t.Fatal("readiness was not displayed")
 	}
 	_, cmd = next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-	if cmd == nil || cmd().(play.RequestMsg).Type != protocol.ClientCreateGame {
+	if cmd == nil {
 		t.Fatal("connection.ready did not permit submission")
+	}
+	if batch, ok := cmd().(tea.BatchMsg); !ok || len(batch) != 2 {
+		t.Fatal("submission did not schedule the send and response deadline directly")
 	}
 }
 
@@ -317,9 +341,8 @@ func TestPlayViewKeepsInputVisibleWithinTerminal(t *testing.T) {
 	model.active = playScreen
 	model.connectionStatus = ready
 	model.play, _ = model.play.Update(tea.PasteMsg{Content: "/create"}, true)
-	var cmd tea.Cmd
-	model.play, cmd = model.play.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}), true)
-	request := cmd().(play.RequestMsg)
+	var request *play.Request
+	model.play, request = model.play.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}), true)
 	model.play, _ = model.play.Update(protocol.ServerEvent{Type: protocol.ServerGameCreated, RequestID: request.RequestID,
 		Assignment: &protocol.GameCreatedPayload{GameID: "12345678-1234-1234-1234-123456789012", Color: protocol.ColorWhite}}, true)
 	model.play, _ = model.play.Update(protocol.ServerEvent{Type: protocol.ServerGameInitial,

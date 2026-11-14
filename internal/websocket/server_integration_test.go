@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"ChessLI/internal/gameplay"
 	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
 
@@ -46,6 +47,41 @@ func TestIntegrationServerShutdownCancelsBlockedConnectionReady(t *testing.T) {
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown did not cancel blocked connection.ready: %v", err)
+	}
+}
+
+func TestIntegrationServerShutdownClearsQueuedMatchmaking(t *testing.T) {
+	games := newTestGameService(t)
+	server := NewServer("", games)
+	t.Cleanup(server.cancelConnections)
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	profileID := identity.NewProfileID()
+	client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/ws?profileId="+string(profileID), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseNow()
+	var message protocol.ServerEnvelope
+	if err := wsjson.Read(ctx, client, &message); err != nil || message.Type != protocol.ServerConnectionReady {
+		t.Fatalf("connection.ready = %+v, %v", message, err)
+	}
+	if err := wsjson.Write(ctx, client, protocol.ClientEnvelope{Type: protocol.ClientEnterMatchmaking, Payload: json.RawMessage(`{"timeControl":"1+0"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, client, &message); err != nil || message.Type != protocol.ServerMatchmakingEntered {
+		t.Fatalf("matchmaking.entered = %+v, %v", message, err)
+	}
+	if err := server.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(server.messageHandler.pending) != 0 || len(server.messageHandler.gameSessions.bySession) != 0 {
+		t.Fatal("shutdown returned before queued session cleanup")
+	}
+	if _, err := games.CreatePrivateGame(ctx, gameplay.CreatePrivateCommand{ProfileID: profileID, Initial: time.Minute}); err != nil {
+		t.Fatalf("shutdown retained the queued profile: %v", err)
 	}
 }
 

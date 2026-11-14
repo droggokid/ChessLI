@@ -349,32 +349,33 @@ func TestGameServiceMatchmakingMatchesWithinPool(t *testing.T) {
 		if err != nil {
 			t.Fatalf("first EnterMatchmaking() error = %v", err)
 		}
-		assertNoMatch(t, first.Result)
+		if first.Entry == nil || first.Opponent != nil || first.GameID != "" {
+			t.Fatalf("first admission = %+v, want queued entry", first)
+		}
 
 		second, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "second", Initial: 3 * time.Minute, Increment: 2 * time.Second})
 		if err != nil {
 			t.Fatalf("second EnterMatchmaking() error = %v", err)
 		}
 
-		firstResult := receiveMatch(t, first.Result)
-		secondResult := receiveMatch(t, second.Result)
-		if firstResult.GameID == "" || firstResult.GameID != secondResult.GameID {
-			t.Fatalf("match game IDs = (%q, %q), want same non-empty ID", firstResult.GameID, secondResult.GameID)
-		}
-		if firstResult.Color != chess.White || secondResult.Color != chess.Black {
-			t.Fatalf("match colors = (%v, %v), want (%v, %v)", firstResult.Color, secondResult.Color, chess.White, chess.Black)
+		if second.GameID == "" || second.Opponent != first.Entry || second.Entry == first.Entry {
+			t.Fatalf("second admission = %+v, want match with first entry", second)
 		}
 
 		cancel()
-		synctest.Wait()
+		service.CancelMatchmaking(first.Entry)
+		service.CancelMatchmaking(second.Entry)
 		for _, profileID := range []identity.ProfileID{"first", "second"} {
-			if service.ActiveGame(profileID) != firstResult.GameID {
+			if service.ActiveGame(profileID) != second.GameID {
 				t.Fatalf("cancellation released matched player %q", profileID)
 			}
 		}
-		state, err := service.GameState(t.Context(), firstResult.GameID)
+		state, err := service.GameState(t.Context(), second.GameID)
 		if err != nil || state.Outcome != domain.OutcomeNone {
 			t.Fatalf("cancellation changed matched game: %+v, %v", state, err)
+		}
+		if state.WhiteProfileID != "first" || state.BlackProfileID != "second" {
+			t.Fatalf("match players = (%q, %q), want (first, second)", state.WhiteProfileID, state.BlackProfileID)
 		}
 	})
 }
@@ -394,8 +395,9 @@ func TestGameServiceMatchmakingKeepsPoolsSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rapid EnterMatchmaking() error = %v", err)
 	}
-	assertNoMatch(t, bullet.Result)
-	assertNoMatch(t, rapid.Result)
+	if bullet.GameID != "" || rapid.GameID != "" {
+		t.Fatal("different pools matched")
+	}
 
 	bulletPeer, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "bullet-2", Initial: time.Minute, Increment: 0})
 	if err != nil {
@@ -406,19 +408,14 @@ func TestGameServiceMatchmakingKeepsPoolsSeparate(t *testing.T) {
 		t.Fatalf("rapid peer EnterMatchmaking() error = %v", err)
 	}
 
-	bulletResult := receiveMatch(t, bullet.Result)
-	bulletPeerResult := receiveMatch(t, bulletPeer.Result)
-	rapidResult := receiveMatch(t, rapid.Result)
-	rapidPeerResult := receiveMatch(t, rapidPeer.Result)
-
-	if bulletResult.GameID != bulletPeerResult.GameID {
-		t.Fatalf("bullet game IDs = (%q, %q), want same ID", bulletResult.GameID, bulletPeerResult.GameID)
+	if bulletPeer.GameID == "" || bulletPeer.Opponent != bullet.Entry {
+		t.Fatalf("bullet match = %+v, want original bullet entry", bulletPeer)
 	}
-	if rapidResult.GameID != rapidPeerResult.GameID {
-		t.Fatalf("rapid game IDs = (%q, %q), want same ID", rapidResult.GameID, rapidPeerResult.GameID)
+	if rapidPeer.GameID == "" || rapidPeer.Opponent != rapid.Entry {
+		t.Fatalf("rapid match = %+v, want original rapid entry", rapidPeer)
 	}
-	if bulletResult.GameID == rapidResult.GameID {
-		t.Fatalf("different pools created the same game %q", bulletResult.GameID)
+	if bulletPeer.GameID == rapidPeer.GameID {
+		t.Fatalf("different pools created the same game %q", bulletPeer.GameID)
 	}
 }
 
@@ -439,32 +436,56 @@ func TestGameServiceMatchmakingRejectsDuplicateProfileAcrossPools(t *testing.T) 
 	}
 }
 
-func TestGameServiceMatchmakingRemovesCanceledPlayer(t *testing.T) {
+func TestGameServiceCancelMatchmakingRemovesOnlyItsEntry(t *testing.T) {
 	t.Parallel()
 
 	service := newTestGameService(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	ticket, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "player", Initial: time.Minute, Increment: 0})
+	command := EnterMatchmakingCommand{ProfileID: "player", Initial: time.Minute}
+	first, err := service.EnterMatchmaking(ctx, command)
 	if err != nil {
 		t.Fatalf("EnterMatchmaking() error = %v", err)
 	}
 
 	cancel()
-
-	select {
-	case _, ok := <-ticket.Result:
-		if ok {
-			t.Fatal("canceled matchmaking ticket unexpectedly produced a match")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("canceled matchmaking ticket was not closed")
+	service.CancelMatchmaking(first.Entry)
+	if len(service.queue) != 0 {
+		t.Fatal("explicit cancellation left a queued entry")
 	}
+	second, err := service.EnterMatchmaking(t.Context(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.CancelMatchmaking(first.Entry)
+	service.CancelMatchmaking(nil)
+	if len(service.queue) != 1 || second.Entry == first.Entry {
+		t.Fatal("late cancellation removed the replacement entry")
+	}
+	service.CancelMatchmaking(second.Entry)
+	if len(service.queue) != 0 {
+		t.Fatal("replacement could not be canceled")
+	}
+}
 
-	service.mu.Lock()
-	remaining := len(service.queue)
-	service.mu.Unlock()
-	if remaining != 0 {
-		t.Fatalf("waiting player count = %d, want 0", remaining)
+func TestGameServiceMatchmakingSkipsCanceledEntries(t *testing.T) {
+	service := newTestGameService(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	first, err := service.EnterMatchmaking(ctx, EnterMatchmakingCommand{ProfileID: "old", Initial: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	second, err := service.EnterMatchmaking(t.Context(), EnterMatchmakingCommand{ProfileID: "new", Initial: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.GameID != "" || second.Opponent != nil || service.ActiveGame("old") != "" {
+		t.Fatal("paired with a canceled entry")
+	}
+	service.CancelMatchmaking(first.Entry)
+	third, err := service.EnterMatchmaking(t.Context(), EnterMatchmakingCommand{ProfileID: "old", Initial: time.Minute})
+	if err != nil || third.GameID == "" || third.Opponent != second.Entry {
+		t.Fatalf("late cancellation affected replacement or re-admission: %+v, %v", third, err)
 	}
 }
 
@@ -477,31 +498,6 @@ func TestGameServiceMatchmakingRejectsInvalidTimeControl(t *testing.T) {
 	)
 	if !errors.Is(err, ErrInvalidTimeControl) {
 		t.Fatalf("EnterMatchmaking() error = %v, want %v", err, ErrInvalidTimeControl)
-	}
-}
-
-func assertNoMatch(t *testing.T, result <-chan GameAssignment) {
-	t.Helper()
-
-	select {
-	case match, ok := <-result:
-		t.Fatalf("match result = (%+v, open=%v), want no result", match, ok)
-	default:
-	}
-}
-
-func receiveMatch(t *testing.T, result <-chan GameAssignment) GameAssignment {
-	t.Helper()
-
-	select {
-	case match, ok := <-result:
-		if !ok {
-			t.Fatal("match result channel closed without a result")
-		}
-		return match
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for match result")
-		return GameAssignment{}
 	}
 }
 
@@ -623,9 +619,7 @@ func TestGameServiceAdmissionAcrossModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	match := receiveMatch(t, first.Result)
-	receiveMatch(t, second.Result)
-	if s.ActiveGame("first") != match.GameID || s.ActiveGame("second") != match.GameID {
+	if second.Opponent != first.Entry || second.GameID == "" || s.ActiveGame("first") != second.GameID || s.ActiveGame("second") != second.GameID {
 		t.Fatal("matchmaking did not reserve both profiles")
 	}
 	if _, err = create("first"); !errors.Is(err, ErrAlreadyInGame) {

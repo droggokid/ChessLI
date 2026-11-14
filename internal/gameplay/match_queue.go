@@ -8,10 +8,10 @@ import (
 )
 
 // matchQueue is owned by GameService; every access requires the service mutex.
-type matchQueue map[timeControlKey]*waitingPlayer
+type matchQueue map[timeControlKey]*MatchmakingEntry
 
 // Admission has already removed canceled players and rejected duplicate profiles.
-func (q matchQueue) findOpponent(player *waitingPlayer) *waitingPlayer {
+func (q matchQueue) findOpponent(player *MatchmakingEntry) *MatchmakingEntry {
 	key := timeControlKey{initial: player.command.Initial, increment: player.command.Increment}
 	waiting, exists := q[key]
 	if !exists {
@@ -20,7 +20,6 @@ func (q matchQueue) findOpponent(player *waitingPlayer) *waitingPlayer {
 	}
 
 	delete(q, key)
-	stopWaitingPlayerCleanup(waiting)
 	return waiting
 }
 
@@ -35,64 +34,36 @@ func (q matchQueue) containsProfile(profileID identity.ProfileID) bool {
 }
 
 func (q matchQueue) removeCanceledPlayers() {
-	for key, waiting := range q {
-		if !playerCanceled(waiting.done) {
+	for _, waiting := range q {
+		if waiting.ctx.Err() == nil {
 			continue
 		}
-		delete(q, key)
-		stopWaitingPlayerCleanup(waiting)
-		slog.Info("matchmaking canceled", "event", "matchmaking.canceled", "profile_id", waiting.command.ProfileID)
-		close(waiting.result)
+		q.remove(waiting)
 	}
 }
 
-func (q matchQueue) removeCanceledPlayer(player *waitingPlayer) {
+func (q matchQueue) remove(player *MatchmakingEntry) {
+	if player == nil {
+		return
+	}
 	key := timeControlKey{initial: player.command.Initial, increment: player.command.Increment}
-	// A stopped cleanup callback may already be running after this player was matched.
+	// A late cancellation must not remove a replacement entry in the same pool.
 	if q[key] != player {
 		return
 	}
 	delete(q, key)
-	player.stopCleanup = nil
 	slog.Info("matchmaking canceled", "event", "matchmaking.canceled", "profile_id", player.command.ProfileID)
-	close(player.result)
 }
 
-type waitingPlayer struct {
-	command     EnterMatchmakingCommand
-	result      chan GameAssignment
-	done        <-chan struct{}
-	stopCleanup func() bool
+// MatchmakingEntry is an opaque handle to one admission, created by EnterMatchmaking.
+// Keep it to correlate a match or cancel that entry without affecting a newer one.
+type MatchmakingEntry struct {
+	command EnterMatchmakingCommand
+	ctx     context.Context
 }
 
 // timeControlKey identifies one matchmaking pool by its clock settings.
 type timeControlKey struct {
 	initial   time.Duration
 	increment time.Duration
-}
-
-func newWaitingPlayer(ctx context.Context, command EnterMatchmakingCommand) *waitingPlayer {
-	return &waitingPlayer{
-		command: command,
-		result:  make(chan GameAssignment, 1), // Matching never waits for the receiver.
-		done:    ctx.Done(),
-	}
-}
-
-func playerCanceled(done <-chan struct{}) bool {
-	select {
-	case <-done:
-		return true
-	default:
-		return false
-	}
-}
-
-func stopWaitingPlayerCleanup(player *waitingPlayer) {
-	if player.stopCleanup == nil {
-		return
-	}
-
-	player.stopCleanup()
-	player.stopCleanup = nil
 }

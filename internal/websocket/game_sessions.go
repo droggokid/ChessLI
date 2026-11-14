@@ -28,7 +28,7 @@ func (g *gameSessions) IsBusy(session *Session) bool {
 	return exists
 }
 
-// Hold reserves an idle session while matchmaking waits outside the dispatch lock.
+// Hold reserves an idle session until it is matched or disconnects.
 func (g *gameSessions) Hold(session *Session) error {
 	if g.IsBusy(session) {
 		return protocol.ErrSessionAlreadyInGame

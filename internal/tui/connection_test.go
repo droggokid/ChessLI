@@ -11,7 +11,7 @@ import (
 func TestConnectionReportsPayloadEncodingFailure(t *testing.T) {
 	network := newConnection("")
 	t.Cleanup(func() { _ = network.Close() })
-	result := network.send(nil, play.RequestMsg{
+	result := network.send(nil, play.Request{
 		Type: protocol.ClientMakeMove, RequestID: "move-1", Payload: make(chan int),
 	})().(play.SendResultMsg)
 	if result.RequestID != "move-1" || result.Err == nil ||

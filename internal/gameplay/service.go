@@ -19,14 +19,16 @@ import (
 
 // Service is the application boundary offered to transports and other clients.
 // Implementations must support concurrent calls. Synchronous in-memory operations
-// finish once admitted; context cancellation controls queued matchmaking work.
+// finish once admitted. Canceled matchmaking contexts prevent pairing; callers
+// remove abandoned entries with CancelMatchmaking.
 type Service interface {
 	ValidateProfile(context.Context, identity.ProfileID) error
 	ActiveGame(profileID identity.ProfileID) identity.GameID
 	CreatePrivateGame(ctx context.Context, command CreatePrivateCommand) (GameAssignment, error)
 	JoinPrivateGame(ctx context.Context, command JoinPrivateCommand) (GameAssignment, error)
 	ResumeGame(context.Context, ResumeGameCommand) (GameSnapshot, error)
-	EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error)
+	EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchmakingResult, error)
+	CancelMatchmaking(entry *MatchmakingEntry)
 	MakeMove(ctx context.Context, command MoveCommand) (GameSnapshot, error)
 	GameState(ctx context.Context, gameID identity.GameID) (GameSnapshot, error)
 	Resign(context.Context, ResignCommand) (GameSnapshot, error)
@@ -227,54 +229,48 @@ func (s *GameService) ResumeGame(_ context.Context, command ResumeGameCommand) (
 }
 
 // EnterMatchmaking queues a profile or matches it with an opponent using the same time control.
-// Canceling ctx removes an unmatched profile from the queue.
-func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchTicket, error) {
+// Canceled contexts are ineligible for pairing; callers use CancelMatchmaking
+// to release abandoned entries promptly, even if there are no further admissions.
+func (s *GameService) EnterMatchmaking(ctx context.Context, command EnterMatchmakingCommand) (MatchmakingResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := ctx.Err(); err != nil {
-		return MatchTicket{}, err
+		return MatchmakingResult{}, err
 	}
 	if err := validateProfileID(command.ProfileID); err != nil {
-		return MatchTicket{}, err
+		return MatchmakingResult{}, err
 	}
 
 	if err := validateTimeControl(command.Initial, command.Increment); err != nil {
-		return MatchTicket{}, err
+		return MatchmakingResult{}, err
 	}
 
-	player := newWaitingPlayer(ctx, command)
 	if err := s.validateAdmission(command.ProfileID); err != nil {
-		return MatchTicket{}, err
+		return MatchmakingResult{}, err
 	}
 
+	player := &MatchmakingEntry{command: command, ctx: ctx}
 	waiting := s.queue.findOpponent(player)
 	if waiting == nil {
-		if player.done != nil {
-			player.stopCleanup = context.AfterFunc(ctx, func() {
-				s.removeWaitingPlayerOnCancel(player)
-			})
-		}
-
 		slog.Info("player queued", "event", "matchmaking.queued", "profile_id", command.ProfileID,
 			"initial_ms", command.Initial.Milliseconds(), "increment_ms", command.Increment.Milliseconds())
-
-	} else {
-		s.createMatch(waiting, player)
+		return MatchmakingResult{Entry: player}, nil
 	}
-	return MatchTicket{Result: player.result}, nil
+	return MatchmakingResult{Entry: player, Opponent: waiting, GameID: s.createMatch(waiting, player)}, nil
 }
 
-func (s *GameService) removeWaitingPlayerOnCancel(player *waitingPlayer) {
+// CancelMatchmaking removes only this admission if it is still queued.
+// It is safe to repeat, pass nil, or cancel after a match has committed.
+func (s *GameService) CancelMatchmaking(entry *MatchmakingEntry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.queue.removeCanceledPlayer(player)
+	s.queue.remove(entry)
 }
 
-// createMatch stores the game and delivers one buffered result to each player.
-func (s *GameService) createMatch(waiting, current *waitingPlayer) {
+// createMatch stores the game before returning it to the admission caller.
+func (s *GameService) createMatch(waiting, current *MatchmakingEntry) identity.GameID {
 	waitingColor := s.pickColor()
-	currentColor := waitingColor.Other()
 
 	whiteProfileID, blackProfileID := assignColors(
 		waiting.command.ProfileID,
@@ -294,10 +290,7 @@ func (s *GameService) createMatch(waiting, current *waitingPlayer) {
 		"white_profile_id", whiteProfileID, "black_profile_id", blackProfileID,
 		"initial_ms", current.command.Initial.Milliseconds(), "increment_ms", current.command.Increment.Milliseconds())
 
-	waiting.result <- GameAssignment{GameID: gameID, Color: waitingColor}
-	close(waiting.result)
-	current.result <- GameAssignment{GameID: gameID, Color: currentColor}
-	close(current.result)
+	return gameID
 }
 
 // MakeMove applies a move to the identified game on behalf of a profile.
@@ -410,6 +403,7 @@ func (s *GameService) DeclineDraw(_ context.Context, command DrawOfferResponseCo
 func (s *GameService) Close() {
 	s.mu.Lock()
 	s.closed = true
+	clear(s.queue)
 	for _, game := range s.games {
 		s.stopExpiration(game)
 	}

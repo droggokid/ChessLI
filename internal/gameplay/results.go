@@ -15,9 +15,13 @@ type GameAssignment struct {
 	Color  chess.Color
 }
 
-// MatchTicket yields one assignment, or closes without one when canceled before matching.
-type MatchTicket struct {
-	Result <-chan GameAssignment
+// MatchmakingResult identifies this admission and, when matched, its opponent
+// and committed game. An empty GameID means Entry is queued. The caller owns
+// notifying both entries and must cancel abandoned entries explicitly.
+type MatchmakingResult struct {
+	Entry    *MatchmakingEntry
+	Opponent *MatchmakingEntry
+	GameID   identity.GameID
 }
 
 // CompletedGame is a detached record of a finished gameplay session.

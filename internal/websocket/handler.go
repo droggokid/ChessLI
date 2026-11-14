@@ -9,6 +9,7 @@ import (
 
 	"ChessLI/internal/game"
 	"ChessLI/internal/gameplay"
+	"ChessLI/internal/identity"
 	"ChessLI/internal/websocket/protocol"
 )
 
@@ -22,7 +23,13 @@ type Handler struct {
 	dispatchMu   sync.Mutex
 	gameService  gameplay.Service
 	gameSessions *gameSessions
-	matchmaking  sync.WaitGroup
+	pending      map[*gameplay.MatchmakingEntry]pendingMatch
+}
+
+type pendingMatch struct {
+	ctx       context.Context
+	client    *Session
+	requestID string
 }
 
 // newHandler creates a WebSocket message handler backed by gameService.
@@ -30,19 +37,21 @@ func newHandler(gameService gameplay.Service, sessions *gameSessions) *Handler {
 	return &Handler{
 		gameService:  gameService,
 		gameSessions: sessions,
+		pending:      make(map[*gameplay.MatchmakingEntry]pendingMatch),
 	}
-}
-
-// Close joins matchmaking waiters after all connection operations have stopped.
-// Their contexts must already be canceled; Close does not cancel them.
-func (h *Handler) Close() {
-	h.matchmaking.Wait()
 }
 
 // Disconnect removes membership and publishes the remaining player's view.
 func (h *Handler) Disconnect(ctx context.Context, client *Session) {
 	h.dispatchMu.Lock()
 	defer h.dispatchMu.Unlock()
+	for entry, pending := range h.pending {
+		if pending.client == client {
+			delete(h.pending, entry)
+			h.gameService.CancelMatchmaking(entry)
+			break
+		}
+	}
 	gameID := h.gameSessions.Remove(client)
 	if gameID == "" {
 		return
@@ -95,10 +104,8 @@ func (h *Handler) Handle(ctx context.Context, client *Session, raw json.RawMessa
 		return h.handleResign(ctx, client, message)
 	case protocol.ClientOfferDraw:
 		return h.handleOfferDraw(ctx, client, message)
-	case protocol.ClientAcceptDraw:
-		return h.handleDrawResponse(ctx, client, message, h.gameService.AcceptDraw)
-	case protocol.ClientDeclineDraw:
-		return h.handleDrawResponse(ctx, client, message, h.gameService.DeclineDraw)
+	case protocol.ClientAcceptDraw, protocol.ClientDeclineDraw:
+		return h.handleDrawResponse(ctx, client, message)
 	default:
 		return sendError(ctx, client, message.RequestID, protocol.ErrorUnknownType, fmt.Sprintf("unknown message type %q", message.Type))
 	}
@@ -255,13 +262,18 @@ func (h *Handler) handleOfferDraw(ctx context.Context, client *Session, message 
 	return h.gameSessions.broadcastState(ctx, client, message.RequestID, state)
 }
 
-func (h *Handler) handleDrawResponse(ctx context.Context, client *Session, message protocol.ClientEnvelope, respond func(context.Context, gameplay.DrawOfferResponseCommand) (gameplay.GameSnapshot, error)) error {
+func (h *Handler) handleDrawResponse(ctx context.Context, client *Session, message protocol.ClientEnvelope) error {
 	command, err := decodeDrawResponse(client.profileID, message)
 	if err != nil {
 		return sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, err.Error())
 	}
 
-	state, err := respond(ctx, command)
+	var state gameplay.GameSnapshot
+	if message.Type == protocol.ClientAcceptDraw {
+		state, err = h.gameService.AcceptDraw(ctx, command)
+	} else {
+		state, err = h.gameService.DeclineDraw(ctx, command)
+	}
 	if err != nil {
 		return sendApplicationError(ctx, client, message.RequestID, err)
 	}
@@ -281,40 +293,42 @@ func (h *Handler) handleMatchmaking(ctx context.Context, client *Session, messag
 		return sendError(ctx, client, message.RequestID, protocol.ErrorInvalidMessage, sessionUnavailableMessage)
 	}
 
-	ticket, err := h.gameService.EnterMatchmaking(ctx, gameplay.EnterMatchmakingCommand{ProfileID: client.profileID, Initial: initial, Increment: increment})
+	result, err := h.gameService.EnterMatchmaking(ctx, gameplay.EnterMatchmakingCommand{ProfileID: client.profileID, Initial: initial, Increment: increment})
 	if err != nil {
 		h.gameSessions.Release(client)
 		return sendApplicationError(ctx, client, message.RequestID, err)
 	}
-	if err = client.Send(ctx, protocol.ServerEnvelope{Type: protocol.ServerMatchmakingEntered, RequestID: message.RequestID, Payload: protocol.EnterMatchmakingPayload{TimeControl: request.TimeControl}}); err != nil {
-		h.gameSessions.Release(client)
-		return err
+	ackErr := client.Send(ctx, protocol.ServerEnvelope{Type: protocol.ServerMatchmakingEntered, RequestID: message.RequestID, Payload: protocol.EnterMatchmakingPayload{TimeControl: request.TimeControl}})
+	if result.GameID == "" {
+		if ackErr != nil {
+			h.gameService.CancelMatchmaking(result.Entry)
+			h.gameSessions.Release(client)
+			return ackErr
+		}
+		h.pending[result.Entry] = pendingMatch{ctx: ctx, client: client, requestID: message.RequestID}
+		return nil
 	}
-	// The waiter owns the reservation until it is matched or canceled.
-	h.matchmaking.Go(func() {
-		// Service failures and queue pressure are logged where they occur.
-		_ = h.awaitMatch(ctx, client, message.RequestID, ticket)
-	})
-	return nil
+	defer h.gameSessions.Release(client)
+	opponent, exists := h.pending[result.Opponent]
+	delete(h.pending, result.Opponent)
+	if exists {
+		// Pairing has committed; the opponent's admission survives source failure.
+		_ = h.admitMatch(opponent.ctx, opponent.client, opponent.requestID, result.GameID)
+	}
+	if ackErr != nil {
+		return ackErr
+	}
+	return h.admitMatch(ctx, client, message.RequestID, result.GameID)
 }
 
-func (h *Handler) awaitMatch(ctx context.Context, client *Session, requestID string, ticket gameplay.MatchTicket) error {
-	var result gameplay.GameAssignment
-	var matched bool
-	select {
-	case <-ctx.Done():
-	case match, ok := <-ticket.Result:
-		result = match
-		matched = ok
-	}
-	h.dispatchMu.Lock()
-	defer h.dispatchMu.Unlock()
+// admitMatch reads current state and publishes an assignment under the caller's dispatch lock.
+func (h *Handler) admitMatch(ctx context.Context, client *Session, requestID string, gameID identity.GameID) error {
 	defer h.gameSessions.Release(client)
-	if ctx.Err() != nil || !matched {
+	if ctx.Err() != nil {
 		return nil
 	}
 
-	state, err := h.gameService.GameState(ctx, result.GameID)
+	state, err := h.gameService.GameState(ctx, gameID)
 	if err != nil {
 		return sendApplicationError(ctx, client, requestID, err)
 	}

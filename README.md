@@ -14,7 +14,7 @@ type keeps its methods in one file; helper files contain independent functions.
 | Clock arithmetic | `internal/gameplay/clock.go` |
 | Connection acceptance and lifetime | `internal/websocket/server.go` |
 | Socket I/O and heartbeat | `internal/websocket/session.go` |
-| Command ordering, matchmaking waiters, and creating/joining/resuming games | `internal/websocket/handler.go` |
+| Command ordering, matchmaking admission, and creating/joining/resuming games | `internal/websocket/handler.go` |
 | Membership, presence, and state publication | `internal/websocket/game_sessions.go` |
 
 Wire decoding and mapping stay in `internal/websocket`; payload types live in
@@ -272,7 +272,8 @@ Each player first receives `matchmaking.entered` with the entry `requestId` and
 each receives `matchmaking.found` containing the shared `gameId` and that
 player's assigned `color`, using that same `requestId`, followed by an
 uncorrelated authoritative `game.initial`. Waiting for an opponent has no deadline.
-Players are registered as their matchmaking results are processed. If the
+The second entry publishes both assignments under the handler's dispatch lock,
+registering the waiting player before the arriving player. If the
 first initial state shows the opponent as disconnected, a subsequent
 unsolicited `game.state` reports that opponent's registration.
 
