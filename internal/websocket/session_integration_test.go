@@ -3,7 +3,6 @@ package websocket
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -31,10 +30,7 @@ func TestIntegrationSessionBoundsConnectionReadyWrite(t *testing.T) {
 		}
 		client := NewSession(identity.NewProfileID(), conn)
 		started := time.Now()
-		err = client.Run(context.Background(), func(context.Context, *Session, json.RawMessage) error {
-			t.Error("handled a command before connection.ready was written")
-			return nil
-		})
+		err = client.Run(t.Context(), newHandler(newTestGameService(t), newGameSessions()))
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("startup error = %v, want deadline exceeded", err)
 		}
@@ -80,6 +76,7 @@ func websocketUpgradeRequest() *http.Request {
 
 func TestIntegrationSessionHeartbeatClosesUnresponsiveConnection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	handler := newHandler(newTestGameService(t), newGameSessions())
 	done := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := coderws.Accept(w, r, nil)
@@ -90,7 +87,7 @@ func TestIntegrationSessionHeartbeatClosesUnresponsiveConnection(t *testing.T) {
 		session := NewSession(identity.NewProfileID(), conn)
 		session.heartbeatInterval = 50 * time.Millisecond
 		session.heartbeatTimeout = 50 * time.Millisecond
-		done <- session.Run(ctx, func(context.Context, *Session, json.RawMessage) error { return nil })
+		done <- session.Run(ctx, handler)
 	}))
 	t.Cleanup(server.Close)
 	t.Cleanup(cancel)

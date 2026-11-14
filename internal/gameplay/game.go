@@ -18,7 +18,6 @@ type game struct {
 	now                 func() time.Time
 	expirationTimer     *time.Timer
 	expirationID        uint64
-	expirationNotified  bool
 	id                  identity.GameID
 	version             uint64
 	whiteProfileID      identity.ProfileID

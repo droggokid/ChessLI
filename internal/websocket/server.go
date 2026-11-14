@@ -178,7 +178,7 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 
 	started := time.Now()
 	slog.Info("websocket connection opened", "event", "connection.opened", "profile_id", profileID)
-	err = client.Run(s.connectionCtx, s.messageHandler.Handle)
+	err = client.Run(s.connectionCtx, s.messageHandler)
 	level, reason := slog.LevelInfo, "client_closed"
 	switch {
 	case s.connectionCtx.Err() != nil:

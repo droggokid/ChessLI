@@ -2,7 +2,6 @@ package websocket
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -16,13 +15,6 @@ import (
 )
 
 const outgoingBufferSize = 16
-
-// HandlerFunc processes a JSON message received from a client.
-type HandlerFunc func(
-	ctx context.Context,
-	client *Session,
-	message json.RawMessage,
-) error
 
 // Session exchanges JSON messages over a WebSocket connection.
 // Send is safe for concurrent use; Run may be called only once.
@@ -52,7 +44,7 @@ func NewSession(profileID identity.ProfileID, conn *coderws.Conn) *Session {
 // Run exchanges messages until the context is canceled or an I/O loop stops.
 // It sends connection.ready first and joins all I/O loops before returning; call only once.
 // The server supplies a valid connection and message handler for each new session.
-func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
+func (c *Session) Run(ctx context.Context, handler *Handler) error {
 	c.running.Store(true)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -76,7 +68,7 @@ func (c *Session) Run(ctx context.Context, handleMessage HandlerFunc) error {
 	errCh := make(chan error, 3)
 
 	go func() {
-		errCh <- c.readLoop(ctx, handleMessage)
+		errCh <- c.readLoop(ctx, handler)
 	}()
 
 	go func() {
@@ -118,14 +110,14 @@ func (c *Session) heartbeatLoop(ctx context.Context) error {
 	}
 }
 
-func (c *Session) readLoop(ctx context.Context, handleMessage HandlerFunc) error {
+func (c *Session) readLoop(ctx context.Context, handler *Handler) error {
 	for {
 		_, message, err := c.conn.Read(ctx)
 		if err != nil {
 			return fmt.Errorf("read websocket message: %w", err)
 		}
 
-		if err := handleMessage(ctx, c, json.RawMessage(message)); err != nil {
+		if err := handler.Handle(ctx, c, message); err != nil {
 			return fmt.Errorf("handle websocket message: %w", err)
 		}
 	}

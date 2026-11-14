@@ -445,18 +445,15 @@ func (s *GameService) expireFromTimer(game *game, expirationID uint64) {
 }
 
 func (s *GameService) notifyFinished(game *game) {
-	if game.outcome == domain.OutcomeNone {
+	if game.outcome == domain.OutcomeNone || game.completionScheduled || s.closed {
 		return
 	}
-	if !game.completionScheduled && !s.closed {
-		game.completionScheduled = true
-		record := completedGameDTO(game.completedGame())
-		s.notifications.Go(func() { s.saveCompletedGame(record) })
-	}
-	if game.termination != domain.TerminationTimeout || game.expirationNotified {
+	game.completionScheduled = true
+	record := completedGameDTO(game.completedGame())
+	s.notifications.Go(func() { s.saveCompletedGame(record) })
+	if game.termination != domain.TerminationTimeout {
 		return
 	}
-	game.expirationNotified = true
 	s.stopExpiration(game)
 	s.notifyGameExpired(game.snapshot(game.now()))
 }

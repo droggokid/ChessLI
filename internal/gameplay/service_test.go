@@ -249,7 +249,10 @@ func TestGameServiceNotifiesTimeoutDetectedByCommandsOrState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := newTestGameService(t)
+			repository := persistence.NewMockGameRepository(gomock.NewController(t))
+			repository.EXPECT().CreateGame(gomock.Any(), gomock.Any()).Return(nil)
+			service := NewGameService(repository, newTestProfileRepository(t))
+			t.Cleanup(service.Close)
 			game := newReadyGame()
 			now := time.Now()
 			game.now = func() time.Time { return now }
@@ -741,6 +744,8 @@ func TestGameServiceCompletionIncludesAutomaticTimeout(t *testing.T) {
 		repository := persistence.NewMockGameRepository(gomock.NewController(t))
 		service := NewGameService(repository, newTestProfileRepository(t))
 		defer service.Close()
+		expired := make(chan GameSnapshot, 2)
+		service.SetGameExpiredHandler(func(state GameSnapshot) { expired <- state })
 		completed := make(chan persistence.CompletedGame, 1)
 		repository.EXPECT().CreateGame(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, record persistence.CompletedGame) error {
 			completed <- record
@@ -762,6 +767,19 @@ func TestGameServiceCompletionIncludesAutomaticTimeout(t *testing.T) {
 		if record.Termination != domain.TerminationTimeout || record.WhiteRemainingMS != 0 ||
 			!record.CompletedAt.Equal(started.Add(time.Second)) || len(record.Moves) != 0 {
 			t.Fatalf("timeout record = %+v", record)
+		}
+		state := <-expired
+		if state.GameID != assignment.GameID || state.Termination != domain.TerminationTimeout {
+			t.Fatalf("timeout notification = %+v", state)
+		}
+		for range 2 {
+			if _, err := service.GameState(t.Context(), assignment.GameID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		service.Close()
+		if len(expired) != 0 || len(completed) != 0 {
+			t.Fatal("repeated state reads duplicated completion side effects")
 		}
 	})
 }
